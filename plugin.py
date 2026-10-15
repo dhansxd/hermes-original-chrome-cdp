@@ -23,17 +23,54 @@ def verify_account(data,expected):
         raise RuntimeError('account_binding_mismatch: requested Default account not verified; no Chrome launch')
 
 
-def gui_launch(data,seed_url=None):
-    manager=subprocess.run(['/bin/launchctl','managername'],capture_output=True,text=True,timeout=5)
+def gui_identity(pid=None):
+    uid=os.getuid()
+    domain=f'pid/{pid}' if pid else f'gui/{uid}'
+    result=subprocess.run(['/bin/launchctl','print',domain],capture_output=True,text=True,timeout=2)
+    contexts=re.findall(r'^\s*security context = \{([^{}]*)\}',result.stdout,re.M)
+    if result.returncode or not result.stdout.startswith(domain+' = {') or len(contexts)!=1:
+        raise RuntimeError('safe_GUI_launch_unavailable: GUI destination identity unavailable')
+    pairs=re.findall(r'^\s*(uid|asid) = ([0-9]+)\s*$',contexts[0],re.M)
+    values=dict(pairs)
+    if len(pairs)!=2 or set(values)!={'uid','asid'} or int(values['uid'])!=uid:
+        raise RuntimeError('safe_GUI_launch_unavailable: GUI destination identity ambiguous')
+    if not pid and re.findall(r'^\s*session = (\S+)\s*$',result.stdout,re.M)!=['Aqua']:
+        raise RuntimeError('safe_GUI_launch_unavailable: no Aqua destination')
+    asid=int(values['asid']);actual=ctypes.c_uint32();flags=ctypes.c_uint32()
     security=ctypes.CDLL('/System/Library/Frameworks/Security.framework/Security')
-    sid=ctypes.c_uint32();attrs=ctypes.c_uint32()
-    status=security.SessionGetInfo(ctypes.c_uint32(0xffffffff),ctypes.byref(sid),ctypes.byref(attrs))
-    if manager.stdout.strip()!='Aqua' or status or not attrs.value & 0x10 or os.stat('/dev/console').st_uid!=os.getuid():
-        raise RuntimeError('safe_GUI_launch_unavailable: run Hermes in the unlocked logged-in Aqua session; Chrome not launched')
-    args=['/usr/bin/open','-n','-a',str(CHROME),'--args',f'--user-data-dir={data}','--profile-directory=Default']
+    status=security.SessionGetInfo(ctypes.c_uint32(asid),ctypes.byref(actual),ctypes.byref(flags))
+    if status or actual.value!=asid or not flags.value & 0x10 or os.geteuid()!=uid or os.stat('/dev/console').st_uid!=uid:
+        raise RuntimeError('safe_GUI_launch_unavailable: destination has no verified graphic access')
+    return (uid,asid)
+
+
+def gui_launch(data,seed_url=None):
+    import psutil
+    destination=gui_identity()
+    def browsers():
+        found=[]
+        for p in psutil.process_iter(['name','exe','cmdline','create_time']):
+            if p.info['name']!='Google Chrome':continue
+            try:
+                args=p.info['cmdline'] or []
+                root=Path(next((a.split('=',1)[1] for a in args if a.startswith('--user-data-dir=')),str(PERSONAL))).resolve()
+                if root!=data.resolve():continue
+                if p.info['exe']!=str(CHROME/'Contents/MacOS/Google Chrome') or gui_identity(p.pid)!=destination:
+                    raise RuntimeError('safe_GUI_launch_unavailable: Chrome destination mismatch')
+                found.append((p.pid,p.info['create_time']))
+            except psutil.NoSuchProcess:continue
+        return found
+    browsers()
+    args=['/usr/bin/open','-n','-g','-a',str(CHROME),'--args',f'--user-data-dir={data}','--profile-directory=Default']
     if data.resolve()!=PERSONAL.resolve():args+=['--remote-debugging-port=0','--no-first-run','--no-default-browser-check']
     if seed_url:args+=['--new-window',seed_url]
-    subprocess.run(args,capture_output=True,text=True,timeout=15,check=True)
+    env={'HOME':str(Path.home()),'PATH':'/usr/bin:/bin','TMPDIR':str(Path.home()/'.hermes/cache/scratch')}
+    subprocess.run(args,env=env,capture_output=True,text=True,timeout=15,check=True)
+    deadline=time.monotonic()+8
+    while not browsers():
+        if time.monotonic()>=deadline:raise RuntimeError('safe_GUI_launch_unavailable: launched Chrome identity unavailable; no replay')
+        time.sleep(.1)
+    if gui_identity()!=destination:raise RuntimeError('safe_GUI_launch_unavailable: GUI destination changed')
 
 
 class ChromeProvider(BrowserProvider):
