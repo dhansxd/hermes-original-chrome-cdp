@@ -27,6 +27,40 @@ class ObserverTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'observer_lost'):
                 observer.request({'method':'Target.getTargets'},state)
 
+    def test_delayed_detach_after_confirmed_close_does_not_abort_next_cleanup(self):
+        class Wire:
+            def __init__(self,*args):self.events=[];self.dialogs={};self.event_overflow=False;self.pending=False
+            def __call__(self,method,params=None,session=None):
+                if method=='Target.getTargets':
+                    if self.pending:
+                        self.events.append({'method':'Target.detachedFromTarget','params':{'sessionId':'held'},'session_id':None})
+                        self.pending=False
+                    return {'targetInfos':[{'targetId':'owned','browserContextId':'ctx','type':'page'}]}
+                if method=='Browser.getWindowForTarget':return {'windowId':1}
+                if method=='Target.attachToTarget':return {'sessionId':'held'}
+                if method=='Target.closeTarget':self.pending=True;return {'success':True}
+                return {}
+            def close(self):pass
+        state={'current':'owned','context':'ctx','owned':{'owned':1}}
+        with patch('observer.Wire',Wire):
+            observer=ScopedObserver('fixture','/fixture/Default')
+            observer.request({'method':'Target.attachToTarget','params':{'targetId':'owned'}},state)
+            observer.request({'method':'Target.closeTarget','params':{'targetId':'owned'}},state)
+            try:observer.request({'method':'Target.getTargets'},state)
+            except RuntimeError as e:self.fail(str(e))
+            self.assertFalse(observer.closed)
+            self.assertNotIn('owned',observer.sessions)
+
+    def test_failed_close_does_not_retire_held_session(self):
+        from unittest.mock import Mock
+        state={'current':'owned','context':'ctx','owned':{'owned':1}}
+        wire=Mock();wire.events=[];wire.dialogs={};wire.event_overflow=False
+        wire.return_value={'success':False}
+        with patch('observer.Wire',return_value=wire):
+            observer=ScopedObserver('fixture','/fixture/Default');observer.sessions={'owned':'held'}
+            observer.request({'method':'Target.closeTarget','params':{'targetId':'owned'}},state)
+            self.assertEqual(observer.sessions,{'owned':'held'})
+
     def test_held_wire_is_secret_silent_from_connection_creation(self):
         import logging
         import vault_adapter

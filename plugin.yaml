@@ -1,5 +1,5 @@
 name: original-chrome-default
-version: 0.1.5
+version: 0.1.6
 description: Scoped original headed Chrome Default adapter; partial acceptance, not production ready
 author: Dyra
 kind: backend

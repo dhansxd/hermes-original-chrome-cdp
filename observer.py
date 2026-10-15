@@ -37,6 +37,10 @@ class ScopedObserver:
                         self.wire('Network.enable',{},self.sessions[target])
                     result={'sessionId':self.sessions[target]}
                 else:result=self.wire(method,params,sid)
+                if method=='Target.closeTarget' and result.get('success'):
+                    # A confirmed close can emit its detach during a later request.
+                    closed_sid=self.sessions.pop(params.get('targetId'),None)
+                    getattr(self.wire,'dialogs',{}).pop(closed_sid,None)
             events=getattr(self.wire,'events',[]);self.wire.events=[]
             for event in events:
                 if (event['method']=='Target.detachedFromTarget' and event.get('params',{}).get('sessionId') in self.sessions.values()
