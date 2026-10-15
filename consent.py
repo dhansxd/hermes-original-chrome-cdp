@@ -52,11 +52,14 @@ def connect_with_consent(endpoint, data_root, connect, *, backend=None, timeout=
     deadline=time.monotonic()+timeout;pressed=False
     try:
         while not done.wait(.05) and time.monotonic()<deadline:
-            if issue or pressed:continue
+            if pressed or (issue and not issue.startswith('consent_attach_uncorrelated:')):continue
             try:
                 sheet=select_sheet(backend.scan(),baseline,backend.hosts())
                 if sheet:
-                    if not backend.correlate():raise ConsentError('consent_attach_uncorrelated: cannot prove sole local connection')
+                    if not backend.correlate():
+                        issue='consent_attach_uncorrelated: cannot prove sole local connection'
+                        continue
+                    issue=None
                     if not done.is_set():backend.press(sheet,pending=lambda:not done.is_set() and time.monotonic()<deadline);pressed=True
             except Exception as exc:
                 # Discard invalid/busy AX snapshots; scan rebuilds host/window refs.
