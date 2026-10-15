@@ -1,7 +1,25 @@
 """Scoped CDP helper boundary. Not an arbitrary-Python sandbox."""
 class BoundBrowser:
-    def __init__(self, wire, state):
+    def __init__(self, wire, state, checkpoint=None):
         self.wire, self.state, self.sessions = wire, state, {}
+        self.checkpoint=checkpoint or (lambda: None)
+        if hasattr(wire,'pump'):wire.on_event=self._event
+
+    def _event(self,event):
+        if event['method']=='Target.targetCreated':
+            info=event.get('params',{}).get('targetInfo',{});tid=info.get('targetId')
+            if (tid and tid not in self.state['owned'] and tid not in self.state.get('baseline',[])
+                and info.get('type')=='page' and info.get('browserContextId')==self.state.get('context')
+                and info.get('openerId') in self.state['owned']):
+                self.state['owned'][tid]=None;self.checkpoint()
+        target=next((t for t,s in self.sessions.items() if s==event.get('session_id')),None)
+        if not target:return
+        if event['method']=='Page.javascriptDialogOpening':
+            self.state.setdefault('dialogs',{})[target]=event['params']
+            self.checkpoint()
+        elif event['method']=='Page.javascriptDialogClosed':
+            self.state.setdefault('dialogs',{}).pop(target,None)
+            self.checkpoint()
 
     def info(self, target=None):
         target = target or self.state['current']
@@ -11,7 +29,7 @@ class BoundBrowser:
         info = next((t for t in infos if t['targetId']==target), None)
         if not info or info.get('browserContextId') != self.state['context']:
             raise RuntimeError('binding_unavailable: owned target disappeared; no personal-tab recovery')
-        if self.wire('Browser.getWindowForTarget', {'targetId':target})['windowId'] != self.state['owned'][target]:
+        if self.state['owned'][target] is not None and self.wire('Browser.getWindowForTarget', {'targetId':target})['windowId'] != self.state['owned'][target]:
             raise RuntimeError('window_binding_changed')
         return info
 
@@ -20,14 +38,22 @@ class BoundBrowser:
         self.info(target)
         if target not in self.sessions:
             self.sessions[target] = self.wire('Target.attachToTarget', {'targetId':target,'flatten':True})['sessionId']
+            if hasattr(self.wire,'pump') and not self.state.get('dialogs',{}).get(target):
+                self.wire('Page.enable',{},self.sessions[target])
+                self.wire('Network.enable',{},self.sessions[target])
         return self.sessions[target]
 
     def create(self, url='about:blank'):
         self.info()
         # Each explicit new tab gets a separate owned window: no last-active-window heuristic.
+        self.state['unresolved_creation']=True;self.checkpoint()
         target = self.wire('Target.createTarget', {'url':'about:blank','newWindow':True,'background':True,'browserContextId':self.state['context']})['targetId']
+        self.state['owned'][target] = None
+        self.state.pop('unresolved_creation',None)
+        self.checkpoint()
         window = self.wire('Browser.getWindowForTarget', {'targetId':target})['windowId']
         self.state['owned'][target] = window
+        self.checkpoint()
         self.state['current'] = target
         if url != 'about:blank': self.cdp('Page.navigate',url=url)
         return target
@@ -42,14 +68,35 @@ class BoundBrowser:
             target=params.get('targetId',self.state['current']);self.info(target)
             if method=='Target.attachToTarget': return {'sessionId':self.session(target)}
             result=self.wire(method,{**params,'targetId':target})
-            if method=='Target.closeTarget': self.state['owned'].pop(target,None)
+            if method=='Target.closeTarget':
+                self.state['owned'].pop(target,None);self.checkpoint()
             return result
         if method in ('Browser.close','Browser.setDownloadBehavior') or method.startswith(('Storage.','Target.','BrowserContext.')):
             raise RuntimeError('browser_wide_operation_not_supported')
-        return self.wire(method,params,session_id or self.session())
+        result=self.wire(method,params,session_id or self.session())
+        if method=='Page.handleJavaScriptDialog':
+            target=next((t for t,s in self.sessions.items() if s==session_id),self.state['current'])
+            self.state.setdefault('dialogs',{}).pop(target,None);self.checkpoint()
+            self.wire('Page.enable',{},self.sessions[target])
+            self.wire('Network.enable',{},self.sessions[target])
+        return result
 
     def send(self, req, response_timeout=None):
         meta=req.get('meta')
+        if meta in ('session','pending_dialog','drain_events'):
+            if not hasattr(self.wire,'pump'):raise RuntimeError('unsupported_helper_meta: event observation unavailable')
+            sid=self.session()
+            self.wire.pump()
+            if getattr(self.wire,'event_overflow',False):raise RuntimeError('event_buffer_overflow: observation incomplete')
+            if meta=='session':return {'session_id':sid,'target_id':self.state['current'],'observation_scope':'current worker attachment only'}
+            if meta=='pending_dialog':
+                dialog=getattr(self.wire,'dialogs',{}).get(sid)
+                if not dialog and self.state.get('dialogs',{}).get(self.state['current']):
+                    raise RuntimeError('dialog_observation_uncertain: prior worker observed '+str(self.state['dialogs'][self.state['current']])+'; Chrome does not replay existing dialog events on reattachment; raw dismissal may report no dialog')
+                return {'dialog':dialog,'observation_scope':'current attachment plus last observed dialog; no event history between workers'}
+            events=[e for e in getattr(self.wire,'events',[]) if e.get('session_id')==sid]
+            self.wire.events=[e for e in getattr(self.wire,'events',[]) if e.get('session_id')!=sid]
+            return {'events':events,'observation_scope':'current worker attachment only'}
         if meta=='current_tab': return self.info()
         if meta=='set_session':
             self.info(req['target_id']);self.state['current']=req['target_id'];return {}
@@ -66,7 +113,10 @@ class BoundBrowser:
                 if (tid not in self.state['owned'] and tid not in self.state.get('baseline',[])
                     and target.get('type')=='page' and target.get('browserContextId')==self.state['context']
                     and target.get('openerId') in self.state['owned']):
+                    self.state['owned'][tid]=None
+                    self.checkpoint()
                     self.state['owned'][tid]=self.wire('Browser.getWindowForTarget',{'targetId':tid})['windowId']
+                    self.checkpoint()
                     added.append(tid);changed=True
             if not changed:break
         return added
@@ -85,4 +135,6 @@ class BoundBrowser:
                 except Exception:
                     remaining.append(target);continue
             self.state['owned'].pop(target,None)
-        return {'remaining_owned_targets':remaining,'success':not remaining}
+        self.checkpoint()
+        unresolved=self.state.get('unresolved_creation',False)
+        return {'remaining_owned_targets':remaining,'unresolved_creation':unresolved,'success':not remaining and not unresolved}

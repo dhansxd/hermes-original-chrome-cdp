@@ -37,7 +37,7 @@ def connect_with_consent(endpoint, data_root, connect, *, backend=None, timeout=
             baseline={s['key'] for s in backend.scan()}
             break
         except Exception as exc:
-            if str(exc)=='consent_ax_read:-25204' and time.monotonic()<baseline_deadline:
+            if str(exc) in {'consent_ax_read:-25202','consent_ax_read:-25204'} and time.monotonic()<baseline_deadline:
                 time.sleep(.05);continue
             raise ConsentError('consent_preflight_failed: '+str(exc)) from None
     done=threading.Event();abandoned=threading.Event();result={}
@@ -59,9 +59,9 @@ def connect_with_consent(endpoint, data_root, connect, *, backend=None, timeout=
                     if not backend.correlate():raise ConsentError('consent_attach_uncorrelated: cannot prove sole local connection')
                     if not done.is_set():backend.press(sheet,pending=lambda:not done.is_set() and time.monotonic()<deadline);pressed=True
             except Exception as exc:
-                # AX cannot-complete while Chrome builds a sheet is transient.
-                # Retry observation only, within this same pending handshake.
-                if str(exc)=='consent_ax_read:-25204':continue
+                # Discard invalid/busy AX snapshots; scan rebuilds host/window refs.
+                # Retry observation only within this same pending handshake.
+                if str(exc) in {'consent_ax_read:-25202','consent_ax_read:-25204'}:continue
                 issue=str(exc)
         if 'ws' in result:return result['ws']
         raise ConsentError('consent_attach_failed: '+(issue or result.get('error','deadline; approve exact debugging prompt manually if appropriate')))

@@ -13,13 +13,33 @@ class Wire:
     def __init__(self, endpoint, data_root=None):
         self.ws=connect_with_consent(endpoint,data_root,connect) if data_root else connect(endpoint,open_timeout=15)
         self.counter=0
+    def event(self,response):
+        if not hasattr(self,'events'):self.events=[];self.dialogs={};self.event_overflow=False
+        if not response.get('method'):return
+        event={'method':response['method'],'params':response.get('params',{}),'session_id':response.get('sessionId')}
+        if len(self.events)>=4000:self.event_overflow=True;self.events.pop(0)
+        self.events.append(event)
+        sid=event['session_id']
+        if event['method']=='Page.javascriptDialogOpening':self.dialogs[sid]=event['params']
+        elif event['method']=='Page.javascriptDialogClosed':self.dialogs.pop(sid,None)
+        callback=getattr(self,'on_event',None)
+        if callback:callback(event)
+    def pump(self):
+        deadline=time.monotonic()+.05
+        while time.monotonic()<deadline:
+            try:response=json.loads(self.ws.recv(timeout=0))
+            except TimeoutError:return
+            self.event(response)
+        raise RuntimeError('event_pump_overrun: observation incomplete')
     def __call__(self,method,params=None,session=None):
         self.counter+=1
         msg={'id':self.counter,'method':method,'params':params or {}}
         if session:msg['sessionId']=session
         self.ws.send(json.dumps(msg))
         while True:
-            response=json.loads(self.ws.recv(timeout=20))
+            try:response=json.loads(self.ws.recv(timeout=20))
+            except TimeoutError as exc:raise TimeoutError('CDP_response_timeout: '+method) from exc
+            self.event(response)
             if response.get('id')==self.counter:
                 if 'error' in response:raise RuntimeError(str(response['error']))
                 return response.get('result',{})
@@ -49,14 +69,18 @@ def switch(browser,target,activate=False):
     return browser.session(target)
 
 
-def initialize(wire,profile,seed_url=None):
+def initialize(wire,profile,seed_url=None,cleanup=False):
     initial=wire('Target.getTargets')['targetInfos']
     seeds=[t for t in initial if seed_url and t.get('type')=='page' and t.get('url')==seed_url]
     if len(seeds)!=1 or not seeds[0].get('browserContextId'):
         raise RuntimeError('Default_seed_unavailable: no context search or other-profile fallback')
     target=seeds[0]['targetId'];context=seeds[0]['browserContextId']
-    window=wire('Browser.getWindowForTarget',{'targetId':target})['windowId']
-    state={'current':target,'context':context,'owned':{target:window},'baseline':[t['targetId'] for t in initial if t['targetId']!=target]}
+    state={'current':target,'context':context,'owned':{target:None},'verified':False,'baseline':[t['targetId'] for t in initial if t['targetId']!=target]}
+    checkpoint=getattr(wire,'checkpoint',lambda state:None)
+    checkpoint(state)
+    state['owned'][target]=wire('Browser.getWindowForTarget',{'targetId':target})['windowId']
+    checkpoint(state)
+    if cleanup:return state
     browser=BoundBrowser(wire,state);ns=helper_namespace(browser)
     # Only the explicitly GUI-created seed is inspected, never another profile.
     ns['goto_url']('chrome://version/')
@@ -69,15 +93,26 @@ def initialize(wire,profile,seed_url=None):
         wire('Target.closeTarget',{'targetId':target})
         raise RuntimeError('Default_profile_binding_mismatch: explicit seed was not requested Default')
     ns['goto_url']('about:blank')
+    state['verified']=True
+    checkpoint(state)
     return state
 
 
-def run(request):
-    wire=Wire(request['endpoint'],str(Path(request['profile']).parent));state=request.get('state');out=io.StringIO()
+def run(request, publish=lambda state:None):
+    wire=None;state=request.get('state');out=io.StringIO()
+    def checkpoint(value):
+        nonlocal state
+        state=value;publish(state)
     try:
-        if not state:state=initialize(wire,request['profile'],request.get('seed_url'))
-        browser=BoundBrowser(wire,state)
+        wire=Wire(request['endpoint'],str(Path(request['profile']).parent))
+        wire.checkpoint=checkpoint
+        if not state or not state.get('context'):
+            state=initialize(wire,request['profile'],(state or {}).get('pending_seed') or request.get('seed_url'),cleanup=request.get('cleanup',False))
+        browser=BoundBrowser(wire,state,lambda:checkpoint(state))
         if request.get('cleanup'):return {'state':state,**browser.cleanup(request.get('retain',[]))}
+        if state.get('verified') is False:raise RuntimeError('profile_binding_unverified: cleanup only')
+        checkpoint(state)
+        wire('Target.setDiscoverTargets',{'discover':True})
         browser.info()
         browser.track_popups()
         ns=helper_namespace(browser)
@@ -91,10 +126,14 @@ def run(request):
             exec(compile(request['code'],'<browser_exec>','exec'),ns)
         return {'success':True,'stdout':out.getvalue()[-20000:],'state':state,'backend':'original-chrome-default','workspace':str(workspace)}
     except Exception as exc:
-        return {'success':False,'error':str(exc),'error_type':type(exc).__name__,'stdout':out.getvalue()[-20000:],'state':state,'backend':'original-chrome-default','action_replayed':False}
-    finally:wire.close()
+        return {'success':False,'error':str(exc),'error_type':type(exc).__name__,'uncertain':isinstance(exc,TimeoutError) or bool((state or {}).get('unresolved_creation')),'stdout':out.getvalue()[-20000:],'state':state,'backend':'original-chrome-default','action_replayed':False}
+    finally:
+        if wire:wire.close()
 
 if __name__=='__main__':
-    try:result=run(json.load(sys.stdin))
+    protocol=sys.stdout
+    def publish(state):
+        protocol.write(json.dumps({'checkpoint':state})+'\n');protocol.flush()
+    try:result=run(json.load(sys.stdin),publish)
     except Exception as exc:result={'success':False,'error':str(exc),'error_type':type(exc).__name__,'action_replayed':False}
-    print(json.dumps(result))
+    protocol.write(json.dumps({'result':result})+'\n');protocol.flush()

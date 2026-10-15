@@ -1,5 +1,5 @@
 """Original headed Chrome provider and public browser_exec override. No core mutation."""
-import copy, ctypes, json, os, re, secrets, subprocess, sys, threading, time
+import copy, ctypes, json, os, re, secrets, signal, subprocess, sys, threading, time
 from pathlib import Path
 from agent.browser_provider import BrowserProvider
 
@@ -54,6 +54,8 @@ class ChromeProvider(BrowserProvider):
         seed.parent.mkdir(parents=True,exist_ok=True)
         seed.write_text('<!doctype html><title>Chrome agent setup</title>')
         self.seed_url=seed.resolve().as_uri()
+        # Setup authority is recorded before launch, not yet a verified profile binding.
+        self._active_entry['state']={'pending_seed':self.seed_url,'owned':{},'verified':False}
         gui_launch(self.data,self.seed_url)
         deadline=time.monotonic()+20
         while time.monotonic()<deadline:
@@ -69,9 +71,34 @@ class ChromeProvider(BrowserProvider):
         if not re.fullmatch('[A-Za-z0-9_-]{1,64}',session):raise ValueError('invalid session name')
         return (str(task_id or 'default'),session)
     def _worker(self,request,timeout=300):
-        proc=subprocess.run([sys.executable,str(ROOT/'worker.py')],input=json.dumps(request),capture_output=True,text=True,timeout=timeout)
-        if proc.returncode:raise RuntimeError('browser_worker_failed: '+proc.stderr[-500:])
-        return json.loads(proc.stdout)
+        # Protocol stdout is distinct from captured user stdout. No durable journal.
+        entry=self._active_entry
+        frames=[];errors=[]
+        proc=subprocess.Popen([sys.executable,str(ROOT/'worker.py')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,start_new_session=True)
+        def read():
+            try:
+                for line in proc.stdout:
+                    frame=json.loads(line)
+                    if 'checkpoint' in frame:entry['state']=frame['checkpoint']
+                    elif 'result' in frame:frames[:]=[frame['result']]
+                    else:raise RuntimeError('invalid worker protocol')
+            except Exception as exc:errors.append(exc)
+        reader=threading.Thread(target=read,daemon=True);reader.start()
+        try:
+            proc.stdin.write(json.dumps(request));proc.stdin.close()
+            try:proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid,signal.SIGKILL);proc.wait();reader.join()
+                raise
+            # A bounded worker does not leave user-spawned descendants holding pipes.
+            try:os.killpg(proc.pid,signal.SIGKILL)
+            except ProcessLookupError:pass
+            reader.join()
+            if proc.returncode or errors or not frames:raise RuntimeError('browser_worker_failed: missing or invalid final result; outcome uncertain')
+            return frames[0]
+        finally:
+            if proc.poll() is None:os.killpg(proc.pid,signal.SIGKILL);proc.wait()
+            reader.join();proc.stdout.close()
     def execute(self,args,task_id=None,**kwargs):
         with self.lock:
             key=None;endpoint=None
@@ -82,21 +109,29 @@ class ChromeProvider(BrowserProvider):
                 timeout=max(5,min(1800,int(args.get('timeout_s',300))))
                 entry=self.states.get(key)
                 if entry and entry.get('uncertain'):raise RuntimeError('previous_execution_outcome_uncertain: do not replay; inspect and release session')
-                endpoint=entry['endpoint'] if entry else self.endpoint()
+                if not entry:
+                    entry={'endpoint':None,'state':None}
+                    self.states[key]=entry
+                self._active_entry=entry
+                endpoint=entry['endpoint'] or self.endpoint()
+                entry['endpoint']=endpoint
                 workspace=self.workspace/str(abs(hash(key)))
-                request={'endpoint':endpoint,'profile':str(self.data/'Default'),'workspace':str(workspace),'state':entry['state'] if entry else None,'seed_url':getattr(self,'seed_url',None) if not entry else None,'code':args.get('code','')}
+                request={'endpoint':endpoint,'profile':str(self.data/'Default'),'workspace':str(workspace),'state':entry['state'],'seed_url':getattr(self,'seed_url',None),'code':args.get('code','')}
                 result=self._worker(request,timeout)
                 if result.get('state'):self.states[key]={'endpoint':endpoint,'state':result.pop('state')}
+                if result.get('uncertain') or (not result.get('success') and (self.states.get(key,{}).get('state') or {}).get('verified') is False):
+                    self.states[key]['uncertain']=True
                 if result.get('success') and self.states.get(key,{}).get('state',{}).get('owned'):
                     self.last_sessions[key[0]]=key[1]
                 result['fallback_used']=False
-                result['limitations']=['No arbitrary-Python sandbox','Vault uses version-pinned exact-target adapter; native chat and real prompt acceptance pending','Only opener-linked popups tracked; automatic cleanup on session finalization/interruption, not ordinary turn completion; use finish_browser() for explicit task finish','New tabs use separate owned windows','Consent auto-click verified on personal main Chrome and 9Router PWA; ambiguous/uncorrelated prompts report failure']
+                result['limitations']=['No arbitrary-Python sandbox','Events cover only this worker attachment, not intervals between calls; a prior observed unresolved dialog returns explicit uncertainty on reconnect','Vault uses version-pinned exact-target adapter; native chat and real prompt acceptance pending','Only opener-linked popups tracked; automatic cleanup on session finalization/interruption, not ordinary turn completion; use finish_browser() for explicit task finish','New tabs use separate owned windows','Consent auto-click verified on personal main Chrome and 9Router PWA; ambiguous/uncorrelated prompts report failure']
                 return json.dumps(result)
             except subprocess.TimeoutExpired:
                 if key is not None:
                     self.states.setdefault(key,{'endpoint':endpoint,'state':None})['uncertain']=True
                 return json.dumps({'success':False,'error':'browser_exec_timeout: action outcome uncertain; no retry performed; targets may remain','fallback_used':False,'action_replayed':False})
             except Exception as exc:
+                if key in self.states:self.states[key]['uncertain']=True
                 return json.dumps({'success':False,'error':str(exc),'error_type':type(exc).__name__,'fallback_used':False,'action_replayed':False})
     def create_session(self,task_id):
         # This provider cannot safely hand its browser-wide endpoint to legacy target selection.
@@ -107,9 +142,10 @@ class ChromeProvider(BrowserProvider):
             for key,entry in list(self.states.items()):
                 if key[0]!=str(session_id):continue
                 try:
-                    if not entry.get('state'):
+                    if not entry.get('state') or not entry.get('endpoint'):
                         self.last_cleanup[key]={'success':False,'error':'ownership_lost_after_timeout: no targets adopted for cleanup'}
                         results.append(False);continue
+                    self._active_entry=entry
                     result=self._worker({'endpoint':entry['endpoint'],'state':entry['state'],'profile':str(self.data/'Default'),'workspace':str(self.workspace),'cleanup':True},30)
                     self.last_cleanup[key]=result
                     results.append(result.get('success',False))
