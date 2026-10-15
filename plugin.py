@@ -23,6 +23,14 @@ def verify_account(data,expected):
         raise RuntimeError('account_binding_mismatch: requested Default account not verified; no Chrome launch')
 
 
+def chrome_executable(path):
+    if __package__:
+        from .consent import verify_chrome_executable
+    else:
+        from consent import verify_chrome_executable
+    return verify_chrome_executable(path)
+
+
 def gui_identity(pid=None):
     uid=os.getuid()
     domain=f'pid/{pid}' if pid else f'gui/{uid}'
@@ -55,7 +63,7 @@ def gui_launch(data,seed_url=None):
                 args=p.info['cmdline'] or []
                 root=Path(next((a.split('=',1)[1] for a in args if a.startswith('--user-data-dir=')),str(PERSONAL))).resolve()
                 if root!=data.resolve():continue
-                if p.info['exe']!=str(CHROME/'Contents/MacOS/Google Chrome') or gui_identity(p.pid)!=destination:
+                if not chrome_executable(p.info['exe']) or gui_identity(p.pid)!=destination:
                     raise RuntimeError('safe_GUI_launch_unavailable: Chrome destination mismatch')
                 found.append((p.pid,p.info['create_time']))
             except psutil.NoSuchProcess:continue
@@ -95,14 +103,27 @@ class ChromeProvider(BrowserProvider):
         # Setup authority is recorded before launch, not yet a verified profile binding.
         self._active_entry['state']={'pending_seed':self.seed_url,'owned':{},'verified':False}
         gui_launch(self.data,self.seed_url)
+        import psutil
         deadline=time.monotonic()+20
         while time.monotonic()<deadline:
             try:
                 lines=(self.data/'DevToolsActivePort').read_text().splitlines()
                 port=int(lines[0]);path=lines[1]
                 if not 0<port<65536 or not path.startswith('/devtools/browser/'):raise ValueError('invalid port file')
+                owners=[]
+                for process in psutil.process_iter(['name','exe','cmdline','create_time']):
+                    if process.info['name']!='Google Chrome':continue
+                    args=process.info['cmdline'] or []
+                    root=Path(next((a.split('=',1)[1] for a in args if a.startswith('--user-data-dir=')),str(PERSONAL))).resolve()
+                    if root!=self.data or not chrome_executable(process.info['exe']):continue
+                    started=process.info['create_time']
+                    if (self.data/'DevToolsActivePort').stat().st_mtime < started:continue
+                    if any(c.status=='LISTEN' and c.laddr.port==port and c.laddr.ip in {'127.0.0.1','::1'} for c in process.net_connections(kind='tcp')):
+                        if process.create_time()==started:owners.append(process.pid)
+                if len(owners)!=1 or (self.data/'DevToolsActivePort').read_text().splitlines()!=lines:
+                    raise ValueError('endpoint not published by current browser generation')
                 return f'ws://127.0.0.1:{port}{path}'
-            except (OSError,ValueError,IndexError):time.sleep(.2)
+            except (OSError,ValueError,IndexError,psutil.Error):time.sleep(.2)
         raise RuntimeError('Chrome_endpoint_unavailable: enable chrome://inspect/#remote-debugging; no headless fallback used')
     def _key(self,args,task_id):
         session=args.get('session') or 'default'

@@ -4,7 +4,14 @@ class ConsentError(RuntimeError):pass
 
 
 def select_sheet(sheets, baseline, hosts):
-    candidates=[s for s in sheets if button_for_dialog(s['name'],s['headings'])]
+    unique={}
+    for sheet in sheets:
+        if button_for_dialog(sheet['name'],sheet['headings']):
+            key=sheet['key']
+            if key in unique and any(sheet[k]!=unique[key][k] for k in ('pid','name','headings','buttons')):
+                raise ConsentError('consent_ambiguous: inconsistent sheet observation')
+            unique[key]=sheet
+    candidates=list(unique.values())
     if not candidates:return None
     if len(candidates)!=1:raise ConsentError('consent_ambiguous: multiple debugging sheets')
     sheet=candidates[0]
@@ -232,9 +239,27 @@ def verify_pwa_host(exe,plist,root,*,apps_root=None):
     except (ValueError,OSError,subprocess.SubprocessError):return False
 
 
+def verify_chrome_executable(executable):
+    """Accept only stable Google-signed macOS signing clones, including running pre-update versions."""
+    import re,stat
+    path=Path(executable)
+    if path==CHROME:return True
+    if not re.fullmatch(r'/private/var/folders/[^/]+/[^/]+/X/com\.google\.Chrome\.code_sign_clone/code_sign_clone\.[A-Za-z0-9_-]+/Google Chrome\.app\.bundle/Contents/MacOS/Google Chrome',str(path)):return False
+    try:
+        paths=(path,)
+        before=[p.stat() for p in paths]
+        if not all(stat.S_ISREG(s.st_mode) for s in before):return False
+        requirement='anchor apple generic and identifier "com.google.Chrome" and certificate leaf[subject.OU] = "EQHXZ8M8AV"'
+        for p in paths:
+            check=subprocess.run(['/usr/bin/codesign','--verify','--strict','-R='+requirement,str(p.parents[2])],capture_output=True,timeout=2)
+            if check.returncode:return False
+        return all((p.stat().st_ino,p.stat().st_size,p.stat().st_mtime_ns,p.stat().st_ctime_ns)==(s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns) for p,s in zip(paths,before))
+    except (OSError,subprocess.SubprocessError):return False
+
+
 def host_identity(executable, plist, root):
     path=Path(executable)
-    if path==CHROME and plist.get('CFBundleIdentifier')=='com.google.Chrome' and plist.get('CFBundleExecutable')=='Google Chrome':return 'main'
+    if plist.get('CFBundleIdentifier')=='com.google.Chrome' and plist.get('CFBundleExecutable')=='Google Chrome' and verify_chrome_executable(executable):return 'main'
     if path.name!='app_mode_loader' or path.parent.name!='MacOS' or path.parent.parent.name!='Contents' or path.parents[2].suffix!='.app':return None
     shortcut=plist.get('CrAppModeShortcutID')
     if not shortcut or plist.get('CFBundleExecutable')!='app_mode_loader' or plist.get('CrBundleIdentifier')!='com.google.Chrome' or plist.get('CFBundleIdentifier')!='com.google.Chrome.app.'+shortcut:return None

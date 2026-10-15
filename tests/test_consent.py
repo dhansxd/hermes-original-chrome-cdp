@@ -15,7 +15,7 @@ class CorrelationTests(unittest.TestCase):
     def test_requires_one_new_sheet_on_bound_host(self):
         sheet={'key':(42,1),'pid':42,'name':'','headings':['Izinkan proses debug jarak jauh?'],'buttons':['Izinkan']}
         self.assertEqual(consent.select_sheet([sheet],set(),{42}),sheet)
-        for sheets,baseline,hosts in [([sheet],{(42,1)},{42}),([sheet,sheet],set(),{42}),([sheet],set(),{99})]:
+        for sheets,baseline,hosts in [([sheet],{(42,1)},{42}),([sheet,dict(sheet,key=(42,2))],set(),{42}),([sheet],set(),{99})]:
             with self.assertRaisesRegex(consent.ConsentError,'consent_'):
                 consent.select_sheet(sheets,baseline,hosts)
         self.assertIsNone(consent.select_sheet([],set(),{42}))
