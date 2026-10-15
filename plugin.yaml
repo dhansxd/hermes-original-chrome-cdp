@@ -1,0 +1,16 @@
+name: original-chrome-default
+version: 0.1.0
+description: Scoped original headed Chrome Default adapter; partial acceptance, not production ready
+author: Dyra
+kind: backend
+capabilities:
+  - tools.override
+provides_browser_providers:
+  - original-chrome-default
+provides_tools:
+  - browser_exec
+  - browser_vault_fill
+  - browser_vault_save_login
+  - browser_vault_enter_code
+python_dependencies:
+  - websockets>=15

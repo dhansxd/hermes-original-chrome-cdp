@@ -1,0 +1,100 @@
+"""One bounded execution subprocess; existing harness helpers, private bindings."""
+import contextlib, io, json, sys, time, types
+from pathlib import Path
+from websockets.sync.client import connect
+if __package__:
+    from .binding import BoundBrowser
+    from .consent import connect_with_consent
+else:
+    from binding import BoundBrowser
+    from consent import connect_with_consent
+
+class Wire:
+    def __init__(self, endpoint, data_root=None):
+        self.ws=connect_with_consent(endpoint,data_root,connect) if data_root else connect(endpoint,open_timeout=15)
+        self.counter=0
+    def __call__(self,method,params=None,session=None):
+        self.counter+=1
+        msg={'id':self.counter,'method':method,'params':params or {}}
+        if session:msg['sessionId']=session
+        self.ws.send(json.dumps(msg))
+        while True:
+            response=json.loads(self.ws.recv(timeout=20))
+            if response.get('id')==self.counter:
+                if 'error' in response:raise RuntimeError(str(response['error']))
+                return response.get('result',{})
+    def close(self):self.ws.close()
+
+
+def helper_namespace(browser):
+    import browser_harness.helpers as helpers
+    # Clone functions into a PRIVATE globals mapping. No module/global monkeypatch.
+    ns=dict(vars(helpers))
+    for name,fn in vars(helpers).items():
+        if isinstance(fn,types.FunctionType) and fn.__module__==helpers.__name__:
+            cloned=types.FunctionType(fn.__code__,ns,fn.__name__,fn.__defaults__,fn.__closure__)
+            cloned.__kwdefaults__=fn.__kwdefaults__;ns[name]=cloned
+    ns.update(cdp=browser.cdp,_send=browser.send)
+    ns['ensure_real_tab']=lambda:browser.info()
+    ns['new_tab']=browser.create
+    ns['finish_browser']=lambda retain=(): browser.cleanup(retain)
+    ns['switch_tab']=lambda target,activate=False: switch(browser,target,activate)
+    return ns
+
+
+def switch(browser,target,activate=False):
+    target=target.get('targetId',target.get('target_id')) if isinstance(target,dict) else target
+    browser.info(target);browser.state['current']=target
+    if activate:browser.cdp('Target.activateTarget',targetId=target)
+    return browser.session(target)
+
+
+def initialize(wire,profile,seed_url=None):
+    initial=wire('Target.getTargets')['targetInfos']
+    seeds=[t for t in initial if seed_url and t.get('type')=='page' and t.get('url')==seed_url]
+    if len(seeds)!=1 or not seeds[0].get('browserContextId'):
+        raise RuntimeError('Default_seed_unavailable: no context search or other-profile fallback')
+    target=seeds[0]['targetId'];context=seeds[0]['browserContextId']
+    window=wire('Browser.getWindowForTarget',{'targetId':target})['windowId']
+    state={'current':target,'context':context,'owned':{target:window},'baseline':[t['targetId'] for t in initial if t['targetId']!=target]}
+    browser=BoundBrowser(wire,state);ns=helper_namespace(browser)
+    # Only the explicitly GUI-created seed is inspected, never another profile.
+    ns['goto_url']('chrome://version/')
+    actual=''
+    for _ in range(60):
+        actual=ns['js']('document.getElementById("profile_path")?.textContent || ""')
+        if actual:break
+        time.sleep(.1)
+    if not actual or Path(actual).resolve()!=Path(profile).resolve():
+        wire('Target.closeTarget',{'targetId':target})
+        raise RuntimeError('Default_profile_binding_mismatch: explicit seed was not requested Default')
+    ns['goto_url']('about:blank')
+    return state
+
+
+def run(request):
+    wire=Wire(request['endpoint'],str(Path(request['profile']).parent));state=request.get('state');out=io.StringIO()
+    try:
+        if not state:state=initialize(wire,request['profile'],request.get('seed_url'))
+        browser=BoundBrowser(wire,state)
+        if request.get('cleanup'):return {'state':state,**browser.cleanup(request.get('retain',[]))}
+        browser.info()
+        browser.track_popups()
+        ns=helper_namespace(browser)
+        ns['__name__']='__browser_exec__'
+        workspace=Path(request['workspace']);workspace.mkdir(parents=True,exist_ok=True)
+        # Existing helper workspace globals are private to this namespace.
+        ns['AGENT_WORKSPACE']=workspace
+        local=workspace/'agent_helpers.py'
+        with contextlib.redirect_stdout(out):
+            if local.exists():exec(compile(local.read_text(),str(local),'exec'),ns)
+            exec(compile(request['code'],'<browser_exec>','exec'),ns)
+        return {'success':True,'stdout':out.getvalue()[-20000:],'state':state,'backend':'original-chrome-default','workspace':str(workspace)}
+    except Exception as exc:
+        return {'success':False,'error':str(exc),'error_type':type(exc).__name__,'stdout':out.getvalue()[-20000:],'state':state,'backend':'original-chrome-default','action_replayed':False}
+    finally:wire.close()
+
+if __name__=='__main__':
+    try:result=run(json.load(sys.stdin))
+    except Exception as exc:result={'success':False,'error':str(exc),'error_type':type(exc).__name__,'action_replayed':False}
+    print(json.dumps(result))
