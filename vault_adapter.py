@@ -47,7 +47,6 @@ def invoke(provider, original_handler, args, kwargs):
     provider.last_sessions maps str(task_id or 'default') -> named browser session.
     A prior successful browser_exec must set it. Never infer a session by origin.
     """
-    wire = None
     try:
         with provider.lock:
             task = str(kwargs.get('task_id') or 'default')
@@ -57,14 +56,15 @@ def invoke(provider, original_handler, args, kwargs):
                 return _failure()
             # Copy pins target even if an external callback modifies provider state.
             state = copy.deepcopy(entry['state'])
-            wire = Wire(entry['endpoint'], str(provider.data))
-            browser = BoundBrowser(wire, state)
-            browser.info()
-            adapter = _Transport(browser)
-            namespace = _namespace(original_handler, adapter)
-            result = json.loads(namespace[original_handler.__name__](args, **kwargs))
-            if not adapter.evaluate(task, 'true').get('success'):
-                return _failure('vault_document_changed')
+            observer = entry.get('observer')
+            if observer is None:
+                return _failure()
+            with observer.borrow(state) as browser:
+                adapter = _Transport(browser)
+                namespace = _namespace(original_handler, adapter)
+                result = json.loads(namespace[original_handler.__name__](args, **kwargs))
+                if not adapter.evaluate(task, 'true').get('success'):
+                    return _failure('vault_document_changed')
             # Native save errors can stringify the backend before password
             # redaction registration. Do not expose free-text error fields.
             def scrub_errors(value):
@@ -78,12 +78,6 @@ def invoke(provider, original_handler, args, kwargs):
     except Exception:
         # Never stringify a transport/backend exception: it may contain secret JS.
         return _failure('vault_operation_failed')
-    finally:
-        if wire is not None:
-            try:
-                wire.close()
-            except Exception:
-                pass
 
 
 def _namespace(handler, transport):

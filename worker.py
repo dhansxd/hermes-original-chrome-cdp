@@ -46,6 +46,28 @@ class Wire:
     def close(self):self.ws.close()
 
 
+class PipeWire:
+    """Synchronous commands over this bounded worker's existing stdio pipes."""
+    observation_scope='held parent session; from owned attachment until release/loss'
+    def __init__(self, protocol, source):
+        self.protocol=protocol;self.source=source;self.events=[];self.dialogs={};self.event_overflow=False
+    def __call__(self, method, params=None, session=None):
+        self.protocol.write(json.dumps({'cdp':{'method':method,'params':params,'session':session}})+'\n');self.protocol.flush()
+        line=self.source.readline()
+        if not line:raise RuntimeError('observer_lost: parent pipe closed')
+        response=json.loads(line)
+        if 'error' in response:raise RuntimeError(response['error'])
+        self.dialogs=response['dialogs'];self.event_overflow=response['event_overflow']
+        for event in response['events']:
+            if len(self.events)>=4000:self.event_overflow=True;self.events.pop(0)
+            self.events.append(event)
+            callback=getattr(self,'on_event',None)
+            if callback:callback(event)
+        return response['value']
+    def pump(self):self('__pump__')
+    def close(self):pass # Parent owns the actual Chrome connection.
+
+
 def helper_namespace(browser):
     import browser_harness.helpers as helpers
     # Clone functions into a PRIVATE globals mapping. No module/global monkeypatch.
@@ -57,7 +79,11 @@ def helper_namespace(browser):
     ns.update(cdp=browser.cdp,_send=browser.send)
     ns['ensure_real_tab']=lambda:browser.info()
     ns['new_tab']=browser.create
-    ns['finish_browser']=lambda retain=(): browser.cleanup(retain)
+    def finish(retain=()):
+        try:return browser.cleanup(retain)
+        finally:
+            browser.state['observer_released']=True;browser.checkpoint()
+    ns['finish_browser']=finish
     ns['switch_tab']=lambda target,activate=False: switch(browser,target,activate)
     return ns
 
@@ -98,13 +124,13 @@ def initialize(wire,profile,seed_url=None,cleanup=False):
     return state
 
 
-def run(request, publish=lambda state:None):
+def run(request, publish=lambda state:None, transport=None):
     wire=None;state=request.get('state');out=io.StringIO()
     def checkpoint(value):
         nonlocal state
         state=value;publish(state)
     try:
-        wire=Wire(request['endpoint'],str(Path(request['profile']).parent))
+        wire=transport or Wire(request['endpoint'],str(Path(request['profile']).parent))
         wire.checkpoint=checkpoint
         if not state or not state.get('context'):
             state=initialize(wire,request['profile'],(state or {}).get('pending_seed') or request.get('seed_url'),cleanup=request.get('cleanup',False))
@@ -114,6 +140,7 @@ def run(request, publish=lambda state:None):
         checkpoint(state)
         wire('Target.setDiscoverTargets',{'discover':True})
         browser.info()
+        if transport:browser.session() # Arm Page before any user code, including delayed JS.
         browser.track_popups()
         ns=helper_namespace(browser)
         ns['__name__']='__browser_exec__'
@@ -126,7 +153,7 @@ def run(request, publish=lambda state:None):
             exec(compile(request['code'],'<browser_exec>','exec'),ns)
         return {'success':True,'stdout':out.getvalue()[-20000:],'state':state,'backend':'original-chrome-default','workspace':str(workspace)}
     except Exception as exc:
-        return {'success':False,'error':str(exc),'error_type':type(exc).__name__,'uncertain':isinstance(exc,TimeoutError) or bool((state or {}).get('unresolved_creation')),'stdout':out.getvalue()[-20000:],'state':state,'backend':'original-chrome-default','action_replayed':False}
+        return {'success':False,'error':str(exc),'error_type':type(exc).__name__,'uncertain':isinstance(exc,TimeoutError) or 'observer_lost' in str(exc) or bool((state or {}).get('unresolved_creation')),'stdout':out.getvalue()[-20000:],'state':state,'backend':'original-chrome-default','action_replayed':False}
     finally:
         if wire:wire.close()
 
@@ -134,6 +161,8 @@ if __name__=='__main__':
     protocol=sys.stdout
     def publish(state):
         protocol.write(json.dumps({'checkpoint':state})+'\n');protocol.flush()
-    try:result=run(json.load(sys.stdin),publish)
+    try:
+        request=json.loads(sys.stdin.readline())
+        result=run(request,publish,PipeWire(protocol,sys.stdin) if request.get('parent_transport') else None)
     except Exception as exc:result={'success':False,'error':str(exc),'error_type':type(exc).__name__,'action_replayed':False}
     protocol.write(json.dumps({'result':result})+'\n');protocol.flush()

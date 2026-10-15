@@ -1,6 +1,6 @@
 # Original Chrome Default adapter — partial implementation
 
-Current repair is **source-tested, not deployed**. An earlier revision is installed/enabled and has limited native-chat acceptance (NATIVE-ACCEPTANCE-RESULT.json). No core/harness edits, profile copies, broker or background runtime. New repair evidence is REPAIR-RESULT.md and REPAIR-GUI-RESULT.json.
+Current repair is **source-tested, not deployed**. An earlier revision is installed/enabled and has limited native-chat acceptance (NATIVE-ACCEPTANCE-RESULT.json). No core/harness edits, profile copies, broker or service. The new source holds one in-process CDP connection across bounded Python workers. New repair evidence is REPAIR-RESULT.md and REPAIR-GUI-RESULT.json.
 
 ## Implemented and exercised
 
@@ -21,7 +21,7 @@ Current repair is **source-tested, not deployed**. An earlier revision is instal
 3. **Lifecycle:** automatic mapped cancel/interruption and session-finalization cleanup now use public hooks (8 tests). Ordinary completed turns preserve browser work because the host supplies no authoritative task-finished signal. Explicit `finish_browser()` remains; automatic normal-task completion and immediate post-teardown failure notification are not guaranteed. No timer/persistence system added. See LIFECYCLE-RESULT.md.
 4. Picker provider rows set `browser.cloud_provider` but do not set driver. `browser.backend: browser-use` must already be selected (current production has it, unchanged). Legacy `browser_*` provider `create_session` deliberately refuses to expose a browser-wide endpoint. A menu row is not full legacy-stack support.
 5. Previous revision has installed/native browser and synthetic local-vault fill acceptance plus personal Default/consent evidence. Current repair is source/empty-GUI-tested only. Personal cold-start Keychain/login safety and mixed-window handling have not been newly live-exercised. No universal sandbox: arbitrary Python remains trusted user code, and same-profile windows share login/storage.
-6. Real scoped Page/Network events now back session/pending_dialog/drain_events and no-dialog page_info/network-idle. Observation covers the current worker attachment only, not detached intervals. Same-call alert/confirm observation and raw dismissal pass. Existing dialog continuity across calls remains incomplete and returns explicit uncertainty, never fabricated no-dialog success. Prompt/beforeunload not newly live-tested; no full harness parity claim.
+6. Source observer integration retains one parent CDP connection and exact owned Page sessions across bounded Python workers. Existing worker pipes carry CDP commands/events; no listener/service. Actual cross-call page_info and explicit alert/confirm/prompt decisions pass on empty GUI, including delayed new-tab dialogs. Finish/cancel/finalize/unload release the observer; loss refuses without reconnect/replay. Popup dialogs before attachment and beforeunload remain unverified. Vault borrows only the selected held parent session: no second peer or worker secret payload, silent transport logging and original target/document/origin checks retained. Real synthetic backend/DOM regression passed; actual excluded credential prompts remain untested. See OBSERVER-INTEGRATION-RESULT.md and OBSERVER-VAULT-RESULT.md. Not installed/native-chat accepted yet.
 
 ## Actual verification
 

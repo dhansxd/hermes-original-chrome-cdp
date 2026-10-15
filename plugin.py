@@ -80,6 +80,7 @@ class ChromeProvider(BrowserProvider):
         self.data=Path(data or PERSONAL).resolve()
         self.workspace=Path(workspace or Path.home()/'.hermes/cache/scratch/native-chrome-work')
         self.states={};self.lock=threading.RLock();self.last_cleanup={};self.last_sessions={}
+        self._active_entry: dict={}
     def is_available(self):return sys.platform=='darwin' and CHROME.exists()
     def get_setup_schema(self):
         return {'name':self.display_name,'badge':'local GUI','tag':'Original Default, owned windows; no profile copy','env_vars':[]}
@@ -111,21 +112,40 @@ class ChromeProvider(BrowserProvider):
         # Protocol stdout is distinct from captured user stdout. No durable journal.
         entry=self._active_entry
         frames=[];errors=[]
+        proxied=bool(request.get('endpoint'))
+        if proxied:
+            if __package__:
+                from .observer import ScopedObserver
+            else:
+                from observer import ScopedObserver
+            if request.get('cleanup') and entry.get('observer') and entry['observer'].closed:
+                entry.pop('observer') # Fresh cleanup-only connection; never resumes dialog observation.
+            if 'observer' not in entry:entry['observer']=ScopedObserver(request['endpoint'],request['profile'])
+            request=dict(request,parent_transport=True)
         proc=subprocess.Popen([sys.executable,str(ROOT/'worker.py')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,start_new_session=True)
+        assert proc.stdin is not None and proc.stdout is not None
         def read():
+            assert proc.stdin is not None and proc.stdout is not None
             try:
                 for line in proc.stdout:
                     frame=json.loads(line)
                     if 'checkpoint' in frame:entry['state']=frame['checkpoint']
+                    elif 'cdp' in frame:
+                        try:response=entry['observer'].request(frame['cdp'],entry.get('state'))
+                        except Exception as exc:response={'error':str(exc)}
+                        proc.stdin.write(json.dumps(response)+'\n');proc.stdin.flush()
                     elif 'result' in frame:frames[:]=[frame['result']]
                     else:raise RuntimeError('invalid worker protocol')
             except Exception as exc:errors.append(exc)
         reader=threading.Thread(target=read,daemon=True);reader.start()
         try:
-            proc.stdin.write(json.dumps(request));proc.stdin.close()
+            proc.stdin.write(json.dumps(request)+'\n');proc.stdin.flush()
+            if not proxied:proc.stdin.close()
             try:proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-                os.killpg(proc.pid,signal.SIGKILL);proc.wait();reader.join()
+                os.killpg(proc.pid,signal.SIGKILL);proc.wait()
+                if entry.get('observer'):entry['observer'].close()
+                reader.join()
                 raise
             # A bounded worker does not leave user-spawned descendants holding pipes.
             try:os.killpg(proc.pid,signal.SIGKILL)
@@ -136,6 +156,7 @@ class ChromeProvider(BrowserProvider):
         finally:
             if proc.poll() is None:os.killpg(proc.pid,signal.SIGKILL);proc.wait()
             reader.join();proc.stdout.close()
+            if not proc.stdin.closed:proc.stdin.close()
     def execute(self,args,task_id=None,**kwargs):
         with self.lock:
             key=None;endpoint=None
@@ -155,20 +176,25 @@ class ChromeProvider(BrowserProvider):
                 workspace=self.workspace/str(abs(hash(key)))
                 request={'endpoint':endpoint,'profile':str(self.data/'Default'),'workspace':str(workspace),'state':entry['state'],'seed_url':getattr(self,'seed_url',None),'code':args.get('code','')}
                 result=self._worker(request,timeout)
-                if result.get('state'):self.states[key]={'endpoint':endpoint,'state':result.pop('state')}
+                if result.get('state'):entry['state']=result.pop('state')
+                if entry.get('observer') and ((entry.get('state') or {}).get('observer_released') or not (entry.get('state') or {}).get('owned')):
+                    entry['observer'].close()
+                    if not (entry.get('state') or {}).get('owned'):self.states.pop(key,None)
                 if result.get('uncertain') or (not result.get('success') and (self.states.get(key,{}).get('state') or {}).get('verified') is False):
                     self.states[key]['uncertain']=True
                 if result.get('success') and self.states.get(key,{}).get('state',{}).get('owned'):
                     self.last_sessions[key[0]]=key[1]
                 result['fallback_used']=False
-                result['limitations']=['No arbitrary-Python sandbox','Events cover only this worker attachment, not intervals between calls; a prior observed unresolved dialog returns explicit uncertainty on reconnect','Vault uses version-pinned exact-target adapter; native chat and real prompt acceptance pending','Only opener-linked popups tracked; automatic cleanup on session finalization/interruption, not ordinary turn completion; use finish_browser() for explicit task finish','New tabs use separate owned windows','Consent auto-click verified on personal main Chrome and 9Router PWA; ambiguous/uncorrelated prompts report failure']
+                result['limitations']=['No arbitrary-Python sandbox','Dialogs/events observed from each exact owned Page attachment until release/loss; early popup dialogs before attachment unsupported; observer loss fails without reconnect','Vault uses the exact selected held parent transport/session; missing or lost observer binding refuses without reconnect','Only opener-linked popups tracked; automatic cleanup on session finalization/interruption, not ordinary turn completion; use finish_browser() for explicit task finish','New tabs use separate owned windows','Consent auto-click verified on personal main Chrome and 9Router PWA; ambiguous/uncorrelated prompts report failure']
                 return json.dumps(result)
             except subprocess.TimeoutExpired:
                 if key is not None:
                     self.states.setdefault(key,{'endpoint':endpoint,'state':None})['uncertain']=True
                 return json.dumps({'success':False,'error':'browser_exec_timeout: action outcome uncertain; no retry performed; targets may remain','fallback_used':False,'action_replayed':False})
             except Exception as exc:
-                if key in self.states:self.states[key]['uncertain']=True
+                if key in self.states:
+                    self.states[key]['uncertain']=True
+                    if self.states[key].get('observer'):self.states[key]['observer'].close()
                 return json.dumps({'success':False,'error':str(exc),'error_type':type(exc).__name__,'fallback_used':False,'action_replayed':False})
     def create_session(self,task_id):
         # This provider cannot safely hand its browser-wide endpoint to legacy target selection.
@@ -191,8 +217,13 @@ class ChromeProvider(BrowserProvider):
                         if self.last_sessions.get(key[0])==key[1]:self.last_sessions.pop(key[0],None)
                 except Exception as exc:
                     self.last_cleanup[key]={'success':False,'error':str(exc)};results.append(False)
+                finally:
+                    if entry.get('observer'):entry['observer'].close()
             return all(results)
     def emergency_cleanup(self,session_id):self.close_session(session_id)
+    def unload(self):
+        with self.lock:
+            for task in {key[0] for key in self.states}:self.close_session(task)
 
 
 class BrowserLifecycle:
@@ -259,6 +290,7 @@ def register(ctx):
     from hermes_cli.config import read_raw_config
     provider=ChromeProvider()
     lifecycle=BrowserLifecycle(ctx,provider);lifecycle.register()
+    ctx.on_unload(provider.unload)
     def selected():return read_raw_config().get('browser',{}).get('cloud_provider')==NAME
     def handler(args,**kw):
         if selected():
