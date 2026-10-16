@@ -1,5 +1,9 @@
 # Original Chrome Default adapter
 
+## 0.1.8 — full Chrome exit on explicit finish
+
+`finish_browser()` now requests normal `Browser.close` after successful target cleanup when no other provider session remains. It verifies the matching Chrome main process exits and returns `browser_closed:true`; it does not clear profile data. Other active sessions defer exit (`browser_close_deferred:other_sessions_active`); retained/failed targets prevent exit. Failed or incomplete shutdown is not reported as closed. Finalize/cancel-only cleanup remains target-scoped; this change concerns explicit finish. Same-root GUI reopen and persistent synthetic cookie/storage were verified in `tests/live_browser_finish.py`. Native/installed verification remains pending owner installation; this is not active 0.1.7 behavior.
+
 ## 0.1.7 candidate — dedicated Chrome mode
 
 Chrome is dedicated to automation; browser-wide page auto-attachment may temporarily pause new pages. Original Default profile/account checks and safe GUI/Keychain launch remain mandatory. No profile copy, cookie clearing or login reset.

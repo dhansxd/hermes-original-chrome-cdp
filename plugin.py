@@ -130,6 +130,36 @@ class ChromeProvider(BrowserProvider):
         session=args.get('session') or 'default'
         if not re.fullmatch('[A-Za-z0-9_-]{1,64}',session):raise ValueError('invalid session name')
         return (str(task_id or 'default'),session)
+    def _chrome_processes(self):
+        import psutil
+        found=[]
+        for proc in psutil.process_iter(['name','exe','cmdline']):
+            if proc.info['name']!='Google Chrome':continue
+            try:
+                args=proc.info['cmdline'] or []
+                root=Path(next((v.split('=',1)[1] for v in args if v.startswith('--user-data-dir=')),str(PERSONAL))).resolve()
+                if root==self.data and chrome_executable(proc.info['exe']):found.append(proc)
+            except psutil.NoSuchProcess:continue
+        return found
+
+    def _finish_browser(self, entry):
+        state=entry.get('state') or {}
+        if state.get('owned') or state.get('unresolved_creation'):
+            return {'browser_closed':False,'browser_close_deferred':'targets_remaining'}
+        if any(other is not entry for other in self.states.values()):
+            return {'browser_closed':False,'browser_close_deferred':'other_sessions_active'}
+        processes=self._chrome_processes()
+        observer=entry['observer']
+        error=None
+        try:observer.wire('Browser.close') # Normal Chrome shutdown, never profile deletion.
+        except Exception as exc:error=type(exc).__name__
+        import psutil
+        _,alive=psutil.wait_procs(processes,timeout=5)
+        if alive or (error and not processes):
+            return {'browser_closed':False,'browser_close_error':error or 'Chrome_process_still_running'}
+        observer.close()
+        return {'browser_closed':True}
+
     def _worker(self,request,timeout=300):
         # Protocol stdout is distinct from captured user stdout. No durable journal.
         entry=self._active_entry
@@ -157,7 +187,10 @@ class ChromeProvider(BrowserProvider):
                     frame=json.loads(line)
                     if 'checkpoint' in frame:entry['state']=frame['checkpoint']
                     elif 'cdp' in frame:
-                        try:response=entry['observer'].request(frame['cdp'],entry.get('state'))
+                        try:
+                            if frame['cdp']['method']=='__finish_browser__':
+                                response={'value':self._finish_browser(entry),'events':[],'dialogs':{},'event_overflow':False}
+                            else:response=entry['observer'].request(frame['cdp'],entry.get('state'))
                         except Exception as exc:response={'error':str(exc)}
                         proc.stdin.write(json.dumps(response)+'\n');proc.stdin.flush()
                     elif 'result' in frame:frames[:]=[frame['result']]

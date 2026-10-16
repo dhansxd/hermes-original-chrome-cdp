@@ -102,7 +102,13 @@ def helper_namespace(browser):
     ns['ensure_real_tab']=lambda:browser.info()
     ns['new_tab']=browser.create
     def finish(retain=()):
-        try:return browser.cleanup(retain)
+        try:
+            result=browser.cleanup(retain)
+            if result['success']:
+                result.update(browser.wire('__finish_browser__'))
+                if result.get('browser_close_error'):result['success']=False
+            else:result['browser_closed']=False
+            return result
         finally:
             browser.state['observer_released']=True;browser.checkpoint()
     ns['finish_browser']=finish

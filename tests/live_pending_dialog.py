@@ -38,8 +38,8 @@ def main():
         assert sent.count('Page.navigate')==2,sent # Two explicit requests, neither replayed.
         cleanup=json.loads(checked('import json;print(json.dumps(finish_browser()))')['stdout'])
         assert cleanup['success'] and not cleanup['remaining_owned_targets'],cleanup
-        assert control('Browser.getWindowForTarget',{'targetId':comparator})['windowId']==window
-        out.update(cleanup=cleanup,explicit_navigations=2,actual_navigations=sent.count('Page.navigate'),comparator_preserved=True,success=True)
+        assert cleanup['browser_closed'] and not provider._chrome_processes(),cleanup
+        out.update(cleanup=cleanup,explicit_navigations=2,actual_navigations=sent.count('Page.navigate'),browser_process_exited=True,success=True)
     finally:
         provider.close_session('pending')
         if control:
