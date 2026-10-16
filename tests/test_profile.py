@@ -22,9 +22,23 @@ class ProfileTest(unittest.TestCase):
             calls.append(method)
             if method=='Target.getTargets':return {'targetInfos':[{'targetId':'other','type':'page','browserContextId':'other-context','url':'about:blank'}]}
             raise AssertionError('must not inspect or create a candidate: '+method)
-        with self.assertRaisesRegex(RuntimeError,'Default_seed_unavailable'):
+        from unittest.mock import patch
+        with patch('worker.time.monotonic',side_effect=[0,6]), self.assertRaisesRegex(RuntimeError,'Default_seed_unavailable'):
             initialize(wire,'/fixture/Default',seed_url='data:text/html,unique-seed')
         self.assertEqual(calls,['Target.getTargets'])
+
+    def test_initialize_waits_for_same_seed_url_without_relaunch(self):
+        from worker import initialize
+        from unittest.mock import patch
+        responses=[{'targetInfos':[{'targetId':'seed','type':'page','browserContextId':'ctx','url':'about:blank'}]}, {'targetInfos':[{'targetId':'seed','type':'page','browserContextId':'ctx','url':'file:///exact-seed'}]}]
+        def wire(method,params=None,session=None):
+            if method=='Target.getTargets':return responses.pop(0)
+            if method=='Browser.getWindowForTarget':return {'windowId':2}
+            raise AssertionError(method)
+        with patch('worker.time.sleep'):
+            state=initialize(wire,'/fixture/Default','file:///exact-seed',cleanup=True)
+        self.assertEqual(state['owned'],{'seed':2})
+        self.assertEqual(responses,[])
 
     def test_initialize_only_verifies_explicit_seed(self):
         from worker import initialize

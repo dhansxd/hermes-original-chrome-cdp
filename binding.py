@@ -70,7 +70,7 @@ class BoundBrowser:
             target=params.get('targetId',self.state['current']);self.info(target)
             if method=='Target.attachToTarget': return {'sessionId':self.session(target)}
             result=self.wire(method,{**params,'targetId':target})
-            if method=='Target.closeTarget':
+            if method=='Target.closeTarget' and result.get('success'):
                 self.state['owned'].pop(target,None);self.checkpoint()
             return result
         if method in ('Browser.close','Browser.setDownloadBehavior') or method.startswith(('Storage.','Target.','BrowserContext.')):
@@ -121,6 +121,12 @@ class BoundBrowser:
                     self.checkpoint()
                     added.append(tid);changed=True
             if not changed:break
+        for target in targets:
+            tid=target['targetId']
+            if tid in self.state['owned'] and self.state['owned'][tid] is None:
+                self.info(tid) # Validate recorded identity/context before completing its window binding.
+                self.state['owned'][tid]=self.wire('Browser.getWindowForTarget',{'targetId':tid})['windowId']
+                self.checkpoint()
         return added
 
     def cleanup(self, retain=()):

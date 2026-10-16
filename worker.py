@@ -22,6 +22,9 @@ class Wire:
         sid=event['session_id']
         if event['method']=='Page.javascriptDialogOpening':self.dialogs[sid]=event['params']
         elif event['method']=='Page.javascriptDialogClosed':self.dialogs.pop(sid,None)
+        if (event['method']=='Target.attachedToTarget' and callable(getattr(self,'on_attached',None))
+            and event['params'].get('targetInfo',{}).get('targetId')!=getattr(self,'explicit_attach_target',None)):
+            self.on_attached(event['params'])
         callback=getattr(self,'on_event',None)
         if callback:callback(event)
     def pump(self):
@@ -30,19 +33,38 @@ class Wire:
             try:response=json.loads(self.ws.recv(timeout=0))
             except TimeoutError:return
             self.event(response)
+            getattr(self,'pending_responses',{}).pop(response.get('id'),None)
         raise RuntimeError('event_pump_overrun: observation incomplete')
     def __call__(self,method,params=None,session=None):
+        previous=getattr(self,'explicit_attach_target',None)
+        if method=='Target.attachToTarget':self.explicit_attach_target=(params or {}).get('targetId')
+        try:return self._command(method,params,session)
+        finally:self.explicit_attach_target=previous
+
+    def _command(self,method,params=None,session=None):
         self.counter+=1
-        msg={'id':self.counter,'method':method,'params':params or {}}
+        command_id=self.counter
+        if not hasattr(self,'pending_responses'):self.pending_responses={}
+        if not hasattr(self,'responses'):self.responses={}
+        msg={'id':command_id,'method':method,'params':params or {}}
         if session:msg['sessionId']=session
+        known_dialogs=set(getattr(self,'dialogs',{}))
         self.ws.send(json.dumps(msg))
         while True:
-            try:response=json.loads(self.ws.recv(timeout=20))
+            try:response=self.responses.pop(command_id) if command_id in self.responses else json.loads(self.ws.recv(timeout=20))
             except TimeoutError as exc:raise TimeoutError('CDP_response_timeout: '+method) from exc
             self.event(response)
-            if response.get('id')==self.counter:
+            new_dialogs=set(getattr(self,'dialogs',{}))-known_dialogs
+            if (session is not None and new_dialogs & getattr(self,'dialog_yield_sessions',set())
+                and method not in ('Page.enable','Network.enable','Page.handleJavaScriptDialog','Runtime.runIfWaitingForDebugger')):
+                self.pending_responses[command_id]=method
+                raise RuntimeError('dialog_pending: '+method+' sent once; inspect dialog and answer; do not replay action')
+            if response.get('id') in self.pending_responses:
+                self.pending_responses.pop(response['id'])
+            elif response.get('id')==command_id:
                 if 'error' in response:raise RuntimeError(str(response['error']))
                 return response.get('result',{})
+            elif 'id' in response:self.responses[response['id']]=response
     def close(self):self.ws.close()
 
 
@@ -96,8 +118,13 @@ def switch(browser,target,activate=False):
 
 
 def initialize(wire,profile,seed_url=None,cleanup=False):
-    initial=wire('Target.getTargets')['targetInfos']
-    seeds=[t for t in initial if seed_url and t.get('type')=='page' and t.get('url')==seed_url]
+    deadline=time.monotonic()+5
+    while True:
+        initial=wire('Target.getTargets')['targetInfos']
+        seeds=[t for t in initial if seed_url and t.get('type')=='page' and t.get('url')==seed_url]
+        if seeds or time.monotonic()>=deadline:break
+        time.sleep(.05) # Existing GUI seed may still be navigating after auto-resume.
+
     if len(seeds)!=1 or not seeds[0].get('browserContextId'):
         raise RuntimeError('Default_seed_unavailable: no context search or other-profile fallback')
     target=seeds[0]['targetId'];context=seeds[0]['browserContextId']

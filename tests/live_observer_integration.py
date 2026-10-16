@@ -64,7 +64,7 @@ def main():
         assert held.closed,'explicit finish must release observer even when retaining a result target'
         assert p.close_session(task),p.last_cleanup
         control_after=next(t for t in wire('Target.getTargets')['targetInfos'] if t['targetId']==control)
-        assert control_before==control_after,(control_before,control_after)
+        assert {k:v for k,v in control_before.items() if k!='attached'}=={k:v for k,v in control_after.items() if k!='attached'},(control_before,control_after) # Browser-wide attach transient state is authorized.
         out['manual_comparator_preserved']=True
         execute('print(page_info())')
         entry=p.states[(task,'default')];held=entry['observer'];held.wire.ws.close()

@@ -24,6 +24,23 @@ class BindingTest(unittest.TestCase):
             browser.cdp('Runtime.evaluate',expression='document.title')
         self.assertFalse(any(m=='Target.attachToTarget' and p['targetId']=='manual' for m,p,s in calls))
 
+class CloseAcknowledgementTest(unittest.TestCase):
+    def test_rejected_close_keeps_owned_target_for_cleanup(self):
+        from binding import BoundBrowser
+        calls=[]
+        def wire(method,params=None,session=None):
+            calls.append(method)
+            if method=='Target.getTargets':return {'targetInfos':[{'targetId':'agent','browserContextId':'ctx'}]}
+            if method=='Browser.getWindowForTarget':return {'windowId':2}
+            if method=='Target.closeTarget':return {'success':False}
+            raise AssertionError(method)
+        state={'current':'agent','context':'ctx','owned':{'agent':2}}
+        browser=BoundBrowser(wire,state)
+        self.assertEqual(browser.cdp('Target.closeTarget',targetId='agent'),{'success':False})
+        self.assertEqual(state['owned'],{'agent':2})
+        self.assertFalse(browser.cleanup()['success'])
+        self.assertEqual(calls.count('Target.closeTarget'),2)
+
 class UnsupportedTest(unittest.TestCase):
     def test_unimplemented_events_are_not_reported_as_empty_success(self):
         from binding import BoundBrowser
@@ -31,6 +48,18 @@ class UnsupportedTest(unittest.TestCase):
         for meta in ('pending_dialog','drain_events'):
             with self.assertRaisesRegex(RuntimeError,'unsupported_helper_meta'):
                 browser.send({'meta':meta})
+
+class DiscoveredPopupTest(unittest.TestCase):
+    def test_event_owned_popup_gets_window_before_observer_attachment(self):
+        from binding import BoundBrowser
+        targets=[{'targetId':'agent','type':'page','browserContextId':'ctx'}, {'targetId':'popup','type':'page','browserContextId':'ctx','openerId':'agent'}]
+        def wire(method,params=None,session=None):
+            if method=='Target.getTargets':return {'targetInfos':targets}
+            if method=='Browser.getWindowForTarget':return {'windowId':22}
+            raise AssertionError(method)
+        state={'current':'agent','context':'ctx','owned':{'agent':1,'popup':None},'baseline':[]}
+        b=BoundBrowser(wire,state);b.track_popups()
+        self.assertEqual(state['owned']['popup'],22)
 
 class PopupTest(unittest.TestCase):
     def test_new_popup_with_owned_opener_is_tracked_not_manual_same_window(self):

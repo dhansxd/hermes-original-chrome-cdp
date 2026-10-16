@@ -1,4 +1,17 @@
-# Original Chrome Default adapter — partial implementation
+# Original Chrome Default adapter
+
+## 0.1.7 candidate — dedicated Chrome mode
+
+Chrome is dedicated to automation; browser-wide page auto-attachment may temporarily pause new pages. Original Default profile/account checks and safe GUI/Keychain launch remain mandatory. No profile copy, cookie clearing or login reset.
+
+- One provider-owned parent CDP connection is shared across its named sessions under the existing lock; Python remains in bounded workers. This prevents competing auto-attach owners within one provider (separate provider processes are not coordinated).
+- New owned opener-linked popups are Page/Network-enabled before resume. Other auto-attached pages are resumed/detached, not adopted as work targets.
+- A synchronous action blocked by an observed dialog returns `dialog_pending`; inspect/select the owned dialog target and answer explicitly. The original action has already been sent: never replay it. Late responses retain their command IDs.
+- Raw close `success:false` retains ownership. Event-discovered popups receive their missing window binding. Teardown does not hide action timeout behind BrokenPipeError.
+- Source acceptance: real popup URL and immediate document.write prompts, opener intact, one-execution counters, beforeunload both decisions, cross-call dialogs, scoped cleanup and synthetic vault regression. See `POPUP-INTEGRATION-RESULT.json`, `PENDING-DIALOG-RESULT.json` and `POPUP-PERSONAL-SOURCE-RESULT.json`. Installed/native acceptance of this revision remains pending owner deployment.
+- Existing task-finish policy remains: call `finish_browser()` explicitly; finalization/interruption also attempts cleanup. No durable crash recovery. A retained terminal result is not a resumable pause.
+
+The sections below retain earlier implementation evidence; current 0.1.7 behavior and evidence above supersede their historical early-popup/beforeunload gaps.
 
 Current repair is **source-tested, not deployed**. An earlier revision is installed/enabled and has limited native-chat acceptance (NATIVE-ACCEPTANCE-RESULT.json). No core/harness edits, profile copies, broker or service. The new source holds one in-process CDP connection across bounded Python workers. New repair evidence is REPAIR-RESULT.md and REPAIR-GUI-RESULT.json.
 

@@ -14,12 +14,42 @@ else:
 class ScopedObserver:
     def __init__(self, endpoint, profile):
         self.wire=Wire(endpoint,str(Path(profile).parent))
-        self.sessions={};self.closed=False
+        self.sessions={};self.closed=False;self.state=None;self.auto_attached=False;self.entries=[]
+        self.wire.on_attached=self._attached
+
+    def bind(self, entry):
+        if not any(e is entry for e in self.entries):self.entries.append(entry)
+
+    def _attached(self, params):
+        info=params['targetInfo'];target=info['targetId'];sid=params['sessionId']
+        states=[e.get('state') or {} for e in self.entries]+[self.state or {}]
+        state=next((s for s in states if info.get('browserContextId')==s.get('context') and
+                    (target in s.get('owned',{}) or (target not in s.get('baseline',[]) and info.get('openerId') in s.get('owned',{})))),{})
+        owned=state.get('owned',{})
+        belongs=(info.get('browserContextId')==state.get('context') and
+                 (target in owned or (target not in state.get('baseline',[]) and info.get('openerId') in owned)))
+        if not belongs:
+            self.wire('Runtime.runIfWaitingForDebugger',{},sid)
+            self.wire('Target.detachFromTarget',{'sessionId':sid})
+            return
+        owned.setdefault(target,None)
+        owned[target]=self.wire('Browser.getWindowForTarget',{'targetId':target})['windowId']
+        old=self.sessions.get(target)
+        if old and old!=sid:self.wire('Target.detachFromTarget',{'sessionId':old})
+        self.sessions[target]=sid
+        self.wire('Page.enable',{},sid)
+        self.wire('Network.enable',{},sid)
+        self.wire.dialog_yield_sessions=set(self.sessions.values())
+        self.wire('Runtime.runIfWaitingForDebugger',{},sid)
 
     def request(self, request, state):
         if self.closed:raise RuntimeError('observer_lost: release session; no reconnect or action replay')
         try:
+            self.state=state
             method=request['method'];params=request.get('params') or {};sid=request.get('session')
+            if (state or {}).get('verified') and not self.auto_attached:
+                self.wire('Target.setAutoAttach',{'autoAttach':True,'waitForDebuggerOnStart':True,'flatten':True,'filter':[{'type':'page'},{'exclude':True}]})
+                self.auto_attached=True
             browser=BoundBrowser(self.wire,state or {})
             if method=='__pump__':self.wire.pump();result={}
             else:
@@ -36,7 +66,9 @@ class ScopedObserver:
                         self.wire('Page.enable',{},self.sessions[target])
                         self.wire('Network.enable',{},self.sessions[target])
                     result={'sessionId':self.sessions[target]}
-                else:result=self.wire(method,params,sid)
+                else:
+                    self.wire.dialog_yield_sessions=set(self.sessions.values())
+                    result=self.wire(method,params,sid)
                 if method=='Target.closeTarget' and result.get('success'):
                     # A confirmed close can emit its detach during a later request.
                     closed_sid=self.sessions.pop(params.get('targetId'),None)
