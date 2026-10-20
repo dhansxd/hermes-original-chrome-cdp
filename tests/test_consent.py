@@ -114,7 +114,7 @@ class HandshakeTests(unittest.TestCase):
 
     def test_persistent_invalid_snapshot_stops_before_any_connect(self):
         from unittest.mock import patch,Mock
-        b=Mock();b.scan.side_effect=consent.ConsentError('consent_ax_read:-25202')
+        b=Mock(spec=['scan','press']);b.scan.side_effect=consent.ConsentError('consent_ax_read:-25202')
         attach=Mock()
         with patch('consent.time.monotonic',side_effect=[0,0,2]),patch('consent.time.sleep'):
             with self.assertRaisesRegex(consent.ConsentError,'consent_preflight_failed.*-25202'):
@@ -300,5 +300,47 @@ class NativeTests(unittest.TestCase):
             ax.return_value.trusted.return_value=False
             with self.assertRaisesRegex(consent.ConsentError,'consent_accessibility'):
                 consent.MacConsent('/fixture',5000).scan()
+
+
+class StalePreflightTests(unittest.TestCase):
+    def test_preexisting_prompt_blocks_before_new_handshake(self):
+        from unittest.mock import Mock
+        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],'buttons':['Allow','Cancel']}
+        backend=Mock(spec=['scan']);backend.scan.return_value=[sheet];attach=Mock()
+        with self.assertRaisesRegex(consent.ConsentError,'preexisting'):
+            consent.connect_with_consent('ws://127.0.0.1:5000/devtools/browser/id','/fixture',attach,backend=backend,timeout=.2)
+        attach.assert_not_called()
+    def test_orphan_cleanup_never_approves_and_preserves_other_dialogs(self):
+        from unittest.mock import Mock
+        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],'buttons':['Allow','Cancel']}
+        unrelated=dict(sheet,key=(42,2),name='Save password?',buttons=['Save'])
+        b=consent.MacConsent('/fixture',5000,'/devtools/browser/id')
+        b.scan=Mock(side_effect=[[sheet,unrelated],[unrelated]]);b.no_peers=Mock(return_value=True);b.cancel_sheet=Mock()
+        b.prepare()
+        b.cancel_sheet.assert_called_once_with(sheet,orphan=True);self.assertEqual(b.scan.call_count,2)
+    def test_existing_peer_prevents_orphan_cleanup(self):
+        from unittest.mock import Mock
+        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],'buttons':['Allow','Cancel']}
+        b=consent.MacConsent('/fixture',5000,'/devtools/browser/id');b.scan=Mock(return_value=[sheet]);b.no_peers=Mock(return_value=False);b.cancel_sheet=Mock()
+        with self.assertRaisesRegex(consent.ConsentError,'preexisting'):b.prepare()
+        b.cancel_sheet.assert_not_called()
+
+
+class AbortCleanupTests(unittest.TestCase):
+    def test_failed_native_handshake_closes_socket_before_orphan_cleanup(self):
+        from unittest.mock import Mock,patch
+        order=[]
+        class Backend(consent.MacConsent):
+            def prepare(self):return []
+            def scan(self):return []
+            def hosts(self):return set()
+            def cleanup_abandoned(self,baseline):order.append('cleanup')
+        sock=Mock();sock.shutdown.side_effect=lambda *a:order.append('shutdown');sock.close.side_effect=lambda:order.append('close')
+        def fail(*a,**kw):
+            self.assertIs(kw['sock'],sock);raise TimeoutError('fixture timeout')
+        with patch('socket.create_connection',return_value=sock):
+            with self.assertRaisesRegex(consent.ConsentError,'fixture timeout'):
+                consent.connect_with_consent('ws://127.0.0.1:5000/devtools/browser/id','/fixture',fail,backend=Backend('/fixture',5000),timeout=1)
+        self.assertLess(order.index('close'),order.index('cleanup'))
 
 if __name__=='__main__':unittest.main()
