@@ -16,6 +16,8 @@ The only companion project is [google-flow-api](https://github.com/dhansxd/googl
 
 Only consent handshake/cancellation and owned target-close share a root-scoped lock. Settled-peer receipts require a current endpoint/process/socket and independent descriptor pin. Unknown/pending peers remain ambiguous; page reads/actions are not globally serialized.
 
+An uncertain named session still rejects page actions. For explicit recovery, send only `finish_browser()` or `print(finish_browser())` in that same session, optionally with comments. The expression is parsed, never executed as user code, and routes to cleanup for that named session only. A failed close preserves quarantine and reports failure; it does not replay the original action or close another named session.
+
 **Known gap:** an opener-linked popup that opens a JavaScript dialog before Page attachment may time out without the callback. Do not claim this is fixed by related-only observation. Post-attachment dialog/vault and plain-popup evidence is separate. No universal OS-permission, hard-crash, long-run or paid-generation claim.
 
 ## Build and acceptance

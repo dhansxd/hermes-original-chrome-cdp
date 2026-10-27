@@ -1,5 +1,5 @@
 """Original headed Chrome provider and public browser_exec override. No core mutation."""
-import copy, ctypes, json, os, re, secrets, signal, subprocess, sys, threading, time
+import ast, copy, ctypes, json, os, re, secrets, signal, subprocess, sys, threading, time
 from pathlib import Path
 from agent.browser_provider import BrowserProvider
 
@@ -238,7 +238,19 @@ class ChromeProvider(BrowserProvider):
                 if self.data==PERSONAL.resolve():verify_account(self.data,EXPECTED_ACCOUNT)
                 timeout=max(5,min(1800,int(args.get('timeout_s',300))))
                 entry=self.states.get(key)
-                if entry and entry.get('uncertain'):raise RuntimeError('previous_execution_outcome_uncertain: do not replay; inspect and release session')
+                if entry and entry.get('uncertain'):
+                    # Only the exact finish expression can cross quarantine. It is
+                    # parsed, never executed; the worker receives cleanup, not code.
+                    code=args.get('code','')
+                    try:
+                        tree=ast.parse(code)
+                        finish_only=any(ast.dump(tree,include_attributes=False)==ast.dump(ast.parse(allowed),include_attributes=False)
+                                        for allowed in ('finish_browser()','print(finish_browser())'))
+                    except (SyntaxError,TypeError):finish_only=False
+                    if not finish_only:raise RuntimeError('previous_execution_outcome_uncertain: do not replay; inspect and release session')
+                    self.close_session(key[0],session=key[1])
+                    result=self.last_cleanup.get(key,{'success':False,'error':'cleanup_outcome_unknown'})
+                    return json.dumps(dict(result,fallback_used=False,action_replayed=False,cleanup_only=True))
                 if not entry:
                     entry={'endpoint':None,'state':None}
                     self.states[key]=entry
@@ -271,11 +283,11 @@ class ChromeProvider(BrowserProvider):
     def create_session(self,task_id):
         # This provider cannot safely hand its browser-wide endpoint to legacy target selection.
         raise RuntimeError('Use browser.backend=browser-use with the approved browser_exec override; legacy browser_* attachment is not safe')
-    def close_session(self,session_id):
+    def close_session(self,session_id,session=None):
         with self.lock:
             results=[]
             for key,entry in list(self.states.items()):
-                if key[0]!=str(session_id):continue
+                if key[0]!=str(session_id) or (session is not None and key[1]!=session):continue
                 try:
                     if not entry.get('state') or not entry.get('endpoint'):
                         self.last_cleanup[key]={'success':False,'error':'ownership_lost_after_timeout: no targets adopted for cleanup'}

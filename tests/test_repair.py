@@ -40,6 +40,43 @@ class OwnershipTests(unittest.TestCase):
             self.assertIn('uncertain',second['error'])
 
 class ProgressTests(unittest.TestCase):
+    def test_uncertain_session_accepts_only_explicit_named_cleanup(self):
+        p=ChromeProvider(data='/synthetic-empty-root')
+        for name in ('failed','peer'):
+            p.states[('task',name)]={'endpoint':'ws://fixture','state':{'owned':{name:1}},'uncertain':True}
+        requests=[]
+        def worker(request,timeout=300):
+            requests.append(request)
+            return {'success':True,'state':{'owned':{}},'remaining_owned_targets':[]}
+        p._worker=worker
+        refused=json.loads(p.execute({'session':'failed','code':'print(finish_browser(), new_tab())'},task_id='task'))
+        self.assertFalse(refused['success']);self.assertFalse(requests)
+        result=json.loads(p.execute({'session':'failed','code':'# cleanup only\nprint(finish_browser())'},task_id='task'))
+        self.assertTrue(result['success'],result)
+        self.assertEqual(len(requests),1)
+        self.assertTrue(requests[0]['cleanup'])
+        self.assertNotIn('code',requests[0])
+        self.assertEqual(requests[0]['state']['owned'],{'failed':1})
+        self.assertNotIn(('task','failed'),p.states)
+        self.assertIn(('task','peer'),p.states)
+        self.assertFalse(result['action_replayed'])
+
+    def test_uncertain_cleanup_failure_preserves_binding_and_quarantine(self):
+        p=ChromeProvider(data='/synthetic-empty-root')
+        key=('task','failed')
+        p.states[key]={'endpoint':'ws://fixture','state':{'owned':{'failed':1}},'uncertain':True}
+        requests=[]
+        def worker(request,timeout=300):
+            requests.append(request)
+            return {'success':False,'error':'close_unconfirmed','remaining_owned_targets':['failed']}
+        p._worker=worker
+        result=json.loads(p.execute({'session':'failed','code':'finish_browser()'},task_id='task'))
+        self.assertFalse(result['success'])
+        self.assertIn(key,p.states);self.assertTrue(p.states[key]['uncertain'])
+        refused=json.loads(p.execute({'session':'failed','code':'new_tab()'},task_id='task'))
+        self.assertFalse(refused['success']);self.assertEqual(len(requests),1)
+        self.assertEqual(p.last_cleanup[key]['error'],'close_unconfirmed')
+
     def test_wire_timeout_result_quarantines_session_without_replay(self):
         p=ChromeProvider(data='/synthetic-empty-root');p.endpoint=lambda:'ws://fixture'
         calls=[]

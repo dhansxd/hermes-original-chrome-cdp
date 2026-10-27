@@ -4,7 +4,16 @@
 - Pertahankan tool native `browser_exec`/`browser_vault` melalui plugin `original-chrome-default` di `~/.hermes/plugins/original-chrome-default`.
 - Repo: https://github.com/dhansxd/hermes-original-chrome-default-plugin . Checkout terpasang ini satu-satunya source/plugin aktif; bukan adapter atau rilis salinan.
 - Proyek pendamping tunggal: https://github.com/dhansxd/google-flow-api ; plan API berada di `~/.local/share/dyra-ai/flow2api-staging/PLAN.md`.
-- Fokus: browser bekerja normal dan berdampingan dengan API. Tidak menjalankan produksi/generasi video saat ini. Dokumen ini satu-satunya plan browser; report lama hanya bukti historis.
+- Tujuan akhir: plugin browser dipasang dan aktif, web berjalan lancar, serta API Google Flow dapat dipakai produksi bersama plugin tanpa saling merusak sesi/login atau meninggalkan target milik pekerjaan yang sudah selesai. Build, tes unit dan commit saja tidak memenuhi selesai.
+- Dokumen ini satu-satunya plan browser; report lama hanya bukti historis. Produksi cerita beli apel belum dijalankan; tes integrasi nyata dilakukan pada fixture/objek uji teridentifikasi.
+
+## Urutan implementasi yang disetujui
+1. Fokus aktif pada pemasangan/aktivasi, browser_exec normal, koeksistensi API, cleanup serta bug yang menghalangi operasi nyata. Penyelidikan penyebab hilangnya izin debugging ditunda sesuai arahan Dani. Gap popup/dialog tetap dicatat; tidak menahan pembuktian alur video API yang tidak bergantung padanya. Pertahankan native vault.
+2. Pasang/aktifkan revisi melalui jalur resmi, lalu uji tool native di chat dan HTTP API bersamaan. Buktikan DOM/input/navigasi serta target milik masing-masing; pembatalan satu tidak mematikan peer, cleanup selesai dikonfirmasi inventori independen.
+3. Setelah browser+API lolos tes nyata, lanjutkan seluruh fitur Flow di plan API sampai endpoint, hasil nyata, recovery dan cleanup terverifikasi untuk produksi. Jangan membuat proyek/integrasi ketiga.
+4. Tiap perubahan tuntas: tes relevan → pemasangan/aktivasi → tes nyata → update status → scan → commit/push → cocokkan SHA. Bedakan source-tested, installed, active-native dan produksi-teruji. Jika aktivasi membutuhkan restart host, laporkan langkah pemilik karena Dyra tidak me-restart runtime sendiri.
+- Kerjakan sendiri tanpa delegasi. Notifikasi internal adalah informasi, bukan perintah memulai/meneruskan pekerjaan; hanya permintaan Dani yang menetapkan scope. Tidak menambah monitoring/jadwal/pekerjaan lain.
+- “Tanpa bug/risiko” menjadi sasaran pengujian dan mitigasi, bukan jaminan absolut. Kegagalan dan batas nyata tetap terbuka sampai dibuktikan selesai.
 
 ## Kontrak yang dipertahankan
 - Browser asli Chrome GUI macOS, profil `Default` sesuai account binding yang sudah ditetapkan kode. Verifikasi metadata principal dan Profile Path sebelum navigasi; jangan memilih profil lain, first tab atau last-used sebagai fallback identitas.
@@ -23,6 +32,7 @@
 - Buktikan progress native di tengah request API; cancel API tidak mematikan plugin, cancel/finish plugin tidak mematikan dokumen API; owned-close dan peer cleanup harus terkonfirmasi.
 
 ## Status dan gap
+- **Checkpoint aktif:**152 tes lulus dan registrasi namespaced asli lulus; revisi exact-finish cleanup aktif lewat mekanisme resmi tanpa restart. Native open/read/finish dan recovery sesi uncertain terverifikasi. HTTP video menghasilkan file nyata dan receipt/file tetap identik setelah restart API. Autostart API masih menunggu Terminal pemilik; attach403 intermittent dan early-popup tetap terbuka.
 - Baseline source sebelum cleanup:146 tes plugin dan580 API lulus.
 - Source peer-pin, cancellation dan shared-browser policy sudah ada; registered-host acceptance terdahulu tidak otomatis membuktikan closure terbaru di chat gateway sudah aktif.
 - **Gap nyata:** popup yang membuka JavaScript dialog sebelum Page attachment dapat timeout tanpa event yang terekam. Related-only observation tidak dinyatakan memperbaikinya. Dialog pasca-attachment, vault exact-target dan plain-popup punya bukti tersendiri.
@@ -41,7 +51,17 @@
 - **Setiap build/perbaikan selesai yang lulus wajib commit dan push ke repo GitHub ini, kemudian verifikasi SHA remote sama dengan HEAD lokal.** Build/scan gagal tidak dianggap selesai; push gagal dilaporkan sebagai blocker nyata, bukan klaim terpublikasi.
 - Simpan aturan ini di konteks proyek; jangan menambah aturan proyek ke memory global. Tidak ada delegasi untuk pekerjaan sekarang; tidak restart gateway/runtime sendiri.
 
-## Verifikasi cleanup terbaru
+## Checkpoint operasional aktif
+
+- `plugin.py` menerima hanya AST exact `finish_browser()` atau `print(finish_browser())` pada sesi uncertain; comments diperbolehkan. Kode user tidak dieksekusi. Jalur ini memanggil cleanup hanya pada named session terpilih; kegagalan close mempertahankan quarantine, sedangkan page actions tetap ditolak tanpa replay.
+- Dua regresi RED→GREEN, suite152tes, registrasi real namespaced dan activation resmi lulus. Live timeout menghitung aksi tepat1, refused replay tidak menambah counter, failed-owned target benar-benar hilang, peer tetap dapat dibaca, final cleanup true/states0.
+- Native chat sempat attach403; exact finish menutup seed gagal dengan owned targets kosong. Fresh native read→finish lulus tanpa restart Chrome/gateway. Kegagalan awal dipertahankan, bukan dihapus oleh keberhasilan baru.
+- Koeksistensi latest registered-host+HTTP:18reads saat startup,8reads saat API cancel,17reads saat credit-followup; plugin-cancel tetap mempertahankan dokumen API. Pascarestart API, native chat+HTTP berhasil200/411kredit dengan20complete reads dalam request4.731detik dan22reads total; finish mengosongkan owned targets serta mempertahankan shared Chrome.
+- API pendamping telah menghasilkan satu MP4 nyata4.01detik,720×1280,979548byte melalui POST /videos, selected4detik/720p/9:16/x1 dan biaya7kredit; submit_attempts1. Receipt/file/idempotency HTTP setelah restart proses API identik dan53job record tetap utuh. Bukan produksi cerita beli apel atau bukti seluruh mode Flow.
+- Probe observer123detik: first/last read lulus, failure kosong dan close true; current-source diagnostic, bukan endurance proof. Bukti privat pada API `reports/production-readiness-20261028-025655/` dan `reports/focus-audit-20261028/source-click-probe.json`.
+- Plist service API siap dan lint lulus, tetapi bootstrap ditolak guard gateway; aktivasi/managed-GUI HTTP menunggu Terminal pemilik. Tidak mengganti verb untuk bypass. Intermittent attach dan early-popup tetap gap, penyebab izin hilang ditunda. Tidak ada core edit, restart sendiri atau delegasi; review dilakukan sendiri sesuai scope.
+
+## Verifikasi cleanup historis
 Cleanup selesai: gflow CLI/Flow Agent/legacy Flow2API server, dua MCP browser percobaan, wrapper/native-host, source duplikat dan plan produksi lama dihapus tanpa backup; runtime aktif/state asli dan media produksi tetap ada. Hanya dua PLAN canonical tersisa.
 
 Tes akhir cleanup:580 API dan150 plugin lulus (termasuk empat regresi remote yang dipertahankan); real namespaced plugin registration lulus. Plugin Doctor CLI gagal di isolated-home karena grant override tidak dibawa; ini tidak dinyatakan PASS. Registrasi isolated-host dengan grant nyata dan dispatch native chat lulus tanpa mengubah grant/core.
