@@ -32,7 +32,7 @@
 - Buktikan progress native di tengah request API; cancel API tidak mematikan plugin, cancel/finish plugin tidak mematikan dokumen API; owned-close dan peer cleanup harus terkonfirmasi.
 
 ## Status dan gap
-- **Checkpoint aktif:**152 tes lulus dan registrasi namespaced asli lulus; revisi exact-finish cleanup aktif lewat mekanisme resmi tanpa restart. Native open/read/finish dan recovery sesi uncertain terverifikasi. HTTP video menghasilkan file nyata dan receipt/file tetap identik setelah restart API. Autostart API masih menunggu Terminal pemilik; attach403 intermittent dan early-popup tetap terbuka.
+- **Checkpoint aktif:** source plugin terakhir `550b8df` tidak sedang diperbaiki;152tes dan native open/read/finish adalah bukti lulus terdahulu. Service API sudah aktif/health200, tetapi GUI API terakhir502. Regresi urutan startup ada pada API `5702b9e`, bukan bukti seluruh source plugin rusak. Accessibility API kemudian granted; Automation System Events dari service sempat prompt/timeout dan pemulihannya belum terbukti. Patch API lokal belum tuntas (29tes cleanup,3gagal); koeksistensi pada patch itu belum diuji. Early-popup dan attach historis lainnya tetap terbuka.
 - Baseline source sebelum cleanup:146 tes plugin dan580 API lulus.
 - Source peer-pin, cancellation dan shared-browser policy sudah ada; registered-host acceptance terdahulu tidak otomatis membuktikan closure terbaru di chat gateway sudah aktif.
 - **Gap nyata:** popup yang membuka JavaScript dialog sebelum Page attachment dapat timeout tanpa event yang terekam. Related-only observation tidak dinyatakan memperbaikinya. Dialog pasca-attachment, vault exact-target dan plain-popup punya bukti tersendiri.
@@ -43,7 +43,8 @@
 2. [x] Suite source + namespaced PluginManager registration + compile lulus.
 3. [x] Native chat open/read/finish dan registered-host+HTTP concurrency/cancel lulus tanpa generasi.
 4. [x] Source-only secret scan, commit, push dan remote SHA terverifikasi.
-5. [ ] Gap early-popup tetap terbuka sampai perbaikan yang diuji, bukan ditutup oleh smoke test.
+5. [ ] Selesaikan regresi startup di plan API, verifikasi HTTP service+native coexistence tanpa generasi, lalu publikasikan perbaikan yang lulus. Plugin source tidak diubah tanpa regresi plugin yang terukur; koreksi status plan dipublikasikan sebagai dokumentasi tersendiri.
+6. [ ] Gap early-popup tetap terbuka sampai perbaikan yang diuji, bukan ditutup oleh smoke test.
 
 ## Build dan publikasi setiap perubahan
 - Pakai runtime Hermes yang nyata, bukan menebak `.venv`: `hermes --run-module unittest discover -s tests -p 'test_*.py'`; registrasi via `tests/registration.py` dalam proses terpisah; compile source yang berubah.
@@ -59,7 +60,7 @@
 - Koeksistensi latest registered-host+HTTP:18reads saat startup,8reads saat API cancel,17reads saat credit-followup; plugin-cancel tetap mempertahankan dokumen API. Pascarestart API, native chat+HTTP berhasil200/411kredit dengan20complete reads dalam request4.731detik dan22reads total; finish mengosongkan owned targets serta mempertahankan shared Chrome.
 - API pendamping telah menghasilkan satu MP4 nyata4.01detik,720×1280,979548byte melalui POST /videos, selected4detik/720p/9:16/x1 dan biaya7kredit; submit_attempts1. Receipt/file/idempotency HTTP setelah restart proses API identik dan53job record tetap utuh. Bukan produksi cerita beli apel atau bukti seluruh mode Flow.
 - Probe observer123detik: first/last read lulus, failure kosong dan close true; current-source diagnostic, bukan endurance proof. Bukti privat pada API `reports/production-readiness-20261028-025655/` dan `reports/focus-audit-20261028/source-click-probe.json`.
-- Plist service API siap dan lint lulus, tetapi bootstrap ditolak guard gateway; aktivasi/managed-GUI HTTP menunggu Terminal pemilik. Tidak mengganti verb untuk bypass. Intermittent attach dan early-popup tetap gap, penyebab izin hilang ditunda. Tidak ada core edit, restart sendiri atau delegasi; review dilakukan sendiri sesuai scope.
+- Bukti service historis04:31: health401/200 dan GUI502 karena Accessibility saat itu denied; native fixture0tab tersisa, job53,0generasi. Bukti API `reports/post-restart-20261028-043158/RESULT.json` tersusul oleh `reports/attach-diagnosis-20261028-051129/TCC_051303.json` yang mencatat Accessibility granted. Pemeriksaan lanjutan mengisolasi regresi API launch-before-attach lewat Git serta prompt/timeout Automation service terpisah; helper langsung yang berhasil tidak dihitung sebagai HTTP acceptance. Tidak meminta ulang aktivasi/Accessibility dan tidak mengubah plugin untuk menutupi kegagalan API.
 
 ## Verifikasi cleanup historis
 Cleanup selesai: gflow CLI/Flow Agent/legacy Flow2API server, dua MCP browser percobaan, wrapper/native-host, source duplikat dan plan produksi lama dihapus tanpa backup; runtime aktif/state asli dan media produksi tetap ada. Hanya dua PLAN canonical tersisa.
