@@ -32,7 +32,7 @@
 1. [x] Cleanup semua source/instalasi/browser MCP percobaan dan plan lama tanpa backup; pertahankan dependensi vendor aktif.
 2. [x] Suite source + namespaced PluginManager registration + compile lulus.
 3. [x] Native chat open/read/finish dan registered-host+HTTP concurrency/cancel lulus tanpa generasi.
-4. [ ] Source-only secret scan, commit, push dan remote SHA terverifikasi.
+4. [x] Source-only secret scan, commit, push dan remote SHA terverifikasi.
 5. [ ] Gap early-popup tetap terbuka sampai perbaikan yang diuji, bukan ditutup oleh smoke test.
 
 ## Build dan publikasi setiap perubahan
@@ -50,4 +50,4 @@ Native chat browser_exec + HTTP credits:200/5.651451detik,23complete DOM reads d
 
 Registered current-source + HTTP: startup200/4.497470detik dengan18complete native reads; worker SIGTERM menghasilkan expected502 dengan confirmed cleanup dan8reads; credits-followup200/4.495089detik dengan17reads. Plugin cancel tumpang tindih1.698167detik dengan HTTP read yang tetap same-document; subsequent read dan exact API-owned close200. Chrome process generation tetap sama;0generation requests. Service uji8776 ditutup.
 
-Bukti privat: `reports/cleanup-coexistence-20261028-012005/`. Tidak ada restart/delegasi/core edit. Build/compile dan staged secret scan lulus. Publikasi checkpoint ini wajib commit+push lalu verifikasi SHA remote; hasil aktual ada di handoff dan report publikasi lokal.
+Bukti privat: `reports/cleanup-coexistence-20261028-012005/`. Tidak ada restart/delegasi/core edit. Build/compile dan staged/outgoing secret scan lulus. Checkpoint source sudah di-commit dan di-push: API `5702b9e`, plugin `62f243f`; masing-masing SHA main remote sama dengan lokal. Source tidak berubah saat merge riwayat plugin. Hasil tersimpan di report publikasi lokal; pembaruan dokumentasi dipublikasikan terpisah.
