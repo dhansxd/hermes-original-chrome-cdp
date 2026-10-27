@@ -1,5 +1,5 @@
-"""One bounded execution subprocess; existing harness helpers, private bindings."""
-import contextlib, io, json, sys, time, types
+"""One bounded execution subprocess; plugin-owned helpers, private bindings."""
+import contextlib, io, json, sys, time
 from pathlib import Path
 from websockets.sync.client import connect
 if __package__:
@@ -14,12 +14,18 @@ class Wire:
         self.ws=connect_with_consent(endpoint,data_root,connect) if data_root else connect(endpoint,open_timeout=15)
         self.counter=0
     def event(self,response):
-        if not hasattr(self,'events'):self.events=[];self.dialogs={};self.event_overflow=False
+        if not hasattr(self,'events'):self.events=[];self.dialogs={};self.event_overflow=False;self.event_gaps={};self.detached_sessions=set()
         if not response.get('method'):return
         event={'method':response['method'],'params':response.get('params',{}),'session_id':response.get('sessionId')}
-        if len(self.events)>=4000:self.event_overflow=True;self.events.pop(0)
+        if len(self.events)>=4000:
+            self.event_overflow=True
+            lost=self.events.pop(0).get('session_id')
+            if lost in self.event_gaps:self.event_gaps[lost]=True
         self.events.append(event)
         sid=event['session_id']
+        if event['method']=='Target.detachedFromTarget':
+            detached=event['params'].get('sessionId')
+            if detached in self.event_gaps:self.detached_sessions.add(detached)
         if event['method']=='Page.javascriptDialogOpening':self.dialogs[sid]=event['params']
         elif event['method']=='Page.javascriptDialogClosed':self.dialogs.pop(sid,None)
         if (event['method']=='Target.attachedToTarget' and callable(getattr(self,'on_attached',None))
@@ -72,33 +78,37 @@ class PipeWire:
     """Synchronous commands over this bounded worker's existing stdio pipes."""
     observation_scope='held parent session; from owned attachment until release/loss'
     def __init__(self, protocol, source):
-        self.protocol=protocol;self.source=source;self.events=[];self.dialogs={};self.event_overflow=False
+        self.protocol=protocol;self.source=source;self.events=[];self.dialogs={};self.event_overflow=False;self.event_gaps={}
     def __call__(self, method, params=None, session=None):
-        self.protocol.write(json.dumps({'cdp':{'method':method,'params':params,'session':session}})+'\n');self.protocol.flush()
+        self.protocol.write(json.dumps({'cdp':{'method':method,'params':params,'session':session,
+            'event_gaps':[sid for sid,gap in self.event_gaps.items() if gap]}})+'\n');self.protocol.flush()
         line=self.source.readline()
         if not line:raise RuntimeError('observer_lost: parent pipe closed')
         response=json.loads(line)
         if 'error' in response:raise RuntimeError(response['error'])
-        self.dialogs=response['dialogs'];self.event_overflow=response['event_overflow']
+        self.dialogs=response['dialogs'];self.event_overflow=self.event_overflow or response['event_overflow']
+        self.event_gaps={sid:gap or self.event_gaps.get(sid,False) for sid,gap in response.get('event_gaps',{}).items()}
         for event in response['events']:
-            if len(self.events)>=4000:self.event_overflow=True;self.events.pop(0)
+            if len(self.events)>=4000:
+                self.event_overflow=True
+                lost=self.events.pop(0).get('session_id')
+                if lost in self.event_gaps:self.event_gaps[lost]=True
             self.events.append(event)
             callback=getattr(self,'on_event',None)
             if callback:callback(event)
+        if any(gap and not response.get('event_gaps',{}).get(sid,False) for sid,gap in self.event_gaps.items()):
+            self('__history_gap__') # Publish even if this was the worker's last command.
         return response['value']
     def pump(self):self('__pump__')
     def close(self):pass # Parent owns the actual Chrome connection.
 
 
 def helper_namespace(browser):
-    import browser_harness.helpers as helpers
-    # Clone functions into a PRIVATE globals mapping. No module/global monkeypatch.
-    ns=dict(vars(helpers))
-    for name,fn in vars(helpers).items():
-        if isinstance(fn,types.FunctionType) and fn.__module__==helpers.__name__:
-            cloned=types.FunctionType(fn.__code__,ns,fn.__name__,fn.__defaults__,fn.__closure__)
-            cloned.__kwdefaults__=fn.__kwdefaults__;ns[name]=cloned
-    ns.update(cdp=browser.cdp,_send=browser.send)
+    # A reviewed local snapshot, not executable behavior from host internals.
+    # Each call has independent globals (workspace, input state and custom helpers).
+    source=Path(__file__).resolve().parent/'vendor/helpers.py'
+    ns={'__name__':'__browser_exec__','cdp':browser.cdp,'_send':browser.send,'AGENT_WORKSPACE':None}
+    exec(compile(source.read_text(),str(source),'exec'),ns)
     ns['ensure_real_tab']=lambda:browser.info()
     ns['new_tab']=browser.create
     def finish(retain=()):

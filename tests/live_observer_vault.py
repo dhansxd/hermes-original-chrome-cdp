@@ -42,26 +42,36 @@ def main():
         execute('goto_url('+repr(origin+'/login')+'); wait_for_load(); print(page_info())')
         entry = p.states[('fixture','default')]
         observer = entry['observer']; wire = observer.wire
+        def held(method, params=None, session=None):
+            # Fixture-only raw comparator access shares the production reader lock.
+            with observer._lock:return observer.wire(method, params, session)
         agent = entry['state']['current']; sid = observer.sessions[agent]
         # Comparator setup uses this same parent transport, no extra CDP peer.
-        manual = wire('Target.createTarget',{'url':origin+'/login','newWindow':True,'browserContextId':entry['state']['context']})['targetId']
-        ms = wire('Target.attachToTarget',{'targetId':manual,'flatten':True})['sessionId']
-        before = wire('Browser.getWindowForTarget',{'targetId':manual})['windowId']
+        manual = held('Target.createTarget',{'url':origin+'/login','newWindow':True,'browserContextId':entry['state']['context']})['targetId']
+        ms = held('Target.attachToTarget',{'targetId':manual,'flatten':True})['sessionId']
+        before = held('Browser.getWindowForTarget',{'targetId':manual})['windowId']
         for _ in range(40):
-            if wire('Runtime.evaluate',{'expression':'!!document.getElementById("pw")','returnByValue':True},ms)['result'].get('value'):break
+            if held('Runtime.evaluate',{'expression':'!!document.getElementById("pw")','returnByValue':True},ms)['result'].get('value'):break
             time.sleep(.1)
+        if os.environ.get('OVERFLOW_VAULT')=='1':
+            execute('js("window.noise=setInterval(()=>fetch(\'data:text/plain,vault-gap\'),5);setTimeout(()=>clearInterval(noise),8000);true")')
+            time.sleep(9)
+            with observer._lock:
+                assert wire.event_overflow and wire.event_gaps[sid] and len(wire.events)<=4000
+            execute('print(page_info())')
+            out['checks']['real_network_overflow_before_vault'] = True
         meta = SimpleNamespace(kind='login',origin=origin,allowed_origins=[origin],has_otp=False,label='synthetic',id='synthetic-handle')
         backend = SimpleNamespace(name='synthetic',needs_unlock=False,get_meta=lambda h:meta,resolve_password=lambda h:secret)
         callback = getattr(wire,'on_event',None)
         # Any attempt to reopen a peer or invoke a worker within vault fill fails.
         with patch('vault_adapter.Wire',side_effect=RuntimeError('new_peer_forbidden')), patch.object(p,'_worker',side_effect=RuntimeError('worker_forbidden')), patch('agent.vault_backends.backend_for_handle',return_value=backend), patch.object(native,'_bot_desktop_browser_session',return_value=False), patch.object(native,'_fenced_page_op',side_effect=lambda task,fn:fn()):
-            raw = invoke(p,native._handle_vault_fill,{'handle':'synthetic-handle'},{'task_id':'fixture'})
+            raw = invoke(p,native._handle_vault,{'action':'fill','handle':'synthetic-handle'},{'task_id':'fixture'})
         if secret in raw:raise RuntimeError('response_redaction_failure')
         filled = json.loads(raw)
         if not filled.get('success') or filled.get('filled_fields') != 1:raise RuntimeError('native_fill_failed')
         # Password expression never enters worker pipes, argv, logs or output.
-        ok = wire('Runtime.evaluate',{'expression':'document.getElementById("pw").value === '+json.dumps(secret),'returnByValue':True},sid)['result'].get('value')
-        untouched = wire('Runtime.evaluate',{'expression':'document.getElementById("pw").value === ""','returnByValue':True},ms)['result'].get('value')
+        ok = held('Runtime.evaluate',{'expression':'document.getElementById("pw").value === '+json.dumps(secret),'returnByValue':True},sid)['result'].get('value')
+        untouched = held('Runtime.evaluate',{'expression':'document.getElementById("pw").value === ""','returnByValue':True},ms)['result'].get('value')
         if not ok or not untouched:raise RuntimeError('target_binding_failure')
         if observer.closed or observer.sessions[agent] != sid or getattr(wire,'on_event',None) is not callback:raise RuntimeError('borrow_side_effect')
         out['checks'].update(native_login_filled_exact_held_target=True,same_origin_manual_empty=True,no_second_peer_or_worker_during_vault=True,secret_absent_from_result=True,held_session_callback_preserved=True)

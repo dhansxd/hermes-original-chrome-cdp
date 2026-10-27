@@ -148,10 +148,14 @@ class ChromeProvider(BrowserProvider):
             return {'browser_closed':False,'browser_close_deferred':'targets_remaining'}
         if any(other is not entry for other in self.states.values()):
             return {'browser_closed':False,'browser_close_deferred':'other_sessions_active'}
+        if self.data==PERSONAL.resolve():
+            # This root is shared with the Flow API and original user sessions.
+            # Closing our known targets never grants authority to quit Chrome.
+            return {'browser_closed':False,'browser_close_deferred':'shared_browser'}
         processes=self._chrome_processes()
         observer=entry['observer']
         error=None
-        try:observer.wire('Browser.close') # Normal Chrome shutdown, never profile deletion.
+        try:observer.request({'method':'Browser.close'},state) # Serialized with idle drain; normal shutdown.
         except Exception as exc:error=type(exc).__name__
         import psutil
         _,alive=psutil.wait_procs(processes,timeout=5)
@@ -253,7 +257,7 @@ class ChromeProvider(BrowserProvider):
                 if result.get('success') and self.states.get(key,{}).get('state',{}).get('owned'):
                     self.last_sessions[key[0]]=key[1]
                 result['fallback_used']=False
-                result['limitations']=['No arbitrary-Python sandbox','Browser-wide page auto-attach pauses new pages; owned opener-linked popups are armed before resume; dialog_pending requires explicit answer, never action replay; observer loss fails without reconnect','Vault uses the exact selected held parent transport/session; missing or lost observer binding refuses without reconnect','Only opener-linked popups tracked; automatic cleanup on session finalization/interruption, not ordinary turn completion; use finish_browser() for explicit task finish','New tabs use separate owned windows','Consent auto-click verified on personal main Chrome and 9Router PWA; ambiguous/uncorrelated prompts report failure']
+                result['limitations']=['No arbitrary-Python sandbox','Only owned roots and related targets are observed; no browser-wide page auto-attach; early popup dialogs before attachment are unsupported; dialog_pending requires explicit answer, never action replay; observer loss fails without reconnect','Vault uses the exact selected held parent transport/session; missing or lost observer binding refuses without reconnect','Only opener-linked popups tracked; automatic cleanup on session finalization/interruption, not ordinary turn completion; use finish_browser() for explicit task finish','New tabs use separate owned windows','Consent auto-click verified on personal main Chrome and 9Router PWA; ambiguous/uncorrelated prompts report failure']
                 return json.dumps(result)
             except subprocess.TimeoutExpired:
                 if key is not None:
@@ -374,18 +378,39 @@ def register(ctx):
     ctx.register_tool(name='browser_exec',toolset='browser-use',schema=copy.deepcopy(BROWSER_EXEC_SCHEMA),handler=handler,override=True)
     # Native supervisor focus_page selects first same-origin browser-wide target. Never allow
     # native vault to drift into a manual tab while this scoped provider is selected.
-    from tools import browser_vault_tool as vault
+    # Vault import/registration drift must not roll back ordinary browsing. Always
+    # install a guard, including when native registration is missing; never leave
+    # an unguarded native page action as a compatibility fallback.
     from tools.registry import registry
-    for tool in ('browser_vault_fill','browser_vault_save_login','browser_vault_enter_code'):
-        entry=registry.get_entry(tool)
-        if entry is None:raise RuntimeError('native vault tool registration missing: '+tool)
-        original=entry.handler
-        def guarded(args,_original=original,**kw):
-            if selected():
+    vault=None
+    try:
+        from tools import browser_vault_tool as vault
+        entry=registry.get_entry('browser_vault')
+    except Exception:
+        entry=None
+    original=entry.handler if entry else None
+    schema=copy.deepcopy(entry.schema) if entry else json.loads((ROOT/'vault_schema.json').read_text())
+    def unavailable():
+        return json.dumps({'success':False,'error_type':'vault_compatibility_unavailable',
+            'error':'Native vault compatibility unavailable; no credential access, fallback or replay.'})
+    def guarded(args,**kw):
+        if selected() and args.get('action') not in ('list','unlock'):
+            if original is None or args.get('action') not in ('fill','save_login','enter_code'):
+                return unavailable()
+            try:
                 if __package__:
                     from .vault_adapter import invoke
                 else:
                     from vault_adapter import invoke
-                return invoke(provider,_original,args,kw)
-            return _original(args,**kw)
-        ctx.register_tool(name=tool,toolset=entry.toolset,schema=copy.deepcopy(entry.schema),handler=guarded,override=True)
+            except Exception:
+                return unavailable()
+            return invoke(provider,original,args,kw)
+        if original is None and vault is not None:
+            # Only the two non-page native entry points are safe without the
+            # registered unified handler. No credential-write fallback exists.
+            if args.get('action')=='list' and callable(getattr(vault,'browser_vault_list',None)):
+                return vault.browser_vault_list()
+            if args.get('action')=='unlock' and callable(getattr(vault,'browser_vault_unlock',None)):
+                return vault.browser_vault_unlock(str(args.get('backend') or ''))
+        return original(args,**kw) if original else unavailable()
+    ctx.register_tool(name='browser_vault',toolset=entry.toolset if entry else 'browser',schema=schema,handler=guarded,override=True)

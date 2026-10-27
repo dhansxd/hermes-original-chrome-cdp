@@ -12,6 +12,34 @@ class MatchingTests(unittest.TestCase):
         self.assertIsNone(consent.button_for_dialog('Allow remote debugging?', ['Izinkan proses debug jarak jauh?']))
 
 class CorrelationTests(unittest.TestCase):
+    def test_accepted_ipv4_peer_does_not_exempt_unknown_ipv6_peer_with_same_ports(self):
+        import tempfile,os,json
+        from types import SimpleNamespace as NS
+        from unittest.mock import patch,Mock
+        import cdp_peers as peers
+        def conn(local,remote=None,ip='127.0.0.1',status='ESTABLISHED',fd=10):
+            return NS(laddr=NS(ip=ip,port=local),raddr=NS(ip=ip,port=remote)if remote else (),status=status,fd=fd)
+        with tempfile.TemporaryDirectory()as directory:
+            root=Path(directory)/'root';endpoint='/devtools/browser/family-test'
+            accepted=Mock();accepted.uids.return_value=NS(real=os.getuid());accepted.create_time.return_value=1
+            accepted.net_connections.return_value=[conn(4000,5000)]
+            marker=Path(directory)/(peers._prefix(root,5000,endpoint)+'-peer-fixture.json')
+            marker.write_text(json.dumps({'epoch':peers._prefix(root,5000,endpoint),'pid':99,'started':1,'local_port':4000,'fd':10}));marker.chmod(0o600)
+            server=Mock();server.create_time.return_value=1;server.exe.return_value='/chrome'
+            server.net_connections.return_value=[conn(5000,status='LISTEN'),conn(5000,4000)]
+            client=Mock();client.net_connections.return_value=[conn(4001,5000)]
+            backend=consent.MacConsent(root,5000,endpoint);backend.endpoint_matches=Mock(return_value=True)
+            backend.pending_port=4001;backend.processes={42:{'bound':True,'kind':'main','started':1,'exe':'/chrome'}}
+            def process(pid):return {42:server,99:accepted,os.getpid():client}[pid]
+            with patch.object(peers,'_folder',return_value=Path(directory)),patch('psutil.Process',side_effect=process):
+                self.assertTrue(backend.no_peers(),'the exact accepted socket alone is settled')
+                server.net_connections.return_value.append(conn(5000,4001))
+                self.assertTrue(backend.correlate(),'the sole exact pending socket still qualifies')
+                server.net_connections.return_value.append(conn(5000,4000,ip='::1'))
+                self.assertFalse(backend.correlate(),'unknown IPv6 socket cannot inherit accepted IPv4 consent')
+                server.net_connections.return_value.pop(-2)
+                self.assertFalse(backend.no_peers(),'unknown IPv6 peer must block orphan cancellation')
+
     def test_requires_one_new_sheet_on_bound_host(self):
         sheet={'key':(42,1),'pid':42,'name':'','headings':['Izinkan proses debug jarak jauh?'],'buttons':['Izinkan']}
         self.assertEqual(consent.select_sheet([sheet],set(),{42}),sheet)
@@ -21,11 +49,55 @@ class CorrelationTests(unittest.TestCase):
         self.assertIsNone(consent.select_sheet([],set(),{42}))
 
     def test_socket_correlation_requires_only_our_pending_connection(self):
-        self.assertTrue(consent.socket_matches([(4000,5000)],[(5000,4000)],5000))
-        self.assertFalse(consent.socket_matches([(4000,5000),(4001,5000)],[(5000,4000)],5000))
-        self.assertFalse(consent.socket_matches([(4000,5000)],[(5000,9999)],5000))
+        server=[(('127.0.0.1',5000),('127.0.0.1',4000))]
+        client=[(('127.0.0.1',4000),('127.0.0.1',5000))]
+        self.assertTrue(consent.socket_matches(server,client,5000))
+        self.assertFalse(consent.socket_matches(server+[(('::1',5000),('::1',4000))],client,5000))
+        self.assertFalse(consent.socket_matches(server,[(('::1',4000),('::1',5000))],5000))
 
 class HandshakeTests(unittest.TestCase):
+    def test_registration_failure_closes_completed_websocket_with_full_receiver_queue(self):
+        import threading,time
+        from unittest.mock import patch,Mock
+        from websockets.sync.client import connect
+        from websockets.sync.server import serve
+        from websockets.exceptions import ConnectionClosed
+        release=threading.Event();retained=[]
+        def events(remote):
+            try:
+                for _ in range(12):remote.send('event')
+                release.wait(3)
+            except ConnectionClosed:pass
+        server=serve(events,'127.0.0.1',0,ping_interval=None,close_timeout=.1)
+        serving=threading.Thread(target=server.serve_forever,daemon=True);serving.start()
+        port=server.socket.getsockname()[1]
+        backend=consent.MacConsent('/fixture',port,'/devtools/browser/queue')
+        backend.prepare=Mock(return_value=[]);backend.scan=Mock(return_value=[]);backend.cleanup_abandoned=Mock()
+        def completed(*args,**kwargs):
+            ws=connect(*args,**kwargs,max_queue=1,ping_interval=10,ping_timeout=1,close_timeout=.1)
+            retained.append(ws);deadline=time.monotonic()+1
+            while not ws.recv_flow_control.locked()and time.monotonic()<deadline:time.sleep(.001)
+            self.assertTrue(ws.recv_flow_control.locked(),'fixture must block the library receive queue')
+            time.sleep(.02);return ws
+        failure=OSError('disk-full')
+        try:
+            with patch.object(consent,'register_accepted',side_effect=failure):
+                with self.assertRaises(OSError)as caught:
+                    consent._connect_with_consent('ws://127.0.0.1:'+str(port)+'/devtools/browser/queue',
+                                                 '/fixture',completed,backend=backend,timeout=1)
+            self.assertIs(caught.exception,failure,'cleanup must preserve the registration error')
+            ws=retained[0];ws.recv_events_thread.join(.3)
+            if ws.keepalive_thread is not None:ws.keepalive_thread.join(.3)
+            self.assertEqual(ws.socket.fileno(),-1)
+            self.assertFalse(ws.recv_events_thread.is_alive(),'completed WebSocket receiver leaked after registration failure')
+            self.assertFalse(ws.keepalive_thread and ws.keepalive_thread.is_alive())
+        finally:
+            for ws in retained:
+                ws.close_socket();ws.recv_events_thread.join(1)
+                if ws.keepalive_thread is not None:ws.keepalive_thread.join(1)
+            release.set();server.shutdown();serving.join(2)
+        self.assertFalse(serving.is_alive())
+
     def test_delayed_sheet_only_pressed_during_pending_attach(self):
         import threading,time
         ready=threading.Event();calls=[]
@@ -114,7 +186,7 @@ class HandshakeTests(unittest.TestCase):
 
     def test_persistent_invalid_snapshot_stops_before_any_connect(self):
         from unittest.mock import patch,Mock
-        b=Mock();b.scan.side_effect=consent.ConsentError('consent_ax_read:-25202')
+        b=Mock(spec=['scan','hosts','press','correlate']);b.scan.side_effect=consent.ConsentError('consent_ax_read:-25202')
         attach=Mock()
         with patch('consent.time.monotonic',side_effect=[0,0,2]),patch('consent.time.sleep'):
             with self.assertRaisesRegex(consent.ConsentError,'consent_preflight_failed.*-25202'):
@@ -300,5 +372,97 @@ class NativeTests(unittest.TestCase):
             ax.return_value.trusted.return_value=False
             with self.assertRaisesRegex(consent.ConsentError,'consent_accessibility'):
                 consent.MacConsent('/fixture',5000).scan()
+
+class CancelIsolationTests(unittest.TestCase):
+    def test_distinct_questions_never_cancel_either_sheet(self):
+        from unittest.mock import Mock
+        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],
+               'buttons':['Allow','Cancel'],'elements':{'Cancel':123}}
+        backend=consent.MacConsent('/fixture',5000);backend.ax=Mock()
+        backend.ax.ax.AXUIElementPerformAction.return_value=0
+        backend.scan=lambda:[sheet,dict(sheet,key=(42,2))]
+        backend.no_peers=lambda:True;backend.processes={42:{'kind':'main','bound':True}}
+        with self.assertRaisesRegex(consent.ConsentError,'consent_cancel_ambiguous'):
+            backend.cancel_sheet(sheet,orphan=True)
+        backend.ax.ax.AXUIElementPerformAction.assert_not_called()
+
+    def test_cancel_does_not_report_success_while_exact_sheet_remains(self):
+        from unittest.mock import Mock,patch
+        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],
+               'buttons':['Allow','Cancel'],'elements':{'Cancel':123}}
+        backend=consent.MacConsent('/fixture',5000);backend.ax=Mock()
+        backend.ax.ax.AXUIElementPerformAction.return_value=0
+        backend.scan=lambda:[sheet];backend.no_peers=lambda:True
+        backend.processes={42:{'kind':'main','bound':True}}
+        with patch('consent.time.monotonic',side_effect=[0,1]),patch('consent.time.sleep'):
+            with self.assertRaisesRegex(consent.ConsentError,'consent_cancel_not_dismissed'):
+                backend.cancel_sheet(sheet,orphan=True)
+        backend.ax.ax.AXUIElementPerformAction.assert_called_once()
+
+    def test_cancel_returns_only_after_exact_sheet_disappears(self):
+        from unittest.mock import Mock
+        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],
+               'buttons':['Allow','Cancel'],'elements':{'Cancel':123}}
+        backend=consent.MacConsent('/fixture',5000);backend.ax=Mock()
+        backend.ax.ax.AXUIElementPerformAction.return_value=0
+        backend.scan=Mock(side_effect=[[sheet],[]]);backend.no_peers=lambda:True
+        backend.processes={42:{'kind':'main','bound':True}}
+        backend.cancel_sheet(sheet,orphan=True)
+        backend.ax.ax.AXUIElementPerformAction.assert_called_once()
+        self.assertEqual(backend.scan.call_count,2)
+
+    def test_unknown_peer_prevents_cancellation(self):
+        from unittest.mock import Mock
+        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],
+               'buttons':['Allow','Cancel'],'elements':{'Cancel':123}}
+        backend=consent.MacConsent('/fixture',5000);backend.ax=Mock()
+        backend.scan=lambda:[sheet];backend.no_peers=lambda:False
+        backend.processes={42:{'kind':'main','bound':True}}
+        with self.assertRaisesRegex(consent.ConsentError,'consent_preexisting'):
+            backend.cancel_sheet(sheet,orphan=True)
+        backend.ax.ax.AXUIElementPerformAction.assert_not_called()
+
+class StalePreflightTests(unittest.TestCase):
+    def test_preexisting_prompt_blocks_before_new_handshake(self):
+        from unittest.mock import Mock
+        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],'buttons':['Allow','Cancel']}
+        backend=Mock(spec=['scan']);backend.scan.return_value=[sheet];attach=Mock()
+        with self.assertRaisesRegex(consent.ConsentError,'preexisting'):
+            consent.connect_with_consent('ws://127.0.0.1:5000/devtools/browser/id','/fixture',attach,backend=backend,timeout=1)
+        attach.assert_not_called()
+    def test_orphan_cleanup_never_approves_and_preserves_other_dialogs(self):
+        from unittest.mock import Mock
+        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],'buttons':['Allow','Cancel']}
+        unrelated=dict(sheet,key=(42,2),name='Save password?',buttons=['Save'])
+        b=consent.MacConsent('/fixture',5000,'/devtools/browser/id')
+        b.scan=Mock(side_effect=[[sheet,unrelated],[unrelated]]);b.no_peers=Mock(return_value=True);b.cancel_sheet=Mock()
+        b.prepare()
+        b.cancel_sheet.assert_called_once_with(sheet,orphan=True);self.assertEqual(b.scan.call_count,2)
+    def test_existing_peer_prevents_orphan_cleanup(self):
+        from unittest.mock import Mock
+        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],'buttons':['Allow','Cancel']}
+        b=consent.MacConsent('/fixture',5000,'/devtools/browser/id');b.scan=Mock(return_value=[sheet]);b.no_peers=Mock(return_value=False);b.cancel_sheet=Mock()
+        with self.assertRaisesRegex(consent.ConsentError,'preexisting'):b.prepare()
+        b.cancel_sheet.assert_not_called()
+
+
+class AbortCleanupTests(unittest.TestCase):
+    def test_failed_native_handshake_closes_socket_before_orphan_cleanup(self):
+        from unittest.mock import Mock,patch
+        order=[]
+        class Backend(consent.MacConsent):
+            def prepare(self):return []
+            def scan(self):return []
+            def hosts(self):return set()
+            def cleanup_abandoned(self,baseline):order.append('cleanup')
+        sock=Mock();sock.getsockname.return_value=('127.0.0.1',4001)
+        sock.shutdown.side_effect=lambda *a:order.append('shutdown');sock.close.side_effect=lambda:order.append('close')
+        # The transport must reach the handshake before its ordered abort cleanup.
+        def fail(*a,**kw):
+            self.assertIs(kw['sock'],sock);raise TimeoutError('fixture timeout')
+        with patch('socket.create_connection',return_value=sock):
+            with self.assertRaisesRegex(consent.ConsentError,'fixture timeout'):
+                consent.connect_with_consent('ws://127.0.0.1:5000/devtools/browser/id','/fixture',fail,backend=Backend('/fixture',5000),timeout=1)
+        self.assertLess(order.index('close'),order.index('cleanup'))
 
 if __name__=='__main__':unittest.main()

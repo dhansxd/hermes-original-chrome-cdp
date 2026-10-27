@@ -90,14 +90,14 @@ class NativeSyntheticTests(unittest.TestCase):
         self.addCleanup(lambda:[p.stop() for p in reversed(self.patches)])
         self.hold_observer()
     def call(self, handler=None, args=None):
-        raw = invoke(self.provider, handler or self.native._handle_vault_fill,
-                     args or {'handle':'synthetic-handle'}, {'task_id':'synthetic-task'})
+        raw = invoke(self.provider, handler or self.native._handle_vault,
+                     args or {'action':'fill','handle':'synthetic-handle'}, {'task_id':'synthetic-task'})
         self.assertNotIn(self.fixture_secret, raw)
         return json.loads(raw)
     def hold_observer(self):
         from observer import ScopedObserver
-        observer = ScopedObserver.__new__(ScopedObserver)
-        observer.wire = self.wire
+        with patch('observer.Wire', return_value=self.wire):
+            observer = ScopedObserver('ws://synthetic.invalid', '/synthetic-empty-root/Default')
         observer.sessions = {'agent':'agent'}
         observer.closed = False
         self.wire.pump = lambda:None
@@ -130,7 +130,7 @@ class NativeSyntheticTests(unittest.TestCase):
                 Path(home,'config.yaml').write_text('browser:\n  cloud_provider: original-chrome-default\nplugins:\n  entries:\n    original-chrome-default:\n      granted_capabilities: [tools.override]\n')
                 plugin.register(ctx)
                 try:
-                    raw = registry.dispatch('browser_vault_fill',{'handle':'synthetic-handle'},task_id='synthetic-task',scope=home)
+                    raw = registry.dispatch('browser_vault',{'action':'fill','handle':'synthetic-handle'},task_id='synthetic-task',scope=home)
                     self.assertNotIn(self.fixture_secret,raw)
                     result = json.loads(raw)
                     self.assertTrue(result['success'],result)
@@ -248,7 +248,7 @@ class NativeSyntheticTests(unittest.TestCase):
         from agent.vault_backends import unlock
         answer = {'identifier':'synthetic-user','password':self.fixture_secret}
         with patch.object(unlock,'can_prompt_here',return_value=True), patch.object(unlock,'get_save_login_prompt_callback',return_value=lambda *a:answer), patch('agent.vault_store.get_vault_store',return_value=SimpleNamespace(add_item=lambda *a,**kw:self.meta)):
-            result = self.call(self.native._handle_vault_save_login, {'label':'SYNTHETIC'})
+            result = self.call(self.native._handle_vault, {'action':'save_login','label':'SYNTHETIC'})
         self.assertTrue(result['success'])
         self.assertTrue(result['fill']['success'])
         self.assertEqual(answer,{})
@@ -259,7 +259,7 @@ class NativeSyntheticTests(unittest.TestCase):
             self.wire.changed = True
             return self.fixture_secret
         with patch.object(unlock,'can_prompt_here',return_value=True), patch.object(unlock,'get_code_prompt_callback',return_value=prompt):
-            self.assertFalse(self.call(self.native._handle_vault_enter_code, {'handle':''})['success'])
+            self.assertFalse(self.call(self.native._handle_vault, {'action':'enter_code','handle':''})['success'])
         self.assertEqual(self.wire.writes, 0)
     def test_navigation_during_save_prompt_refuses_operation(self):
         from agent.vault_backends import unlock
@@ -267,7 +267,7 @@ class NativeSyntheticTests(unittest.TestCase):
             self.wire.changed = True
             return {'identifier':'synthetic-user','password':self.fixture_secret}
         with patch.object(unlock,'can_prompt_here',return_value=True), patch.object(unlock,'get_save_login_prompt_callback',return_value=prompt), patch('agent.vault_store.get_vault_store',return_value=SimpleNamespace(add_item=lambda *a,**kw:self.meta)):
-            self.assertFalse(self.call(self.native._handle_vault_save_login, {'label':'SYNTHETIC'})['success'])
+            self.assertFalse(self.call(self.native._handle_vault, {'action':'save_login','label':'SYNTHETIC'})['success'])
         self.assertEqual(self.wire.writes, 0)
     def test_native_source_drift_refuses_without_invoking_handler(self):
         import vault_adapter
@@ -279,7 +279,7 @@ class NativeSyntheticTests(unittest.TestCase):
         from agent.redact import redact_registered_vault_values
         self.wire.otp = True
         with patch.object(unlock,'can_prompt_here',return_value=True), patch.object(unlock,'get_code_prompt_callback',return_value=lambda *a:self.fixture_secret):
-            self.assertTrue(self.call(self.native._handle_vault_enter_code, {'handle':''})['success'])
+            self.assertTrue(self.call(self.native._handle_vault, {'action':'enter_code','handle':''})['success'])
         normalized_code = self.fixture_secret.replace('-', '')
         self.assertNotEqual(redact_registered_vault_values(normalized_code), normalized_code)
     def test_original_module_functions_stay_unchanged(self):
@@ -292,7 +292,7 @@ class NativeSyntheticTests(unittest.TestCase):
         def fail(*a, **kw):
             raise RuntimeError(self.fixture_secret)
         with patch.object(unlock,'can_prompt_here',return_value=True), patch.object(unlock,'get_save_login_prompt_callback',return_value=lambda *a:answer), patch('agent.vault_store.get_vault_store',return_value=SimpleNamespace(add_item=fail)):
-            self.assertFalse(self.call(self.native._handle_vault_save_login, {'label':'SYNTHETIC'})['success'])
+            self.assertFalse(self.call(self.native._handle_vault, {'action':'save_login','label':'SYNTHETIC'})['success'])
         self.assertEqual(answer,{})
 
 

@@ -21,7 +21,7 @@ else:
     from consent import connect_with_consent
 from websockets.sync.client import connect
 
-NATIVE_SHA256 = '583e03ddc805e499387c8b74383289a828b75ba0c900fd4dc06916710d64273d'
+NATIVE_SHA256 = 'ea1ac6458b5cf542a203c51168ae6fb4c6e9c7b1eae3854cc28852d57b0fc651'
 
 
 class Wire(_Wire):
@@ -84,7 +84,7 @@ def _namespace(handler, transport):
     from tools import browser_vault_tool as native
     if (not isinstance(handler, types.FunctionType)
             or handler.__globals__ is not vars(native)
-            or handler.__name__ not in ('_handle_vault_fill', '_handle_vault_save_login', '_handle_vault_enter_code')):
+            or handler.__name__ != '_handle_vault'):
         raise RuntimeError('unsupported_native_vault_version')
     if hashlib.sha256(Path(native.__file__).read_bytes()).hexdigest() != NATIVE_SHA256:
         raise RuntimeError('unsupported_native_vault_version')

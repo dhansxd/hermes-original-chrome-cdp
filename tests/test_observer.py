@@ -8,7 +8,7 @@ from observer import ScopedObserver
 class ObserverTests(unittest.TestCase):
     def test_autoattached_child_is_armed_before_resume_and_other_page_is_released(self):
         from unittest.mock import Mock
-        wire=Mock();wire.events=[];wire.dialogs={};wire.event_overflow=False
+        wire=Mock();wire.events=[];wire.dialogs={};wire.event_overflow=False;wire.event_gaps={};wire.detached_sessions=set()
         wire.return_value={'windowId':7}
         state={'current':'parent','context':'ctx','owned':{'parent':1},'baseline':['manual'],'verified':True}
         with patch('observer.Wire',return_value=wire):
@@ -22,7 +22,7 @@ class ObserverTests(unittest.TestCase):
             self.assertLess(calls.index('Page.enable'),calls.index('Runtime.runIfWaitingForDebugger'))
             wire.reset_mock()
             callback({'sessionId':'manual-s','targetInfo':{'targetId':'manual','type':'page','browserContextId':'ctx'},'waitingForDebugger':False})
-            self.assertEqual([c.args[0]for c in wire.call_args_list],['Runtime.runIfWaitingForDebugger','Target.detachFromTarget'])
+            self.assertEqual([c.args[0]for c in wire.call_args_list],['Target.detachFromTarget'])
 
     def test_finishing_one_entry_preserves_other_entry_transport(self):
         from plugin import ChromeProvider
@@ -97,7 +97,7 @@ class ObserverTests(unittest.TestCase):
     def test_failed_close_does_not_retire_held_session(self):
         from unittest.mock import Mock
         state={'current':'owned','context':'ctx','owned':{'owned':1}}
-        wire=Mock();wire.events=[];wire.dialogs={};wire.event_overflow=False
+        wire=Mock();wire.events=[];wire.dialogs={};wire.event_overflow=False;wire.event_gaps={};wire.detached_sessions=set()
         wire.return_value={'success':False}
         with patch('observer.Wire',return_value=wire):
             observer=ScopedObserver('fixture','/fixture/Default');observer.sessions={'owned':'held'}
@@ -134,5 +134,119 @@ class ObserverTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'window_binding_unverified'):
                 observer.request({'method':'Target.attachToTarget','params':{'targetId':'owned','flatten':True}},state)
             self.assertFalse(hasattr(observer.wire,'fail'))
+
+    def test_existing_owned_attachment_is_not_resumed_when_not_waiting(self):
+        from unittest.mock import Mock
+        wire=Mock();wire.events=[];wire.dialogs={};wire.event_overflow=False
+        wire.event_gaps={};wire.detached_sessions=set()
+        def respond(method,params=None,session=None):
+            if method=='Runtime.runIfWaitingForDebugger':
+                raise TimeoutError('nonwaiting renderer must not receive resume')
+            if method=='Browser.getWindowForTarget':return {'windowId':1}
+            return {}
+        wire.side_effect=respond
+        state={'current':'owned','context':'ctx','owned':{'owned':1},'baseline':[],'verified':True}
+        with patch('observer.Wire',return_value=wire):
+            observer=ScopedObserver('fixture','/fixture/Default');observer.state=state
+        try:
+            try:
+                observer._attached({'sessionId':'held','waitingForDebugger':False,
+                    'targetInfo':{'targetId':'owned','type':'page','browserContextId':'ctx'}})
+            except TimeoutError as exc:self.fail(str(exc))
+            self.assertEqual(observer.sessions,{'owned':'held'})
+            self.assertEqual([c.args[0]for c in wire.call_args_list],
+                ['Browser.getWindowForTarget','Page.enable','Network.enable'])
+        finally:observer.close()
+
+    def test_cleanup_retires_gone_owned_target_before_observer_attachment(self):
+        from binding import BoundBrowser
+        class Wire:
+            def __init__(self,*args):
+                self.events=[];self.dialogs={};self.event_overflow=False
+                self.event_gaps={};self.detached_sessions=set();self.calls=[]
+            def __call__(self,method,params=None,session=None):
+                self.calls.append((method,params,session))
+                if method=='Target.autoAttachRelated':
+                    raise RuntimeError("{'code': -32602, 'message': 'No target with given id found'}")
+                if method=='Target.getTargets':
+                    return {'targetInfos':[{'targetId':'manual','type':'page','browserContextId':'ctx'}]}
+                raise AssertionError('unexpected target action: '+method)
+            def close(self):pass
+        state={'current':'already-closed','context':'ctx','owned':{'already-closed':17},
+               'baseline':['manual'],'verified':True}
+        wire=Wire()
+        with patch('observer.Wire',return_value=wire):observer=ScopedObserver('fixture','/fixture/Default')
+        def transport(method,params=None,session=None):
+            return observer.request({'method':method,'params':params,'session':session},state)['value']
+        try:
+            try:result=BoundBrowser(transport,state).cleanup()
+            except RuntimeError as exc:self.fail('gone-target cleanup must succeed: '+str(exc))
+            self.assertEqual(result,{'remaining_owned_targets':[],'unresolved_creation':False,'success':True})
+            self.assertEqual(state['owned'],{})
+            self.assertEqual(observer.watched,set())
+            self.assertTrue(wire.calls)
+            self.assertTrue(all(method=='Target.getTargets' for method,params,session in wire.calls))
+        finally:observer.close()
+
+    def test_live_attachment_errors_are_not_forgotten_after_cleanup_failure(self):
+        from binding import BoundBrowser
+        for message in ('unexpected attachment rejection','No target with given id found'):
+            with self.subTest(message=message):
+                class Wire:
+                    def __init__(self,*args):
+                        self.events=[];self.dialogs={};self.event_overflow=False
+                        self.event_gaps={};self.detached_sessions=set();self.calls=[]
+                    def __call__(self,method,params=None,session=None):
+                        self.calls.append((method,params,session))
+                        if method=='Target.getTargets':
+                            return {'targetInfos':[{'targetId':'owned','type':'page','browserContextId':'ctx'},
+                                                   {'targetId':'foreign','type':'page','browserContextId':'ctx'}]}
+                        if method=='Target.autoAttachRelated':
+                            assert params is not None
+                            if params['targetId']!='owned':raise AssertionError('foreign target driven')
+                            raise RuntimeError(message)
+                        raise AssertionError('unexpected target action: '+method)
+                    def close(self):pass
+                state={'current':'owned','context':'ctx','owned':{'owned':17},'baseline':['foreign'],'verified':True}
+                wire=Wire()
+                with patch('observer.Wire',return_value=wire):observer=ScopedObserver('fixture','/fixture/Default')
+                def transport(method,params=None,session=None):
+                    return observer.request({'method':method,'params':params,'session':session},state)['value']
+                try:
+                    with self.assertRaisesRegex(RuntimeError,message):BoundBrowser(transport,state).cleanup()
+                    self.assertEqual(state['owned'],{'owned':17})
+                    with self.assertRaisesRegex(RuntimeError,message):observer.request({'method':'Target.getTargets'},state)
+                    self.assertEqual(state['owned'],{'owned':17})
+                    self.assertEqual([params['targetId'] for method,params,session in wire.calls
+                                      if method=='Target.autoAttachRelated'],['owned','owned'])
+                finally:observer.close()
+
+    def test_observer_attachment_keeps_verified_window_bound_ownership_scope(self):
+        class Wire:
+            def __init__(self):
+                self.events=[];self.dialogs={};self.event_overflow=False
+                self.event_gaps={};self.detached_sessions=set();self.calls=[]
+            def __call__(self,method,params=None,session=None):
+                self.calls.append((method,params,session))
+                if method=='Target.getTargets':
+                    return {'targetInfos':[{'targetId':'owned','type':'page','browserContextId':'ctx'},
+                                           {'targetId':'foreign','type':'page','browserContextId':'ctx'}]}
+                if method=='Target.autoAttachRelated':return {}
+                raise AssertionError('unexpected target action: '+method)
+            def close(self):pass
+        for verified,window in ((False,17),(True,None),(True,17)):
+            with self.subTest(verified=verified,window=window):
+                state={'current':'owned','context':'ctx','owned':{'owned':window},'baseline':['foreign'],'verified':verified}
+                wire=Wire()
+                with patch('observer.Wire',return_value=wire):observer=ScopedObserver('fixture','/fixture/Default')
+                try:
+                    observer.request({'method':'Target.getTargets'},state)
+                    attached=[params for method,params,session in wire.calls if method=='Target.autoAttachRelated']
+                    expected=[{'targetId':'owned','waitForDebuggerOnStart':True,
+                               'filter':[{'type':'page'},{'exclude':True}]}] if verified and window is not None else []
+                    self.assertEqual(attached,expected)
+                    self.assertEqual(observer.watched,{'owned'} if expected else set())
+                    self.assertEqual(state['owned'],{'owned':window})
+                finally:observer.close()
 
 if __name__=='__main__':unittest.main()

@@ -38,6 +38,7 @@ class BoundBrowser:
         self.info(target)
         if target not in self.sessions:
             self.sessions[target] = self.wire('Target.attachToTarget', {'targetId':target,'flatten':True})['sessionId']
+            if hasattr(self.wire,'event_gaps'):self.wire.event_gaps.setdefault(self.sessions[target],False)
             if hasattr(self.wire,'pump') and not getattr(self.wire,'observation_scope',None) and not self.state.get('dialogs',{}).get(target):
                 self.wire('Page.enable',{},self.sessions[target])
                 self.wire('Network.enable',{},self.sessions[target])
@@ -89,13 +90,17 @@ class BoundBrowser:
             if not hasattr(self.wire,'pump'):raise RuntimeError('unsupported_helper_meta: event observation unavailable')
             sid=self.session()
             self.wire.pump()
-            if getattr(self.wire,'event_overflow',False):raise RuntimeError('event_buffer_overflow: observation incomplete')
             if meta=='session':return {'session_id':sid,'target_id':self.state['current'],'observation_scope':getattr(self.wire,'observation_scope','current worker attachment only')}
             if meta=='pending_dialog':
                 dialog=getattr(self.wire,'dialogs',{}).get(sid)
                 if not dialog and self.state.get('dialogs',{}).get(self.state['current']):
                     raise RuntimeError('dialog_observation_uncertain: prior worker observed '+str(self.state['dialogs'][self.state['current']])+'; Chrome does not replay existing dialog events on reattachment; raw dismissal may report no dialog')
                 return {'dialog':dialog,'observation_scope':getattr(self.wire,'observation_scope','current attachment plus last observed dialog; no event history between workers')}
+            # History gaps persist for the held attachment, not current metadata.
+            # Neither a drain nor a new Python worker invents complete history.
+            gaps=getattr(self.wire,'event_gaps',None)
+            if (gaps.get(sid,False) if gaps is not None else getattr(self.wire,'event_overflow',False)):
+                raise RuntimeError('event_buffer_overflow: observation incomplete for this held session; no action replay')
             events=[e for e in getattr(self.wire,'events',[]) if e.get('session_id')==sid]
             self.wire.events=[e for e in getattr(self.wire,'events',[]) if e.get('session_id')!=sid]
             return {'events':events,'observation_scope':getattr(self.wire,'observation_scope','current worker attachment only')}

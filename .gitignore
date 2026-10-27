@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+reports/
+evidence-*
+*-RESULT.*
+*-GREEN*.json
+*-RED*.json
+RESUME-*.json
+snapshot-*/
+EVENT-OVERFLOW-*.json
+NATIVE-TIMEOUT-ACCEPTANCE.md
+VAULT-API-REPAIR.md

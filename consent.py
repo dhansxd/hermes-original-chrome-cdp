@@ -23,15 +23,43 @@ def select_sheet(sheets, baseline, hosts):
 
 
 def socket_matches(server, client, port):
-    inbound=[pair for pair in server if pair[1]==port]
+    inbound=[pair for pair in server if pair[0][1]==port]
     return len(inbound)==1 and len(client)==1 and inbound[0]==tuple(reversed(client[0]))
 
 import threading, time, json, plistlib, subprocess, os
 from pathlib import Path
 from urllib.parse import urlsplit
+from contextlib import contextmanager
+if __package__:
+    from .cdp_peers import accepted_peers, register_accepted, socket_identity
+else:
+    from cdp_peers import accepted_peers, register_accepted, socket_identity
+
+
+@contextmanager
+def consent_guard(data_root,timeout=20):
+    # Chrome can put another client's debugging sheet on our owned window.
+    # Serialize only handshake/cancellation and target close, never page work.
+    import fcntl,hashlib
+    folder=Path.home()/'.cache/original-chrome-default';folder.mkdir(parents=True,exist_ok=True,mode=0o700)
+    name=hashlib.sha256(str(Path(data_root).resolve()).encode()).hexdigest()[:20]+'.attach.lock'
+    with open(folder/name,'a')as lock:
+        os.chmod(folder/name,0o600);deadline=time.monotonic()+timeout
+        while True:
+            try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);break
+            except BlockingIOError:
+                if time.monotonic()>=deadline:raise ConsentError('consent_attach_busy: no connection opened')
+                time.sleep(.05)
+        yield
 
 
 def connect_with_consent(endpoint, data_root, connect, *, backend=None, timeout=15):
+    if backend is not None and not isinstance(backend,MacConsent):
+        return _connect_with_consent(endpoint,data_root,connect,backend=backend,timeout=timeout)
+    with consent_guard(data_root,timeout):
+        return _connect_with_consent(endpoint,data_root,connect,backend=backend,timeout=timeout)
+
+def _connect_with_consent(endpoint, data_root, connect, *, backend=None, timeout=15):
     url=urlsplit(endpoint)
     if url.scheme!='ws' or url.hostname not in {'127.0.0.1','localhost','::1'} or not url.port or url.username or not url.path.startswith('/devtools/browser/'):
         raise ConsentError('consent_endpoint: expected local browser WebSocket')
@@ -41,16 +69,29 @@ def connect_with_consent(endpoint, data_root, connect, *, backend=None, timeout=
     baseline_deadline=time.monotonic()+min(2,timeout)
     while True:
         try:
-            baseline={s['key'] for s in backend.scan()}
+            prepare=getattr(backend,'prepare',None)
+            sheets=prepare()if prepare else backend.scan()
+            if any(button_for_dialog(s['name'],s['headings'])for s in sheets):raise ConsentError('consent_preexisting: unresolved debugging prompt; no new connection opened')
+            baseline={s['key'] for s in sheets}
             break
         except Exception as exc:
             if str(exc) in {'consent_ax_read:-25202','consent_ax_read:-25204'} and time.monotonic()<baseline_deadline:
                 time.sleep(.05);continue
             raise ConsentError('consent_preflight_failed: '+str(exc)) from None
-    done=threading.Event();abandoned=threading.Event();result={}
+    done=threading.Event();abandoned=threading.Event();result={};raw_socket=None;success=False
     def attach():
+        nonlocal raw_socket
         try:
-            ws=connect(endpoint,open_timeout=timeout)
+            kwargs:dict={'open_timeout':timeout}
+            if isinstance(backend,MacConsent):
+                import socket
+                raw_socket=socket.create_connection((url.hostname,url.port),timeout=min(3,timeout))
+                if abandoned.is_set():raw_socket.close();return
+                backend.pending_port=raw_socket.getsockname()[1]
+                # Dial timeout is not a receive deadline for the retained observer.
+                raw_socket.settimeout(None)
+                kwargs.update(sock=raw_socket,proxy=None)
+            ws=connect(endpoint,**kwargs)
             if abandoned.is_set():ws.close()
             else:result['ws']=ws
         except Exception as exc:result['error']=str(exc)
@@ -73,11 +114,29 @@ def connect_with_consent(endpoint, data_root, connect, *, backend=None, timeout=
                 # Retry observation only within this same pending handshake.
                 if str(exc) in {'consent_ax_read:-25202','consent_ax_read:-25204'}:continue
                 issue=str(exc)
-        if 'ws' in result:return result['ws']
+        if 'ws' in result:
+            ws=result['ws']
+            if isinstance(backend,MacConsent):
+                try:ws=register_accepted(ws,data_root,url.port,url.path)
+                except BaseException:
+                    # Raw TCP close doesn't unblock a full library receive queue.
+                    try:ws.close()
+                    except Exception:pass  # Preserve the registration failure.
+                    raise
+            success=True;return ws
         raise ConsentError('consent_attach_failed: '+(issue or result.get('error','deadline; approve exact debugging prompt manually if appropriate')))
     finally:
         abandoned.set()
-        thread.join(timeout=.1)
+        if not success and raw_socket is not None:
+            import socket
+            try:raw_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:pass
+            raw_socket.close()
+        thread.join(timeout=3 if not success else .1)
+        if not success and isinstance(backend,MacConsent):
+            try:backend.cleanup_abandoned(baseline)
+            except Exception:pass  # Preserve original attach error; next preflight still gates.
+
 
 
 class AX:
@@ -163,7 +222,7 @@ PRESS_SCRIPT = 'on headings(n, depth)\n if depth > 16 then return {}\n set label
 
 class MacConsent:
     def __init__(self,root,port,path=None):
-        self.root=Path(root).resolve();self.port=port;self.path=path;self.ax=None;self.processes={}
+        self.root=Path(root).resolve();self.port=port;self.path=path;self.ax=None;self.processes={};self.pending_port: int | None=None
     def endpoint_matches(self):
         try:
             lines=(self.root/'DevToolsActivePort').read_text().splitlines()
@@ -195,6 +254,50 @@ class MacConsent:
                 sheets.extend(self.ax.sheets(process.pid))
             except (psutil.Error,OSError,ValueError,subprocess.SubprocessError):continue
         return sheets
+    def no_peers(self):
+        import psutil
+        if not self.endpoint_matches():return False
+        owners=[];settled=accepted_peers(self.root,self.port,self.path)
+        for pid,h in self.processes.items():
+            if not h['bound']or h['kind']!='main':continue
+            p=psutil.Process(pid)
+            if p.create_time()!=h['started']or p.exe()!=h['exe']:return False
+            conns=p.net_connections(kind='tcp')
+            if any(c.status=='LISTEN'and c.laddr.port==self.port for c in conns):
+                owners.append(pid)
+                if any(c.raddr and c.laddr.port==self.port and c.status=='ESTABLISHED' and tuple(reversed(socket_identity(c))) not in settled for c in conns):return False
+        return len(owners)==1
+    def cancel_sheet(self,sheet,*,orphan=False):
+        key=sheet['key'];sheets=self.scan();fresh=next((s for s in sheets if s['key']==key),None)
+        if not fresh:return
+        questions={s['key']for s in sheets if button_for_dialog(s['name'],s['headings'])}
+        if len(questions)!=1:raise ConsentError('consent_cancel_ambiguous')
+        if fresh['pid']not in self.hosts()or not button_for_dialog(fresh['name'],fresh['headings']):raise ConsentError('consent_cancel_identity_changed')
+        if orphan and not self.no_peers():raise ConsentError('consent_preexisting: another connection active')
+        label='Batal'if button_for_dialog(fresh['name'],fresh['headings'])=='Izinkan'else'Cancel'
+        if fresh['buttons'].count(label)!=1:raise ConsentError('consent_cancel_ambiguous')
+        if self.ax is None:raise ConsentError('consent_cancel_ax_unavailable')
+        err=self.ax.ax.AXUIElementPerformAction(fresh['elements'][label],self.ax.string('AXPress'))
+        if err:raise ConsentError('consent_cancel_failed:'+str(err))
+        deadline=time.monotonic()+.75
+        while True:
+            if not any(s['key']==key for s in self.scan()):return
+            if time.monotonic()>=deadline:raise ConsentError('consent_cancel_not_dismissed')
+            time.sleep(.05)
+    def cleanup_abandoned(self,baseline):
+        # The transport is already closed. Only newly-created orphan questions qualify.
+        for _ in range(4):
+            sheets=self.scan()
+            owned=[s for s in sheets if s['key']not in baseline and s['pid']in self.hosts()and button_for_dialog(s['name'],s['headings'])]
+            if not owned or not self.no_peers():return
+            self.cancel_sheet(owned[0],orphan=True);time.sleep(.1)
+    def prepare(self):
+        for _ in range(6):
+            sheets=self.scan();stale=[s for s in sheets if button_for_dialog(s['name'],s['headings'])]
+            if not stale:return sheets
+            if not self.no_peers():raise ConsentError('consent_preexisting: active peer; no new connection opened')
+            self.cancel_sheet(stale[0],orphan=True);time.sleep(.1)
+        raise ConsentError('consent_preexisting: cleanup incomplete; no new connection opened')
     def correlate(self):
         import psutil
         if not self.endpoint_matches():return False
@@ -202,6 +305,7 @@ class MacConsent:
         # Saved profile count is unrelated; binding is checked after attach.
         # Local TCP reverse tuple must identify this worker as the sole peer.
         servers=[];owners=[]
+        settled=accepted_peers(self.root,self.port,self.path)
         for pid,h in self.processes.items():
             if not h['bound'] or h['kind']!='main':continue
             p=psutil.Process(pid)
@@ -209,8 +313,11 @@ class MacConsent:
             conns=p.net_connections(kind='tcp')
             if any(c.status=='LISTEN' and c.laddr.port==self.port and c.laddr.ip in {'127.0.0.1','::1'} for c in conns):
                 owners.append(pid)
-                servers.extend((c.raddr.port,c.laddr.port) for c in conns if c.raddr and c.status=='ESTABLISHED' and c.laddr.port==self.port and c.raddr.ip in {'127.0.0.1','::1'})
-        client=[(c.raddr.port,c.laddr.port) for c in psutil.Process(os.getpid()).net_connections(kind='tcp') if c.raddr and c.status=='ESTABLISHED' and c.raddr.port==self.port and c.raddr.ip in {'127.0.0.1','::1'}]
+                servers.extend(socket_identity(c) for c in conns if c.raddr and c.status=='ESTABLISHED' and c.laddr.port==self.port and c.raddr.ip in {'127.0.0.1','::1'})
+        client=[socket_identity(c) for c in psutil.Process(os.getpid()).net_connections(kind='tcp') if c.raddr and c.status=='ESTABLISHED' and c.raddr.port==self.port and c.raddr.ip in {'127.0.0.1','::1'}]
+        if self.pending_port is not None:
+            client=[c for c in client if c[0][1]==self.pending_port]
+            servers=[s for s in servers if tuple(reversed(s)) not in settled]
         return len(owners)==1 and socket_matches(servers,client,self.port)
     def press(self,sheet,*,pending):
         # Re-read host identity/sheets/socket at action time; no title-only click.
