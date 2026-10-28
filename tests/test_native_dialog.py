@@ -21,6 +21,27 @@ class NativeDialogTransportTests(unittest.TestCase):
 
 
 class NativeDialogObserverTests(unittest.TestCase):
+    def test_native_probe_attaches_exact_child_before_peer_can_hide_its_prompt(self):
+        from unittest.mock import Mock,patch
+        from observer import ScopedObserver
+        wire=Mock();wire.events=[];wire.dialogs={};wire.event_gaps={};wire.detached_sessions=set()
+        wire.return_value={'sessionId':'held-child'}
+        state={'context':'ctx','current':'root','owned':{'root':10},'verified':True}
+        pending={'child':{'dialog':{'type':'prompt','message':'identical'},'window_id':10}}
+        with patch('observer.Wire',return_value=wire):
+            obs=ScopedObserver('fixture','/fixture/Default');obs.state=state
+            obs.native.scan=Mock(return_value=pending)
+            self.assertTrue(obs._probe_native())
+            self.assertEqual(obs.sessions.get('child'),'held-child',
+                             'an un-debugged native prompt is cancelled when a peer changes the active tab')
+            self.assertEqual(state['owned'],{'root':10,'child':10})
+            self.assertEqual(wire.call_args_list[0].args,
+                             ('Target.attachToTarget',{'targetId':'child','flatten':True}))
+            self.assertEqual(wire.dialog_yield_sessions,{'held-child'})
+            self.assertTrue(obs._probe_native())
+            wire.assert_called_once() # no Page.enable, action replay or duplicate attach
+            obs.close()
+
     def test_child_with_native_prompt_is_not_page_enabled_until_answer(self):
         from unittest.mock import Mock,patch
         from observer import ScopedObserver

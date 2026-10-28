@@ -94,12 +94,22 @@ class ScopedObserver:
         if params.get('waitingForDebugger'):self.wire('Runtime.runIfWaitingForDebugger',{},sid)
 
     def _probe_native(self):
-        if not (self.state or {}).get('verified'):return False
+        state=self.state
+        if not state or not state.get('verified'):return False
         previous=self.wire.native_dialog_probe
         self.wire.native_dialog_probe=None # Browser metadata inside the probe must not recurse.
         try:
-            found=self.native.scan(self.state,self.wire)
+            found=self.native.scan(state,self.wire)
             self.native_pending=found
+            for target,pending in found.items():
+                # Chrome cancels an un-debugged prompt when a peer takes focus.
+                # select_dialogs already proved this exact opener-linked window.
+                # Attach now, but defer Page.enable until the explicit AX answer.
+                state['owned'].setdefault(target,pending['window_id'])
+                if target not in self.sessions:
+                    self.sessions[target]=self.wire('Target.attachToTarget',{'targetId':target,'flatten':True})['sessionId']
+                    self.wire.event_gaps.setdefault(self.sessions[target],False)
+            self.wire.dialog_yield_sessions=set(self.sessions.values())
             return bool(found)
         finally:self.wire.native_dialog_probe=previous
 
