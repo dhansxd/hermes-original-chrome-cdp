@@ -89,7 +89,6 @@ class ChromeProvider(BrowserProvider):
         self.workspace=Path(workspace or Path.home()/'.hermes/cache/scratch/native-chrome-work')
         self.states={};self.lock=threading.RLock();self.last_cleanup={};self.last_sessions={}
         self._active_entry: dict={}
-        self._observer=None
     def is_available(self):return sys.platform=='darwin' and CHROME.exists()
     def get_setup_schema(self):
         return {'name':self.display_name,'badge':'local GUI','tag':'Original Default, owned windows; no profile copy','env_vars':[]}
@@ -177,9 +176,9 @@ class ChromeProvider(BrowserProvider):
             if request.get('cleanup') and entry.get('observer') and entry['observer'].closed:
                 entry.pop('observer') # Fresh cleanup-only connection; never resumes dialog observation.
             if 'observer' not in entry:
-                if self._observer is None or self._observer.closed:
-                    self._observer=ScopedObserver(request['endpoint'],request['profile'])
-                entry['observer']=self._observer
+                # An in-flight worker timeout may have to close this transport.
+                # Never let that revoke another named session's held callbacks.
+                entry['observer']=ScopedObserver(request['endpoint'],request['profile'])
             if hasattr(entry['observer'],'bind'):entry['observer'].bind(entry)
             request=dict(request,parent_transport=True)
         proc=subprocess.Popen([sys.executable,str(ROOT/'worker.py')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,start_new_session=True)
