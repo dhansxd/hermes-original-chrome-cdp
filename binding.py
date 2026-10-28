@@ -80,6 +80,8 @@ class BoundBrowser:
         if method=='Page.handleJavaScriptDialog':
             target=next((t for t,s in self.sessions.items() if s==session_id),self.state['current'])
             self.state.setdefault('dialogs',{}).pop(target,None);self.checkpoint()
+            # Arming the deferred child watcher may replace its held attachment.
+            self.sessions[target]=self.wire('Target.attachToTarget',{'targetId':target,'flatten':True})['sessionId']
             self.wire('Page.enable',{},self.sessions[target])
             self.wire('Network.enable',{},self.sessions[target])
         return result

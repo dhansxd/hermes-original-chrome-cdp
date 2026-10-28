@@ -63,7 +63,14 @@ class Wire:
                 else:
                     remaining=deadline-time.monotonic()
                     if remaining<=0:raise TimeoutError()
-                    response=json.loads(self.ws.recv(timeout=remaining))
+                    probe=getattr(self,'native_dialog_probe',None)
+                    try:response=json.loads(self.ws.recv(timeout=min(remaining,.15) if callable(probe) else remaining))
+                    except TimeoutError:
+                        if callable(probe) and probe():
+                            self.pending_responses[command_id]=method
+                            raise RuntimeError('dialog_pending: '+method+' sent once; native dialog requires explicit answer; do not replay action')
+                        if callable(probe) and time.monotonic()<deadline:continue
+                        raise
             except TimeoutError as exc:
                 # The action was sent once. Retire any eventual reply by ID,
                 # never confuse it with a later command or silently resend it.

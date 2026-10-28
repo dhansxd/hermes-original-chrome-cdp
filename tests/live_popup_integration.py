@@ -58,7 +58,7 @@ try:
    row.update(inspect_success=info['success'],inspect_stdout=info.get('stdout'),inspect_error=info.get('error'))
    assert info['success'],row
    if name in ('page_alert','write_alert'):
-    assert events and "'dialog':" in info.get('stdout',''),row
+    assert (events or "'native': True" in info.get('stdout','')) and "'dialog':" in info.get('stdout',''),row
     row['answer']=ex('cdp("Page.handleJavaScriptDialog",accept=True,promptText="integration-answer");print(js("JSON.stringify({before:window.before,after:window.after,answer:window.answer,opener:!!window.opener})"))',task)
     assert row['answer']['success'],row
     value=json.loads(row['answer']['stdout'])

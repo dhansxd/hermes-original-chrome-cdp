@@ -8,10 +8,12 @@ if __package__:
     from .consent import consent_guard
     from .binding import BoundBrowser
     from .vault_adapter import Wire
+    from .native_dialog import NativeDialogs
 else:
     from consent import consent_guard
     from binding import BoundBrowser
     from vault_adapter import Wire
+    from native_dialog import NativeDialogs
 
 
 class ScopedObserver:
@@ -21,6 +23,8 @@ class ScopedObserver:
         self.sessions={};self.closed=False;self.state=None;self.auto_attached=False;self.entries=[];self.watched=set()
         self._lock=threading.RLock();self._stop=threading.Event();self._idle=None
         self.wire.on_attached=self._attached
+        self.native=NativeDialogs(self.data_root,endpoint);self.native_pending={}
+        self.wire.native_dialog_probe=self._probe_native
 
     def bind(self, entry):
         with self._lock:
@@ -78,10 +82,26 @@ class ScopedObserver:
         self.sessions[target]=sid
         if not hasattr(self.wire,'event_gaps'):self.wire.event_gaps={}
         self.wire.event_gaps.setdefault(sid,False)
-        self.wire('Page.enable',{},sid)
-        self.wire('Network.enable',{},sid)
+        if target not in self.native_pending:
+            try:
+                self.wire('Page.enable',{},sid)
+                self.wire('Network.enable',{},sid)
+            except RuntimeError as exc:
+                # A load-time prompt may appear after setup starts. Preserve the
+                # real attachment; only its verified native dialog defers setup.
+                if target not in self.native_pending or not str(exc).startswith('dialog_pending:'):raise
         self.wire.dialog_yield_sessions=set(self.sessions.values())
         if params.get('waitingForDebugger'):self.wire('Runtime.runIfWaitingForDebugger',{},sid)
+
+    def _probe_native(self):
+        if not (self.state or {}).get('verified'):return False
+        previous=self.wire.native_dialog_probe
+        self.wire.native_dialog_probe=None # Browser metadata inside the probe must not recurse.
+        try:
+            found=self.native.scan(self.state,self.wire)
+            self.native_pending=found
+            return bool(found)
+        finally:self.wire.native_dialog_probe=previous
 
     def request(self, request, state):
         guard=consent_guard(self.data_root) if request['method']=='Target.closeTarget' else nullcontext()
@@ -93,6 +113,9 @@ class ScopedObserver:
             self.state=state
             self._check_detached()
             method=request['method'];params=request.get('params') or {};sid=request.get('session')
+            if (state or {}).get('verified') and method in ('Runtime.evaluate','Page.navigate','Input.dispatchMouseEvent','Input.dispatchKeyEvent'):
+                if any(w is not None and w not in self.native.bindings for w in state.get('owned',{}).values()):
+                    self._probe_native()
             # Preserve worker-local gaps across workers, scoped to caller ownership.
             owned_sids={s for t,s in self.sessions.items() if t in (state or {}).get('owned',{})}
             gaps=getattr(self.wire,'event_gaps',{})
@@ -106,13 +129,17 @@ class ScopedObserver:
             if (state or {}).get('verified'):
                 live=None
                 for target in list(state.get('owned',{})):
-                    if target not in self.watched and state['owned'][target] is not None:
+                    if target not in self.watched and target not in self.native_pending and state['owned'][target] is not None:
                         # Let cleanup retire vanished IDs without attaching them.
                         if live is None:live={t['targetId'] for t in self.wire('Target.getTargets')['targetInfos']}
                         if target not in live:continue
                         # Browser-wide auto-attach also pauses API/manual pages.
                         # Watch only positively owned roots and their descendants.
-                        self.wire('Target.autoAttachRelated',{'targetId':target,'waitForDebuggerOnStart':True,'filter':[{'type':'page'},{'exclude':True}]})
+                        try:
+                            self.wire('Target.autoAttachRelated',{'targetId':target,'waitForDebuggerOnStart':True,'filter':[{'type':'page'},{'exclude':True}]})
+                        except RuntimeError as exc:
+                            if target not in self.native_pending or not str(exc).startswith('dialog_pending:'):raise
+                            continue # The actual watcher acknowledgement is still pending.
                         self.watched.add(target)
                 self.auto_attached=bool(self.watched)
             browser=BoundBrowser(self.wire,state or {})
@@ -130,12 +157,17 @@ class ScopedObserver:
                         self.sessions[target]=self.wire(method,params)['sessionId']
                         if not hasattr(self.wire,'event_gaps'):self.wire.event_gaps={}
                         self.wire.event_gaps.setdefault(self.sessions[target],False)
-                        self.wire('Page.enable',{},self.sessions[target])
-                        self.wire('Network.enable',{},self.sessions[target])
+                        if target not in self.native_pending:
+                            self.wire('Page.enable',{},self.sessions[target])
+                            self.wire('Network.enable',{},self.sessions[target])
                     result={'sessionId':self.sessions[target]}
                 else:
                     self.wire.dialog_yield_sessions=set(self.sessions.values())
-                    result=self.wire(method,params,sid)
+                    target=next((t for t,s in self.sessions.items() if s==sid),None)
+                    if method=='Page.handleJavaScriptDialog' and target in self.native_pending:
+                        result=self.native.answer(target,self.native_pending[target],params,state,self.wire)
+                        self.native_pending.pop(target,None)
+                    else:result=self.wire(method,params,sid)
                 if method=='Target.closeTarget' and result.get('success'):
                     # A confirmed close can emit its detach during a later request.
                     closed_sid=self.sessions.pop(params.get('targetId'),None)
@@ -154,7 +186,11 @@ class ScopedObserver:
                     and not (method=='Target.closeTarget' and self.sessions.get(params.get('targetId'))==event['params']['sessionId'])):
                     self.close()
                     raise RuntimeError('observer_lost: owned session detached; no callback reconstruction or reconnect')
-            return {'value':result,'events':events,'dialogs':copy.deepcopy(getattr(self.wire,'dialogs',{})),
+            dialogs=copy.deepcopy(getattr(self.wire,'dialogs',{}))
+            for target,pending in self.native_pending.items():
+                if self.sessions.get(target) in owned_sids:
+                    dialogs[self.sessions[target]]={k:pending['dialog'][k] for k in ('type','message','defaultPrompt')} | {'native':True}
+            return {'value':result,'events':events,'dialogs':dialogs,
                     'event_overflow':getattr(self.wire,'event_overflow',False),
                     'event_gaps':{s:getattr(self.wire,'event_gaps',{}).get(s,False) for s in owned_sids}}
         except (TimeoutError, OSError, ConnectionClosed) as exc:
@@ -197,4 +233,5 @@ class ScopedObserver:
     def close(self):
         if not self.closed:
             self.closed=True;self._stop.set();self.wire.close()
+            self.native.close()
         if self._idle and self._idle is not threading.current_thread():self._idle.join(1)

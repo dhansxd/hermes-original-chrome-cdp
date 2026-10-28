@@ -19,7 +19,7 @@ Only consent handshake/cancellation and owned target-close share a root-scoped l
 
 An uncertain named session still rejects page actions. For explicit recovery, send only `finish_browser()` or `print(finish_browser())` in that same session, optionally with comments. The expression is parsed, never executed as user code, and routes to cleanup for that named session only. A failed close preserves quarantine and reports failure; it does not replay the original action or close another named session.
 
-**Known gap:** an opener-linked popup that opens a JavaScript dialog before Page attachment may time out without the callback. Do not claim this is fixed by related-only observation. Post-attachment dialog/vault and plain-popup evidence is separate. No universal OS-permission, hard-crash, long-run or paid-generation claim.
+Early popup dialogs can be observed through macOS Accessibility when the Chrome PID/endpoint, owned target/window, exact URL and native controls are uniquely correlated. The normal tool returns `dialog_pending` instead of replaying a blocked action. Inspect the owned popup with `switch_tab(...)` and `page_info()`, then explicitly answer with `cdp('Page.handleJavaScriptDialog', accept=..., promptText=...)`. There is no implicit accept policy or browser-wide attachment. Native OK/Cancel labels are recognized in Indonesian and English; ambiguous bindings, missing Accessibility, unsupported window states or changed dialog identity refuse. Source fixture proof is separate from installed/native acceptance in PLAN.md. No universal OS-permission, hard-crash, long-run or paid-generation claim.
 
 ## Build and acceptance
 

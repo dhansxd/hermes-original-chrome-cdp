@@ -84,7 +84,8 @@ def nodes(node):
 
 def main():
     case = os.environ.get('POPUP_CASE', 'page_alert')
-    use_helper = os.environ.get('POPUP_HELPER') == '1'
+    integrated = os.environ.get('POPUP_INTEGRATED') == '1'
+    use_helper = os.environ.get('POPUP_HELPER') == '1' and not integrated
     assert case in ('page_alert', 'write_alert')
     evidence = Path(os.environ['POPUP_EVIDENCE'])
     evidence.mkdir(parents=True, exist_ok=True)
@@ -108,6 +109,7 @@ def main():
     base = 'http://127.0.0.1:' + str(server.server_port)
     expected_message = 'popup-load-prompt' if case == 'page_alert' else 'write-prompt'
     answer = 'native-helper-answer'
+    suffix = '-integrated.json' if integrated else ('-native-helper.json' if use_helper else '-native-baseline.json')
     p = ChromeProvider(data=data, workspace=work / 'work')
     control = None
     peer_target = comparator = peer_window = comparator_window = None
@@ -127,7 +129,7 @@ def main():
         return original_attached(observer, params)
     attachment_probe = patch.object(ScopedObserver, '_attached', attached)
     attachment_probe.start()
-    out = {'case': case, 'mode': 'native-helper' if use_helper else 'longer-timeout/read-only-native-monitor',
+    out = {'case': case, 'mode': 'integrated production helper' if integrated else ('native-helper' if use_helper else 'longer-timeout/read-only-native-monitor'),
            'level': 'SOURCE fixture, explicit native answer; NOT installed/native-chat',
            'work': str(work), 'snapshots': [], 'success': False, 'checks': {}}
     started = time.monotonic()
@@ -144,7 +146,7 @@ def main():
         assert control is not None
         return {t['targetId']: t for t in control('Target.getTargets')['targetInfos']}
     def save():
-        (evidence / (case + ('-native-helper.json' if use_helper else '-native-baseline.json'))).write_text(json.dumps(out, indent=2))
+        (evidence / (case + suffix)).write_text(json.dumps(out, indent=2))
     try:
         out['setup'] = checked('new_tab(' + repr(base + '/plain?case') + ');wait_for_load()')
         entry = p.states[('case', 'default')]
@@ -239,7 +241,7 @@ def main():
             out['action'] = ex('print(cdp("Runtime.evaluate",expression=' + repr(expression) + ',userGesture=True))')
             targets = inventory()
             out['children'] = [target for target in targets.values() if target.get('openerId') in out['initial_owned']]
-            if out['action']['success'] and len(out['children']) == 1:
+            if (out['action']['success'] or (integrated and 'dialog_pending' in out['action'].get('error', ''))) and len(out['children']) == 1:
                 out['stage'] = 'inspect'
                 out['inspect'] = ex('switch_tab(' + repr(out['children'][0]['targetId']) + ');print(page_info())')
             out['stage'] = 'done'
@@ -256,15 +258,22 @@ def main():
             allow_answer.set()
             pending.result(timeout=90)
         save()
-        assert out['action']['success'], out['action'].get('error')
+        assert out['action']['success'] or (integrated and 'dialog_pending' in out['action'].get('error', '')), out['action'].get('error')
         assert len(out['children']) == 1, 'popup target count'
         assert out.get('inspect', {}).get('success'), out.get('inspect', {}).get('error')
-        if use_helper:
+        if use_helper or integrated:
+            if integrated:
+                assert expected_message in out['inspect']['stdout'], 'integrated pending dialog metadata missing'
+                out['peer_during_pending'] = checked('print(js("++window.peerCount"))', 'peer')
+                assert out['peer_during_pending']['stdout'].strip() == '1'
+                out['explicit_answer'] = checked('cdp("Page.handleJavaScriptDialog",accept=True,promptText=' + repr(answer) + ')')
+                out['checks']['integrated_pending_then_explicit_answer'] = True
             out['result'] = checked('print(js("JSON.stringify({before:window.before,after:window.after,answer:window.answer,opener:!!window.opener})"))')
             assert json.loads(out['result']['stdout']) == {'before': 1, 'after': 1, 'answer': answer, 'opener': True}
             out['counter'] = checked('switch_tab(' + repr(parent) + ');print(js("window.popupCount"))')
             assert out['counter']['stdout'].strip() == '1'
-            assert out.get('native_answer', {}).get('press_status') == 0
+            if not integrated:
+                assert out.get('native_answer', {}).get('press_status') == 0
             out['checks']['answered_once_opener_preserved'] = True
             # This exact callback still exists only if the helper left it alone.
             control('Page.handleJavaScriptDialog', {'accept': False}, manual_session)
@@ -327,7 +336,7 @@ def main():
                 if peer_target is not None:
                     assert peer_target in live and all(live[peer_target].get(k) == peer_before.get(k) for k in ('url', 'browserContextId', 'attached'))
                     assert control('Browser.getWindowForTarget', {'targetId': peer_target})['windowId'] == peer_window
-                    assert checked('print(js("window.peerCount"))', 'peer')['stdout'].strip() == ('1' if use_helper else '0')
+                    assert checked('print(js("window.peerCount"))', 'peer')['stdout'].strip() == ('1' if use_helper or integrated else '0')
                     out['checks']['case_cleanup_preserved_readable_peer'] = True
                 out['peer_cleanup'] = p.close_session('peer')
                 if comparator is not None:
@@ -366,7 +375,7 @@ def main():
         out['process_residue'] = residue
         out['success'] = bool(out['success'] and out.get('cleanup') and out.get('peer_cleanup') and not out.get('remaining_owned') and not residue and out.get('monitor_stopped') and not server_thread.is_alive() and not any(out.get(name) for name in ('error', 'inventory_error', 'unload_error', 'monitor_error')))
         save()
-        print(json.dumps({'case': case, 'success': out['success'], 'checks': out['checks'], 'error': out.get('error'), 'inventory_error': out.get('inventory_error'), 'receipt': str(evidence / (case + ('-native-helper.json' if use_helper else '-native-baseline.json'))), 'process_residue': residue}))
+        print(json.dumps({'case': case, 'success': out['success'], 'checks': out['checks'], 'error': out.get('error'), 'inventory_error': out.get('inventory_error'), 'receipt': str(evidence / (case + suffix)), 'process_residue': residue}))
     return out
 
 

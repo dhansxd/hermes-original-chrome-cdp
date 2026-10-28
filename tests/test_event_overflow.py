@@ -32,6 +32,7 @@ def fixture():
     wire.event({})
     with patch('observer.Wire',return_value=wire):observer=ScopedObserver('fixture','/fixture/Default')
     observer.auto_attached=True
+    observer.native.scan=lambda state,wire: {}
     states={t:{'current':t,'context':'ctx','owned':{t:1},'verified':True} for t in ('a','b')}
     observer.entries=[{'state':s} for s in states.values()]
     for t,s in states.items():observer.request({'method':'Target.attachToTarget','params':{'targetId':t}},s)
