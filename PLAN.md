@@ -33,19 +33,20 @@
 - Buktikan progress native di tengah request API; cancel API tidak mematikan plugin, cancel/finish plugin tidak mematikan dokumen API; owned-close dan peer cleanup harus terkonfirmasi.
 
 ## Status dan gap
-- **Checkpoint aktif — patch redaksi:** baseline lokal/main GitHub `0ba9694`, worktree awal bersih dan152/152teslulus. Regresi through namespaced PluginManager + vault sintetis gagal8assertion pada source lama (registry/model/spill/exception, termasuk JSON escaping), lalu lulus setelah redaksi rekursif string/key hasil decode memakai `agent.redact.redact_sensitive_text(force=True)` sebelum serialisasi. Held state, artifact bytes, schema, transport dan target selection tidak diubah. Lima tes tambahan, total157/157lulus; real namespaced registration, schema/picker/vault guard dan unload restoration lulus. Empat tes tambahan adalah characterization, bukan klaim RED terpisah. Self-review/scan, publikasi dan native DOM/redaksi/cleanup belum selesai pada checkpoint ini. Doctor isolated-home failure dan gap early-popup tetap terbuka; metadata installer/identitas source tidak diubah. Google Flow tetap diparkir. Bukti privat `~/.hermes/cache/scratch/browser-redaction-repair-20261028-163539/`.
+- **Checkpoint aktif — patch redaksi terpublikasi dan native teruji:** commit kode `362e1a8` tersedia di main lokal/GitHub, keduanya sama setelah push; worktree bersih pada checkpoint kode. Redaksi rekursif string/key hasil decode memakai native `redact_sensitive_text(force=True)` sebelum serialisasi. Source lama gagal8assertion regresi (registry/model/spill/exception, termasuk JSON escaping); pascapatch157/157tes, compile, real namespaced registration serta scan directory/staged lulus. Review dilakukan sendiri, bukan reviewer independen. Jalur kontrol resmi `reload-plugins` berhasil untuk profil default; PID4956 dan instance gateway tetap sama, tanpa restart. Walaupun ringkasan aktivasi menandai tool deferred, dispatch chat nyata membuktikan handler baru: token sintetis dimask, DOM/selector/input/klik/AX dan state antar-call lulus dengan0screenshot. Temporary local vault item sintetis diisi melalui `browser_vault`, hash nilai DOM cocok, stdout dan error echo menjadi `«redacted-vault-secret»`; hasil persisted di state.db juga tidak mengandung prefix credential sintetis. DOM tetap berjalan setelah expected RuntimeError. Native finish melaporkan owned targets kosong, unresolved_creation=false, shared Chrome dipertahankan untuk sesi lain. Pemeriksaan inventori target independen HTTP `/json/list` mendapat404; bukan PASS dan tidak dicari workaround. Server fixture berhenti serta item vault sintetis terhapus/absen terverifikasi. Doctor isolated-home failure, gap early-popup dan batas vault compatibility tetap terbuka; metadata installer/identitas source tidak diubah. Google Flow tetap diparkir. Bukti privat `~/.hermes/cache/scratch/browser-redaction-repair-20261028-163539/`.
 - Baseline source sebelum cleanup:146 tes plugin dan580 API lulus.
 - Source peer-pin, cancellation dan shared-browser policy sudah ada; registered-host acceptance terdahulu tidak otomatis membuktikan closure terbaru di chat gateway sudah aktif.
 - **Gap nyata:** popup yang membuka JavaScript dialog sebelum Page attachment dapat timeout tanpa event yang terekam. Related-only observation tidak dinyatakan memperbaikinya. Dialog pasca-attachment, vault exact-target dan plain-popup punya bukti tersendiri.
 - Tidak menjanjikan semua kondisi izin OS/locked GUI, hard-crash, generasi berbayar atau endurance. Normal task-finished yang tidak diberikan host tidak direkayasa; explicit finish dan hook nyata dibedakan.
 
 ## Checklist sekarang
-1. [x] Cleanup semua source/instalasi/browser MCP percobaan dan plan lama tanpa backup; pertahankan dependensi vendor aktif.
-2. [x] Suite source + namespaced PluginManager registration + compile lulus.
-3. [x] Native chat open/read/finish dan registered-host+HTTP concurrency/cancel lulus tanpa generasi.
-4. [x] Source-only secret scan, commit, push dan remote SHA terverifikasi.
-5. [ ] Google Flow/API diparkir atas arahan Dani. Status/diagnosis Automation lama tetap bukti historis; tidak ada perubahan API, service, izin atau generasi pada patch redaksi ini.
-6. [ ] Gap early-popup tetap terbuka sampai perbaikan yang diuji, bukan ditutup oleh smoke test.
+1. [x] Baseline Git bersih/remote sinkron; regression RED pada source lama, patch terbatas pada output.
+2. [x]157/157tes, compile, namespaced registration/schema/unload dan scan directory/staged lulus.
+3. [x] Commit kode `362e1a8` dipush dan SHA main remote cocok; aktivasi kontrol resmi tanpa restart.
+4. [x] Native DOM/input/klik/AX/state antar-call dan vault sintetis→DOM→redaksi stdout/error teruji tanpa screenshot; persistence hasil diperiksa.
+5. [x] Native finish melaporkan targets kosong; fixture server berhenti, item vault sintetis terhapus/absen.
+6. [ ] Verifikasi cleanup dengan inventori independen terblokir: HTTP `/json/list`404; tidak diakali dan tidak dinyatakan lulus.
+7. [ ] Gap early-popup, metadata installer dan sanitasi identitas source tetap pekerjaan terpisah. Google Flow/API tetap diparkir.
 
 ## Build dan publikasi setiap perubahan
 - Pakai runtime Hermes yang nyata, bukan menebak `.venv`: `hermes --run-module unittest discover -s tests -p 'test_*.py'`; registrasi via `tests/registration.py` dalam proses terpisah; compile source yang berubah.
