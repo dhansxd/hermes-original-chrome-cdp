@@ -45,7 +45,7 @@ class ProgressTests(unittest.TestCase):
         for name in ('failed','peer'):
             p.states[('task',name)]={'endpoint':'ws://fixture','state':{'owned':{name:1}},'uncertain':True}
         requests=[]
-        def worker(request,timeout=300):
+        def worker(request,timeout=300,**kwargs):
             requests.append(request)
             return {'success':True,'state':{'owned':{}},'remaining_owned_targets':[]}
         p._worker=worker
@@ -66,7 +66,7 @@ class ProgressTests(unittest.TestCase):
         key=('task','failed')
         p.states[key]={'endpoint':'ws://fixture','state':{'owned':{'failed':1}},'uncertain':True}
         requests=[]
-        def worker(request,timeout=300):
+        def worker(request,timeout=300,**kwargs):
             requests.append(request)
             return {'success':False,'error':'close_unconfirmed','remaining_owned_targets':['failed']}
         p._worker=worker
@@ -78,9 +78,9 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(p.last_cleanup[key]['error'],'close_unconfirmed')
 
     def test_wire_timeout_result_quarantines_session_without_replay(self):
-        p=ChromeProvider(data='/synthetic-empty-root');p.endpoint=lambda:'ws://fixture'
+        p=ChromeProvider(data='/synthetic-empty-root');p.endpoint=lambda **kw:'ws://fixture'
         calls=[]
-        def worker(*args):
+        def worker(*args,**kwargs):
             calls.append(True)
             return {'success':False,'uncertain':True,'state':{'owned':{'old':1},'verified':True},'error':'CDP_response_timeout'}
         p._worker=worker
@@ -123,10 +123,10 @@ class ProgressTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             script=Path(root)/'worker.py'
             script.write_text('import json,subprocess,sys\njson.load(sys.stdin)\nsubprocess.Popen([sys.executable,"-c","import time;time.sleep(1.5)"])\nprint(json.dumps({"result":{"success":True,"stdout":"actual-output"}}),flush=True)\n')
-            p=ChromeProvider(data=root);p._active_entry={'state':None}
+            p=ChromeProvider(data=root);entry={'state':None}
             start=time.monotonic()
             with patch('plugin.ROOT',Path(root)):
-                result=p._worker({},1)
+                result=p._worker({},1,entry=entry)
             self.assertEqual(result['stdout'],'actual-output')
             self.assertLess(time.monotonic()-start,.8)
 
@@ -135,10 +135,10 @@ class ProgressTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             script=Path(root)/'worker.py'
             script.write_text('import subprocess,sys,time\nsubprocess.Popen([sys.executable,"-c","import time;time.sleep(1.5)"])\ntime.sleep(5)\n')
-            p=ChromeProvider(data=root);p._active_entry={'state':None}
+            p=ChromeProvider(data=root);entry={'state':None}
             start=time.monotonic()
             with patch('plugin.ROOT',Path(root)):
-                with self.assertRaises(subprocess.TimeoutExpired):p._worker({},.1)
+                with self.assertRaises(subprocess.TimeoutExpired):p._worker({},.1,entry=entry)
             self.assertLess(time.monotonic()-start,.8)
 
     def test_parent_retains_checkpoint_on_timeout_and_reaps_worker(self):
@@ -147,9 +147,8 @@ class ProgressTests(unittest.TestCase):
             script=Path(root)/'worker.py'
             script.write_text('import json,sys,time,os\njson.load(sys.stdin)\nprint(json.dumps({"checkpoint":{"current":"new","context":"ctx","owned":{"old":1,"new":None}},"pid":os.getpid()}),flush=True)\ntime.sleep(10)\n')
             p=ChromeProvider(data=root);entry={'endpoint':'ws://fixture','state':{'owned':{'old':1}}}
-            p._active_entry=entry
             with patch('plugin.ROOT',Path(root)):
-                with self.assertRaises(subprocess.TimeoutExpired):p._worker({},.15)
+                with self.assertRaises(subprocess.TimeoutExpired):p._worker({},.15,entry=entry)
             self.assertEqual(entry['state']['owned'],{'old':1,'new':None})
 
     def test_created_target_is_published_before_window_lookup_failure(self):

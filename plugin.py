@@ -1,5 +1,6 @@
 """Original headed Chrome provider and public browser_exec override. No core mutation."""
 import ast, copy, ctypes, json, os, re, secrets, signal, subprocess, sys, threading, time
+from contextlib import contextmanager
 from pathlib import Path
 from agent.browser_provider import BrowserProvider
 
@@ -88,21 +89,37 @@ class ChromeProvider(BrowserProvider):
         self.data=Path(data or PERSONAL).resolve()
         self.workspace=Path(workspace or Path.home()/'.hermes/cache/scratch/native-chrome-work')
         self.states={};self.lock=threading.RLock();self.last_cleanup={};self.last_sessions={}
-        self._active_entry: dict={}
+        self._session_locks={};self._task_active={};self._closing_tasks={};self._unloading=False
+        self._setup_lock=threading.RLock()
+
+    @contextmanager
+    def session_guard(self,key):
+        # Count waiters before acquiring: removing an entry cannot split one
+        # session across an old lock and a new lock while callers are queued.
+        with self.lock:
+            slot=self._session_locks.setdefault(key,[threading.RLock(),0,object()]);slot[1]+=1
+            generation=slot[2]
+        try:
+            with slot[0]:yield generation
+        finally:
+            with self.lock:
+                slot[1]-=1
+                if not slot[1]:self._session_locks.pop(key)
     def is_available(self):return sys.platform=='darwin' and CHROME.exists()
     def get_setup_schema(self):
         return {'name':self.display_name,'badge':'local GUI','tag':'Original Default, owned windows; no profile copy','env_vars':[]}
-    def endpoint(self):
+    def endpoint(self,*,entry):
         # No arbitrary endpoint override: port file is tied to the authorized data root.
         if self.data==PERSONAL.resolve():verify_account(self.data,EXPECTED_ACCOUNT)
         # GUI explicitly selects Default BEFORE CDP work; never scan other contexts.
         seed=self.workspace/'seeds'/('chrome-agent-'+secrets.token_hex(16)+'.html')
         seed.parent.mkdir(parents=True,exist_ok=True)
         seed.write_text('<!doctype html><title>Chrome agent setup</title>')
-        self.seed_url=seed.resolve().as_uri()
-        # Setup authority is recorded before launch, not yet a verified profile binding.
-        self._active_entry['state']={'pending_seed':self.seed_url,'owned':{},'verified':False}
-        gui_launch(self.data,self.seed_url)
+        seed_url=seed.resolve().as_uri()
+        # Setup authority belongs to this entry before launch, never a mutable
+        # provider-wide active-entry/seed selected by a concurrent caller.
+        entry['state']={'pending_seed':seed_url,'owned':{},'verified':False}
+        gui_launch(self.data,seed_url)
         import psutil
         deadline=time.monotonic()+20
         while time.monotonic()<deadline:
@@ -142,11 +159,16 @@ class ChromeProvider(BrowserProvider):
         return found
 
     def _finish_browser(self, entry):
+        # Setup cannot reuse an endpoint while its disposable browser is exiting.
+        with self._setup_lock:return self._finish_browser_locked(entry)
+
+    def _finish_browser_locked(self, entry):
         state=entry.get('state') or {}
         if state.get('owned') or state.get('unresolved_creation'):
             return {'browser_closed':False,'browser_close_deferred':'targets_remaining'}
-        if any(other is not entry for other in self.states.values()):
-            return {'browser_closed':False,'browser_close_deferred':'other_sessions_active'}
+        with self.lock:
+            if any(other is not entry for other in self.states.values()):
+                return {'browser_closed':False,'browser_close_deferred':'other_sessions_active'}
         if self.data==PERSONAL.resolve():
             # This root is shared with the Flow API and original user sessions.
             # Closing our known targets never grants authority to quit Chrome.
@@ -163,9 +185,8 @@ class ChromeProvider(BrowserProvider):
         observer.close()
         return {'browser_closed':True}
 
-    def _worker(self,request,timeout=300):
+    def _worker(self,request,timeout:float=300,*,entry):
         # Protocol stdout is distinct from captured user stdout. No durable journal.
-        entry=self._active_entry
         frames=[];errors=[]
         proxied=bool(request.get('endpoint'))
         if proxied:
@@ -225,88 +246,128 @@ class ChromeProvider(BrowserProvider):
     def _release_observer(self, entry):
         observer=entry.get('observer')
         if observer:
-            if hasattr(observer,'entries'):observer.entries[:]=[e for e in observer.entries if e is not entry]
-            if not any(other is not entry and other.get('observer') is observer for other in self.states.values()):observer.close()
+            with self.lock:
+                shared=any(other is not entry and other.get('observer') is observer for other in self.states.values())
+            if hasattr(observer,'entries'):
+                with observer._lock:observer.entries[:]=[e for e in observer.entries if e is not entry]
+            if not shared:observer.close()
 
     def execute(self,args,task_id=None,**kwargs):
-        with self.lock:
-            key=None;endpoint=None
-            try:
-                key=self._key(args,task_id)
+        try:key=self._key(args,task_id)
+        except Exception as exc:
+            return json.dumps({'success':False,'error':str(exc),'fallback_used':False,'action_replayed':False})
+        with self.session_guard(key) as generation:
+            token=object()
+            with self.lock:
+                if self._unloading or self._closing_tasks.get(key[0]) or self._session_locks[key][2] is not generation:
+                    return json.dumps({'success':False,'error':'session_cleanup_in_progress: no action sent','action_replayed':False,'fallback_used':False})
                 self.last_sessions.pop(key[0],None)
-                if self.data==PERSONAL.resolve():verify_account(self.data,EXPECTED_ACCOUNT)
-                timeout=max(5,min(1800,int(args.get('timeout_s',300))))
-                entry=self.states.get(key)
-                if entry and entry.get('uncertain'):
-                    # Only the exact finish expression can cross quarantine. It is
-                    # parsed, never executed; the worker receives cleanup, not code.
-                    code=args.get('code','')
-                    try:
-                        tree=ast.parse(code)
-                        finish_only=any(ast.dump(tree,include_attributes=False)==ast.dump(ast.parse(allowed),include_attributes=False)
-                                        for allowed in ('finish_browser()','print(finish_browser())'))
-                    except (SyntaxError,TypeError):finish_only=False
-                    if not finish_only:raise RuntimeError('previous_execution_outcome_uncertain: do not replay; inspect and release session')
-                    self.close_session(key[0],session=key[1])
-                    result=self.last_cleanup.get(key,{'success':False,'error':'cleanup_outcome_unknown'})
-                    return json.dumps(dict(result,fallback_used=False,action_replayed=False,cleanup_only=True))
-                if not entry:
-                    entry={'endpoint':None,'state':None}
-                    self.states[key]=entry
-                self._active_entry=entry
-                endpoint=entry['endpoint'] or self.endpoint()
-                entry['endpoint']=endpoint
-                workspace=self.workspace/str(abs(hash(key)))
-                request={'endpoint':endpoint,'profile':str(self.data/'Default'),'workspace':str(workspace),'state':entry['state'],'seed_url':getattr(self,'seed_url',None),'code':args.get('code','')}
-                result=self._worker(request,timeout)
-                if result.get('state'):entry['state']=result.pop('state')
-                if entry.get('observer') and ((entry.get('state') or {}).get('observer_released') or not (entry.get('state') or {}).get('owned')):
-                    self._release_observer(entry)
-                    if not (entry.get('state') or {}).get('owned'):self.states.pop(key,None)
-                if result.get('uncertain') or (not result.get('success') and (self.states.get(key,{}).get('state') or {}).get('verified') is False):
-                    self.states[key]['uncertain']=True
-                if result.get('success') and self.states.get(key,{}).get('state',{}).get('owned'):
-                    self.last_sessions[key[0]]=key[1]
-                result['fallback_used']=False
-                result['limitations']=['No arbitrary-Python sandbox','Only owned roots and related targets are observed; no browser-wide page auto-attach; early popup dialogs before attachment are unsupported; dialog_pending requires explicit answer, never action replay; observer loss fails without reconnect','Vault uses the exact selected held parent transport/session; missing or lost observer binding refuses without reconnect','Only opener-linked popups tracked; automatic cleanup on session finalization/interruption, not ordinary turn completion; use finish_browser() for explicit task finish','New tabs use separate owned windows','Consent auto-click verified on personal main Chrome and 9Router PWA; ambiguous/uncorrelated prompts report failure']
+                self._task_active.setdefault(key[0],set()).add(token)
+            result={}
+            try:
+                result=self._execute_session(args,key)
                 return json.dumps(result)
-            except subprocess.TimeoutExpired:
-                if key is not None:
-                    self.states.setdefault(key,{'endpoint':endpoint,'state':None})['uncertain']=True
-                return json.dumps({'success':False,'error':'browser_exec_timeout: action outcome uncertain; no retry performed; targets may remain','fallback_used':False,'action_replayed':False})
-            except Exception as exc:
-                if key in self.states:
-                    self.states[key]['uncertain']=True
-                    self._release_observer(self.states[key])
-                return json.dumps({'success':False,'error':str(exc),'error_type':type(exc).__name__,'fallback_used':False,'action_replayed':False})
+            finally:
+                with self.lock:
+                    active=self._task_active[key[0]];active.discard(token)
+                    if not active:self._task_active.pop(key[0])
+                    entry=self.states.get(key) or {}
+                    if not active and result.get('success') and not entry.get('uncertain') and (entry.get('state') or {}).get('owned'):
+                        self.last_sessions[key[0]]=key[1]
+                    else:self.last_sessions.pop(key[0],None)
+
+    def _execute_session(self,args,key):
+        endpoint=None
+        with self.lock:entry=self.states.get(key)
+        try:
+            if self.data==PERSONAL.resolve():verify_account(self.data,EXPECTED_ACCOUNT)
+            timeout=max(5,min(1800,int(args.get('timeout_s',300))))
+            if entry and entry.get('uncertain'):
+                # Only the exact finish expression can cross quarantine. It is
+                # parsed, never executed; the worker receives cleanup, not code.
+                code=args.get('code','')
+                try:
+                    tree=ast.parse(code)
+                    finish_only=any(ast.dump(tree,include_attributes=False)==ast.dump(ast.parse(allowed),include_attributes=False)
+                                    for allowed in ('finish_browser()','print(finish_browser())'))
+                except (SyntaxError,TypeError):finish_only=False
+                if not finish_only:raise RuntimeError('previous_execution_outcome_uncertain: do not replay; inspect and release session')
+                self.close_session(key[0],session=key[1])
+                with self.lock:result=copy.deepcopy(self.last_cleanup.get(key,{'success':False,'error':'cleanup_outcome_unknown'}))
+                return dict(result,fallback_used=False,action_replayed=False,cleanup_only=True)
+            if not entry:
+                # Only GUI launch/root setup is serialized; ordinary page I/O is
+                # outside this boundary and outside the state-map lock.
+                with self._setup_lock:
+                    entry:dict={'endpoint':None,'state':None}
+                    with self.lock:self.states[key]=entry
+                    entry['endpoint']=self.endpoint(entry=entry)
+            endpoint=entry['endpoint']
+            workspace=self.workspace/str(abs(hash(key)))
+            request={'endpoint':endpoint,'profile':str(self.data/'Default'),'workspace':str(workspace),'state':entry['state'],'code':args.get('code','')}
+            result=self._worker(request,timeout,entry=entry)
+            if result.get('state'):entry['state']=result.pop('state')
+            if entry.get('observer') and ((entry.get('state') or {}).get('observer_released') or not (entry.get('state') or {}).get('owned')):
+                self._release_observer(entry)
+                if not (entry.get('state') or {}).get('owned'):
+                    with self.lock:self.states.pop(key,None)
+            if result.get('uncertain') or (not result.get('success') and (entry.get('state') or {}).get('verified') is False):
+                entry['uncertain']=True
+            result['fallback_used']=False
+            result['limitations']=['No arbitrary-Python sandbox','Only owned roots and related targets are observed; no browser-wide page auto-attach; early popup dialogs before attachment are unsupported; dialog_pending requires explicit answer, never action replay; observer loss fails without reconnect','Vault uses the exact selected held parent transport/session; missing or lost observer binding refuses without reconnect','Only opener-linked popups tracked; automatic cleanup on session finalization/interruption, not ordinary turn completion; use finish_browser() for explicit task finish','New tabs use separate owned windows','Consent auto-click verified on personal main Chrome and 9Router PWA; ambiguous/uncorrelated prompts report failure']
+            return result
+        except subprocess.TimeoutExpired:
+            if entry:entry['uncertain']=True
+            return {'success':False,'error':'browser_exec_timeout: action outcome uncertain; no retry performed; targets may remain','fallback_used':False,'action_replayed':False}
+        except Exception as exc:
+            if entry:
+                entry['uncertain']=True
+                self._release_observer(entry)
+            return {'success':False,'error':str(exc),'error_type':type(exc).__name__,'fallback_used':False,'action_replayed':False}
     def create_session(self,task_id):
         # This provider cannot safely hand its browser-wide endpoint to legacy target selection.
         raise RuntimeError('Use browser.backend=browser-use with the approved browser_exec override; legacy browser_* attachment is not safe')
     def close_session(self,session_id,session=None):
+        task=str(session_id);results=[]
         with self.lock:
-            results=[]
-            for key,entry in list(self.states.items()):
-                if key[0]!=str(session_id) or (session is not None and key[1]!=session):continue
-                try:
-                    if not entry.get('state') or not entry.get('endpoint'):
-                        self.last_cleanup[key]={'success':False,'error':'ownership_lost_after_timeout: no targets adopted for cleanup'}
-                        results.append(False);continue
-                    self._active_entry=entry
-                    result=self._worker({'endpoint':entry['endpoint'],'state':entry['state'],'profile':str(self.data/'Default'),'workspace':str(self.workspace),'cleanup':True},30)
-                    self.last_cleanup[key]=result
-                    results.append(result.get('success',False))
-                    if result.get('success'):
-                        self.states.pop(key)
-                        if self.last_sessions.get(key[0])==key[1]:self.last_sessions.pop(key[0],None)
-                except Exception as exc:
-                    self.last_cleanup[key]={'success':False,'error':str(exc)};results.append(False)
-                finally:
-                    self._release_observer(entry)
+            if session is None:self._closing_tasks[task]=self._closing_tasks.get(task,0)+1
+            keys=[key for key in set(self.states)|set(self._session_locks)
+                  if key[0]==task and (session is None or key[1]==session)]
+            for key in keys:
+                if key in self._session_locks:self._session_locks[key][2]=object()
+        try:
+            for key in sorted(keys):
+                # Wait only for this session's worker, never under the map lock.
+                with self.session_guard(key):
+                    with self.lock:entry=self.states.get(key)
+                    if entry is None:continue
+                    try:
+                        if not entry.get('state') or not entry.get('endpoint'):
+                            result={'success':False,'error':'ownership_lost_after_timeout: no targets adopted for cleanup'}
+                        else:
+                            result=self._worker({'endpoint':entry['endpoint'],'state':entry['state'],'profile':str(self.data/'Default'),'workspace':str(self.workspace),'cleanup':True},30,entry=entry)
+                        with self.lock:
+                            self.last_cleanup[key]=result
+                            if result.get('success'):
+                                self.states.pop(key,None)
+                                if self.last_sessions.get(task)==key[1]:self.last_sessions.pop(task,None)
+                        results.append(bool(result.get('success')))
+                    except Exception as exc:
+                        with self.lock:self.last_cleanup[key]={'success':False,'error':str(exc)}
+                        results.append(False)
+                    finally:self._release_observer(entry)
             return all(results)
+        finally:
+            if session is None:
+                with self.lock:
+                    self._closing_tasks[task]-=1
+                    if not self._closing_tasks[task]:self._closing_tasks.pop(task)
     def emergency_cleanup(self,session_id):self.close_session(session_id)
     def unload(self):
         with self.lock:
-            for task in {key[0] for key in self.states}:self.close_session(task)
+            self._unloading=True
+            tasks={key[0] for key in self.states}|set(self._task_active)
+        for task in sorted(tasks):self.close_session(task)
 
 
 class BrowserLifecycle:
@@ -325,33 +386,35 @@ class BrowserLifecycle:
     def _cleanup(self,tasks,reason):
         reports=[]
         for task in tasks:
-            ids=self.bindings[task]
+            with self.provider.lock:
+                ids=copy.deepcopy(self.bindings.get(task))
+            if ids is None:continue
             success=self.provider.close_session(task)
-            report={'task_id':task,'session_id':ids['session_id'],'reason':reason,'success':success,
-                    'results':[dict(result,session=key[1]) for key,result in self.provider.last_cleanup.items() if key[0]==task]}
+            with self.provider.lock:
+                report={'task_id':task,'session_id':ids['session_id'],'reason':reason,'success':success,
+                        'results':[dict(result,session=key[1]) for key,result in self.provider.last_cleanup.items() if key[0]==task]}
+                previous=self.notices.get(ids['session_id'],[])
+                self.notices[ids['session_id']]=[r for r in previous if r['task_id']!=task]+[report]
+                if success and self.bindings.get(task)==ids:self.bindings.pop(task,None)
             reports.append(report)
-            previous=self.notices.get(ids['session_id'],[])
-            self.notices[ids['session_id']]=[r for r in previous if r['task_id']!=task]+[report]
             # Public event + next browser tool/output transform; observer return alone is not delivery.
             self.ctx.emit('browser_cleanup',report)
-            if success:self.bindings.pop(task,None)
         return reports
     def finalize(self,session_id=None,**kwargs):
         with self.provider.lock:
             tasks=[task for task,ids in self.bindings.items() if session_id and ids['session_id']==str(session_id)]
-            result=self._cleanup(tasks,'session_finalized')
             self.pending.pop(str(session_id),None)
-            return result or None
+        return self._cleanup(tasks,'session_finalized') or None
     def cancel(self,session_key=None,**kwargs):
         with self.provider.lock:
             tasks=[task for task,ids in self.bindings.items() if session_key and ids['session_key']==str(session_key)]
-            return self._cleanup(tasks,'cancelled') or None
+        return self._cleanup(tasks,'cancelled') or None
     def turn_end(self,task_id=None,session_id=None,interrupted=False,**kwargs):
         with self.provider.lock:
             ids=self.bindings.get(str(task_id))
             if not ids or ids['session_id']!=str(session_id):return
-            if interrupted:return self._cleanup([str(task_id)],'interrupted')
-            return {'cleanup_deferred':True,'reason':'pending_human_input' if self.pending.get(str(session_id)) else 'turn_is_not_task_completion'}
+            if not interrupted:return {'cleanup_deferred':True,'reason':'pending_human_input' if self.pending.get(str(session_id)) else 'turn_is_not_task_completion'}
+        return self._cleanup([str(task_id)],'interrupted')
     def waiting(self,session_id=None,session_key=None,request_id=None,**kwargs):
         with self.provider.lock:
             if session_id and request_id:self.pending.setdefault(str(session_id),set()).add(str(request_id))
@@ -387,12 +450,11 @@ def register(ctx):
     def handler(args,**kw):
         if selected():
             from tools.approval_context import get_current_session_key
-            with provider.lock:
-                lifecycle.bind(**dict(kw,session_key=kw.get('session_key') or get_current_session_key(default='')))
-                result=json.loads(provider.execute(args,**kw))
-                result['browser_cleanup']=lifecycle.status(kw.get('session_id'))
-                result['automatic_cleanup']='session finalization or explicit interruption only; completed turns preserve pending/multi-turn work'
-                return json.dumps(scrub_result(result))
+            lifecycle.bind(**dict(kw,session_key=kw.get('session_key') or get_current_session_key(default='')))
+            result=json.loads(provider.execute(args,**kw))
+            result['browser_cleanup']=lifecycle.status(kw.get('session_id'))
+            result['automatic_cleanup']='session finalization or explicit interruption only; completed turns preserve pending/multi-turn work'
+            return json.dumps(scrub_result(result))
         return browser_exec(code=args.get('code',''),session=args.get('session',''),timeout_s=args.get('timeout_s',300),task_id=kw.get('task_id'))
     ctx.register_browser_provider(provider)
     ctx.register_tool(name='browser_exec',toolset='browser-use',schema=copy.deepcopy(BROWSER_EXEC_SCHEMA),handler=handler,override=True)

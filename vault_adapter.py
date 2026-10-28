@@ -10,6 +10,7 @@ import logging
 import secrets
 import types
 from pathlib import Path
+from contextlib import nullcontext
 
 if __package__:
     from .binding import BoundBrowser
@@ -48,17 +49,22 @@ def invoke(provider, original_handler, args, kwargs):
     A prior successful browser_exec must set it. Never infer a session by origin.
     """
     try:
-        with provider.lock:
-            task = str(kwargs.get('task_id') or 'default')
-            selected = provider.last_sessions.get(task)
-            entry = provider.states.get((task, selected)) if selected else None
-            if not entry or entry.get('uncertain') or not entry.get('state'):
-                return _failure()
-            # Copy pins target even if an external callback modifies provider state.
-            state = copy.deepcopy(entry['state'])
-            observer = entry.get('observer')
-            if observer is None:
-                return _failure()
+        task = str(kwargs.get('task_id') or 'default')
+        with provider.lock:selected = provider.last_sessions.get(task)
+        guard = provider.session_guard((task, selected)) if selected and hasattr(provider, 'session_guard') else nullcontext()
+        with guard:
+            with provider.lock:
+                entry = provider.states.get((task, selected)) if selected else None
+                if (not entry or entry.get('uncertain') or not entry.get('state')
+                        or provider.last_sessions.get(task) != selected
+                        or getattr(provider, '_task_active', {}).get(task)
+                        or getattr(provider, '_closing_tasks', {}).get(task)):
+                    return _failure()
+                # Pin the selection under the map lock; transport I/O holds only
+                # the selected session/observer locks so other tasks can progress.
+                state = copy.deepcopy(entry['state'])
+                observer = entry.get('observer')
+                if observer is None:return _failure()
             with observer.borrow(state) as browser:
                 adapter = _Transport(browser)
                 namespace = _namespace(original_handler, adapter)

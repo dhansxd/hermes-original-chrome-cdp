@@ -22,8 +22,8 @@ class LifecycleTest(unittest.TestCase):
         self.ctx=PluginContext(PluginManifest(name='original-chrome-default',source='user',capabilities=['tools.override']),self.manager)
         self.provider=ChromeProvider()
         self.calls=[]
-        self.provider.endpoint=lambda:'ws://inert'
-        def worker(request,timeout):
+        self.provider.endpoint=lambda **kw:'ws://inert'
+        def worker(request,timeout,**kwargs):
             self.calls.append(request)
             return {'success':True,'state':{'owned':['agent-only']}}
         self.provider._worker=worker
@@ -124,7 +124,7 @@ class LifecycleTest(unittest.TestCase):
     def test_cancel_waits_for_running_worker_then_closes_once(self):
         self.install();self.lifecycle.bind(task_id='task-a',session_id='session-a',session_key='route-a')
         entered=threading.Event();release=threading.Event()
-        def worker(request,timeout):
+        def worker(request,timeout,**kwargs):
             self.calls.append(request)
             if not request.get('cleanup'):
                 entered.set();self.assertTrue(release.wait(3))

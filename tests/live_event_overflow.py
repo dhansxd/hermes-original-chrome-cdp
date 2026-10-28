@@ -37,8 +37,8 @@ def main():
         assert out['idle']['overflow'] and out['idle']['buffer_length']<=4000,out['idle']
         read=record('same_session_read_wait_page_info',call('first','print(js("JSON.stringify({...__idleProbe,title:document.title,ready:document.readyState,elapsedMs:Date.now()-__idleProbe.start})")); assert wait_for_load(); print(page_info())'))
         record('fresh_named_session_navigation_wait_page_info',call('second',f'new_tab({url!r});assert wait_for_load();print(page_info());print(js("document.readyState"));print(wait_for_network_idle(timeout=3,idle_ms=100))'))
-        out['same_shared_observer']=provider.states[('overflow-fixture','second')]['observer'] is observer
-        assert out['same_shared_observer']
+        out['independent_session_observer']=provider.states[('overflow-fixture','second')]['observer'] is not observer
+        assert out['independent_session_observer']
         history=record('old_session_history_gap',call('first','print(drain_events())'))
         out['history_gap_explicit']=not history['success'] and 'event_buffer_overflow' in history.get('error','') and not history.get('action_replayed')
         # Current metadata must still work after an explicit history refusal.
@@ -57,7 +57,7 @@ def main():
     except Exception:
         out['failure']=traceback.format_exc();out['success']=False
     finally:
-        if provider._observer:provider._observer.close()
+        for entry in list(provider.states.values()):provider._release_observer(entry)
         if wire is None and (data/'DevToolsActivePort').exists():
             lines=(data/'DevToolsActivePort').read_text().splitlines();wire=Wire('ws://127.0.0.1:'+lines[0]+lines[1])
         if wire:

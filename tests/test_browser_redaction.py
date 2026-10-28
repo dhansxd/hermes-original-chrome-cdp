@@ -74,7 +74,7 @@ class BrowserRedactionTests(unittest.TestCase):
             'stderr': marker, 'error': escaped,
             'metadata': [{escaped: marker}],
             'state': copy.deepcopy(self.provider.states[('synthetic-task', 'named')]['state'])}
-        self.provider._worker = lambda *args: copy.deepcopy(payload)
+        self.provider._worker = lambda *args, **kwargs: copy.deepcopy(payload)
         raw = self.dispatch()
         message = make_tool_result_message('browser_exec', raw, 'synthetic-redaction')
         persisted = maybe_persist_tool_result(raw + 'x' * 100000, 'browser_exec',
@@ -85,7 +85,7 @@ class BrowserRedactionTests(unittest.TestCase):
         spill = Path(spill_path).read_text()
         self.assertTrue(json.loads(raw)['success'])
 
-        def fail(*args):
+        def fail(*args, **kwargs):
             raise RuntimeError(marker + escaped)
         self.provider._worker = fail
         error = self.dispatch()
@@ -108,7 +108,7 @@ class BrowserRedactionTests(unittest.TestCase):
             'url': 'https://example.invalid/callback?code=public-test&signature=public-signature',
             'screenshot_path': '/synthetic/work/screen.png', 'workspace': '/synthetic/work',
             'state': copy.deepcopy(state)}
-        self.provider._worker = lambda *args: copy.deepcopy(payload)
+        self.provider._worker = lambda *args, **kwargs: copy.deepcopy(payload)
         raw = self.dispatch()
         result = json.loads(raw)
         for key, expected in payload.items():
@@ -122,7 +122,7 @@ class BrowserRedactionTests(unittest.TestCase):
     def test_forced_redaction_when_global_preference_is_disabled(self):
         from agent import redact
         marker = 'sk-' + 'syntheticOnlyNotARealCredential' * 2
-        self.provider._worker = lambda *args: {'success': True, 'stdout': marker}
+        self.provider._worker = lambda *args, **kwargs: {'success': True, 'stdout': marker}
         with patch.object(redact, '_redact_enabled', return_value=False):
             raw = self.dispatch()
         self.assertTrue(marker not in raw, 'forced browser egress must not follow log preference')
@@ -136,7 +136,7 @@ class BrowserRedactionTests(unittest.TestCase):
         register_vault_redaction_value(marker)
         notice = {'success': False, 'error': marker, 'results': [{'error': marker}]}
         lifecycle.notices['synthetic-session'] = [copy.deepcopy(notice)]
-        self.provider._worker = lambda *args: {'success': True, 'stdout': 'DOM ready'}
+        self.provider._worker = lambda *args, **kwargs: {'success': True, 'stdout': 'DOM ready'}
         raw = self.dispatch()
         self.assertTrue(marker not in raw, 'cleanup notice reached registry with a secret')
         self.assertFalse(json.loads(raw)['browser_cleanup'][0]['success'])
@@ -149,7 +149,7 @@ class BrowserRedactionTests(unittest.TestCase):
         nested = marker
         for _ in range(REDACT_WALK_MAX_DEPTH + 1):
             nested = [nested]
-        self.provider._worker = lambda *args: {'success': True, 'nested': nested}
+        self.provider._worker = lambda *args, **kwargs: {'success': True, 'nested': nested}
         raw = self.dispatch()
         self.assertTrue(json.loads(raw)['success'])
         self.assertTrue(marker not in raw, 'nesting limit must never return raw remainder')

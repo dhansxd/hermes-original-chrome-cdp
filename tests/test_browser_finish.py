@@ -12,10 +12,10 @@ class FinishBrowserTests(unittest.TestCase):
             obs.request.return_value={'error':'unknown_meta'}
             if close_error:obs.request.side_effect=close_error
             entry={'observer':obs,'state':{'owned':owned or {},'verified':True}}
-            p.states={('task','default'):entry};p._active_entry=entry
+            p.states={('task','default'):entry}
             if other is not None:p.states[('other','default')]=other
             with patch('plugin.ROOT',Path(root)),patch.object(p,'_chrome_processes',return_value=[],create=True),patch('psutil.wait_procs',return_value=([],alive or [])):
-                result=p._worker({'endpoint':'fixture','profile':root},3)
+                result=p._worker({'endpoint':'fixture','profile':root},3,entry=entry)
             return result,obs
 
     def test_last_finished_session_requests_normal_browser_exit(self):

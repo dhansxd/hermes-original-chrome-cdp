@@ -44,6 +44,6 @@ try:
         # never requests Browser.close. No cleanup of a historical failed session.
         report['cleanup']=provider.close_session('resume-diagnostic')
 finally:
-    if provider._observer:provider._observer.close()
+    for entry in list(provider.states.values()):provider._release_observer(entry)
     receipt.write_text(json.dumps(report,indent=2))
     print(json.dumps({'receipt':str(receipt),'first':report.get('first'),'second':report.get('second'),'cleanup':report.get('cleanup'),'failed_commands':[r for r in trace if 'error' in r]},indent=2))

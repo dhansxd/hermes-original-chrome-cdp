@@ -30,13 +30,15 @@ def main():
     os.environ['HERMES_HOME']=str(home)
     (home/'config.yaml').write_text('browser:\n  backend: browser-use\n  cloud_provider: original-chrome-default\nplugins:\n  entries:\n    original-chrome-default:\n      granted_capabilities: [tools.override]\n')
     report={'level':'registered-host + bounded worker + disposable GUI; not chat-native','checks':{},'raw':{}}
+    report_lock=threading.RLock()
     manager=None;provider=None;inventory_url=None
-    def save():(out/'result.json').write_text(json.dumps(report,indent=2))
+    def save():
+        with report_lock:(out/'result.json').write_text(json.dumps(report,indent=2))
     def check(name,value):
         report['checks'][name]=bool(value);save();print(json.dumps({'check':name,'pass':bool(value)}),flush=True)
         assert value,name
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self,*args):pass
+        def log_message(self,format,*args):pass
         def do_GET(self):
             body=b'<!doctype html><title>Session fixture</title><button id="inc">increment</button><input id="pw" type="password"><script>window.count=0;document.querySelector("#inc").onclick=()=>++window.count;</script>'
             self.send_response(200);self.send_header('Content-Type','text/html');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
@@ -44,13 +46,17 @@ def main():
     serving=threading.Thread(target=server.serve_forever,daemon=True);serving.start()
     url=f'http://127.0.0.1:{server.server_port}/'
     def dispatch(name,code,timeout=20):
-        result=json.loads(registry.dispatch('browser_exec',{'code':code,'timeout_s':timeout},scope=str(home),task_id='fixture-'+name,session_id='chat-'+name,session_key='route-'+name))
-        report['raw'].setdefault(name,[]).append(result);save();return result
+        raw=registry.dispatch('browser_exec',{'code':code,'timeout_s':timeout},scope=str(home),task_id='fixture-'+name,session_id='chat-'+name,session_key='route-'+name)
+        assert isinstance(raw,str)
+        result=json.loads(raw)
+        with report_lock:report['raw'].setdefault(name,[]).append(result);save()
+        return result
     def read(name):
         result=dispatch(name,'import json;print(json.dumps(js("({marker:window.marker,count:window.count})")))')
         assert result.get('success'),result
         return json.loads(result['stdout'])
     def inventory():
+        assert inventory_url
         with urlopen(inventory_url,timeout=5) as response:return {t['id']:t for t in json.loads(response.read())}
     def exact_processes():
         found=[]
@@ -64,7 +70,8 @@ def main():
         manager=PluginManager(scope_key=str(home))
         manager._load_plugin(PluginManifest(name='original-chrome-default',source='user',path=str(ROOT),capabilities=['tools.override']))
         loaded=manager._plugins['original-chrome-default'];check('namespaced_registration',loaded.enabled)
-        handler=registry.get_entry('browser_exec',scope=str(home)).handler
+        registered=registry.get_entry('browser_exec',scope=str(home));assert registered is not None
+        handler=registered.handler
         provider=inspect.getclosurevars(handler).nonlocals['provider'];provider.data=data.resolve();provider.workspace=out/'workspaces'
         for name in ('a','b'):
             setup=dispatch(name,'goto_url('+repr(url)+');wait_for_load();js('+repr('window.marker='+json.dumps(name)) +');print(page_info())')
@@ -74,8 +81,33 @@ def main():
         port=int((data/'DevToolsActivePort').read_text().splitlines()[0]);inventory_url=f'http://127.0.0.1:{port}/json/list'
         owned={name:set(entry['state']['owned']) for name,entry in entries.items()}
         check('unique_owned_targets',not (owned['a']&owned['b']))
-        failed=dispatch('a','print(js("new Promise(resolve=>setTimeout(()=>resolve(++window.count),6500))"))',5)
+        # Barrier at an actual outbound CDP command, not Python sleep overlap.
+        sent=threading.Event();observer=entries['a']['observer'];send=observer.wire.ws.send
+        def observed_send(text,*args,**kwargs):
+            value=json.loads(text)
+            result=send(text,*args,**kwargs)
+            if value['method']=='Runtime.evaluate' and 'parallelProbe' in value.get('params',{}).get('expression',''):sent.set()
+            return result
+        observer.wire.ws.send=observed_send
+        with cf.ThreadPoolExecutor(max_workers=2) as pool:
+            pending=pool.submit(dispatch,'a','print(js("new Promise(resolve=>{window.parallelProbe=Date.now();setTimeout(()=>resolve(Date.now()),2500)})"))')
+            check('actual_cdp_command_inflight',sent.wait(5))
+            started=time.monotonic();peer=read('b');finished=time.monotonic()
+            check('peer_finishes_before_pending_response',not pending.done() and peer=={'marker':'b','count':0})
+            result=pending.result(10);check('pending_result_exact',result.get('success'))
+            report['parallel_timing']={'peer_elapsed_s':finished-started,'pending_finished_after_peer':True};save()
+        observer.wire.ws.send=send
+        failed=dispatch('a','print(js("++window.count;new Promise(resolve=>setTimeout(()=>resolve(window.count),6500))"))',5)
         check('inflight_timeout',not failed.get('success') and 'browser_exec_timeout' in failed.get('error',''))
+        # The send may have succeeded: independent disposable-target readback,
+        # never replay through the quarantined session, proves the side effect.
+        peer_observer=entries['b']['observer']
+        with peer_observer._lock:
+            raw=peer_observer.wire
+            sid=raw('Target.attachToTarget',{'targetId':entries['a']['state']['current'],'flatten':True})['sessionId']
+            try:value=raw('Runtime.evaluate',{'expression':'window.count','returnByValue':True},sid)['result']['value']
+            finally:raw('Target.detachFromTarget',{'sessionId':sid})
+        check('timed_out_action_executed_once',value==1)
         check('peer_survives_timeout',read('b')=={'marker':'b','count':0})
         refused=dispatch('a','print(js("++window.count"))')
         check('uncertain_action_not_replayed',not refused.get('success') and 'uncertain' in refused.get('error',''))
@@ -84,7 +116,41 @@ def main():
         live=inventory();check('failed_target_absent',not (owned['a']&set(live)))
         check('peer_target_preserved',owned['b']<=set(live))
         check('peer_read_after_cleanup',read('b')=={'marker':'b','count':0})
-        check('peer_finish',dispatch('b','print(finish_browser())').get('success'))
+        # More than ten callers: no design cap, unique state and one increment.
+        names=['b']+['n'+str(i) for i in range(11)]
+        barrier=threading.Barrier(11)
+        def setup_named(name):
+            barrier.wait(10)
+            return name,dispatch(name,'goto_url('+repr(url)+');wait_for_load();js('+repr('window.marker='+json.dumps(name))+')',40)
+        with cf.ThreadPoolExecutor(max_workers=11) as pool:created=dict(pool.map(setup_named,names[1:]))
+        check('eleven_simultaneous_new_sessions',all(v.get('success') for v in created.values()))
+        snapshots={name:provider.states[('fixture-'+name,'default')]['state'] for name in names}
+        all_owned=[set(s['owned']) for s in snapshots.values()]
+        check('twelve_unique_session_targets',len(set().union(*all_owned))==sum(map(len,all_owned))==12)
+        barrier=threading.Barrier(len(names))
+        def increment(name):
+            barrier.wait(10)
+            r=dispatch(name,'import json;js("document.querySelector(\'#inc\').click()");print(json.dumps(js("({marker:window.marker,count:window.count})")))')
+            return name,r
+        with cf.ThreadPoolExecutor(max_workers=len(names)) as pool:incremented=dict(pool.map(increment,names))
+        check('twelve_parallel_single_increments',all(r.get('success') and json.loads(r['stdout'])=={'marker':n,'count':1} for n,r in incremented.items()))
+        original_b=set(snapshots['b']['owned']);cancelled=set(snapshots['n0']['owned'])
+        barrier=threading.Barrier(3)
+        def mixed(kind):
+            barrier.wait(10)
+            if kind=='finish':return dispatch('b','print(finish_browser())').get('success')
+            if kind=='cancel':manager.invoke_hook('agent_loop_stopped',session_key='route-n0');return ('fixture-n0','default') not in provider.states
+            return read('n1')=={'marker':'n1','count':1}
+        with cf.ThreadPoolExecutor(max_workers=3) as pool:mixed_results=list(pool.map(mixed,['finish','cancel','read']))
+        check('parallel_finish_cancel_read',all(mixed_results))
+        live=inventory();check('finish_cancel_targets_absent',not (original_b&set(live)) and not (cancelled&set(live)))
+        check('ten_peer_targets_preserved',all(set(snapshots[n]['owned'])<=set(live) for n in names if n not in ('b','n0')))
+        for name in names:
+            if name not in ('b','n0'):
+                check('final_read_'+name,read(name)=={'marker':name,'count':1})
+                check('final_finish_'+name,dispatch(name,'print(finish_browser())').get('success'))
+        check('session_lock_slots_released',not provider._session_locks)
+
         check('states_empty',not provider.states)
         # Last explicit finish closes the wholly disposable root; shared original
         # Chrome is never addressed by this fixture.

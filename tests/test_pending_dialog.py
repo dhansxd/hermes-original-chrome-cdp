@@ -104,9 +104,9 @@ class WorkerTimeoutTests(unittest.TestCase):
             def close(self):self.closed=True
         with tempfile.TemporaryDirectory(dir=Path.home()/'.hermes/cache/scratch') as root:
             Path(root,'worker.py').write_text('import sys,json\njson.loads(sys.stdin.readline())\nprint(json.dumps({"cdp":{"method":"fixture"}}),flush=True)\nsys.stdin.readline()\n')
-            p=ChromeProvider(data=root);p._active_entry={'observer':Observer(),'state':{}}
+            p=ChromeProvider(data=root);entry={'observer':Observer(),'state':{}}
             with patch('plugin.ROOT',Path(root)):
-                try:p._worker({'endpoint':'fixture','profile':'fixture'},.05)
+                try:p._worker({'endpoint':'fixture','profile':'fixture'},.05,entry=entry)
                 except Exception as exc:self.assertIsInstance(exc,subprocess.TimeoutExpired)
                 else:self.fail('worker should time out')
 

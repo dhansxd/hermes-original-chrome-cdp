@@ -18,7 +18,7 @@ class AdapterTest(unittest.TestCase):
     def test_first_call_timeout_is_quarantined_without_replay(self):
         import subprocess
         from plugin import ChromeProvider
-        p=ChromeProvider();p.endpoint=lambda:'ws://fixture'
+        p=ChromeProvider();p.endpoint=lambda **kw:'ws://fixture'
         calls=[]
         def timeout(*a,**kw):
             calls.append(True)
@@ -33,7 +33,7 @@ class SelectionTest(unittest.TestCase):
     def test_failed_exec_does_not_keep_previous_vault_selection(self):
         from plugin import ChromeProvider
         p=ChromeProvider(data='/synthetic-test-only')
-        p.endpoint=lambda:'ws://synthetic'
+        p.endpoint=lambda **kw:'ws://synthetic'
         p._worker=lambda *a,**k:{'success':True,'state':{'owned':{'a':1}}}
         p.execute({'code':'pass','session':'one'},task_id='fixture')
         self.assertEqual(p.last_sessions,{'fixture':'one'})

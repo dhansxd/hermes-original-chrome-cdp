@@ -82,7 +82,7 @@ def main():
     except Exception:
         out['failure']=traceback.format_exc(); out['success']=False
     finally:
-        if p._observer: p._observer.close()
+        for entry in list(p.states.values()):p._release_observer(entry)
         if w is None and (data/'DevToolsActivePort').exists():
             lines=(data/'DevToolsActivePort').read_text().splitlines();w=Wire('ws://127.0.0.1:'+lines[0]+lines[1])
         if w:
