@@ -56,9 +56,19 @@ class Wire:
         if session:msg['sessionId']=session
         known_dialogs=set(getattr(self,'dialogs',{}))
         self.ws.send(json.dumps(msg))
+        deadline=time.monotonic()+20
         while True:
-            try:response=self.responses.pop(command_id) if command_id in self.responses else json.loads(self.ws.recv(timeout=20))
-            except TimeoutError as exc:raise TimeoutError('CDP_response_timeout: '+method) from exc
+            try:
+                if command_id in self.responses:response=self.responses.pop(command_id)
+                else:
+                    remaining=deadline-time.monotonic()
+                    if remaining<=0:raise TimeoutError()
+                    response=json.loads(self.ws.recv(timeout=remaining))
+            except TimeoutError as exc:
+                # The action was sent once. Retire any eventual reply by ID,
+                # never confuse it with a later command or silently resend it.
+                self.pending_responses[command_id]=method
+                raise TimeoutError('CDP_response_timeout: '+method) from exc
             self.event(response)
             new_dialogs=set(getattr(self,'dialogs',{}))-known_dialogs
             if (session is not None and new_dialogs & getattr(self,'dialog_yield_sessions',set())
