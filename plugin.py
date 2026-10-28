@@ -372,6 +372,15 @@ class BrowserLifecycle:
 def register(ctx):
     from tools.browser_use_cli import BROWSER_EXEC_SCHEMA, browser_exec
     from hermes_cli.config import read_raw_config
+    from agent.redact import redact_sensitive_text, REDACT_WALK_MAX_DEPTH, REDACT_WALK_DEPTH_MARKER
+    def scrub_result(value,depth=0):
+        # Scrub decoded strings before JSON escaping, including errors and cleanup.
+        # Never change held browser state or the worker's screenshot/artifact bytes.
+        if depth>=REDACT_WALK_MAX_DEPTH:return REDACT_WALK_DEPTH_MARKER
+        if isinstance(value,str):return redact_sensitive_text(value,force=True)
+        if isinstance(value,list):return [scrub_result(v,depth+1) for v in value]
+        if isinstance(value,dict):return {scrub_result(k,depth+1):scrub_result(v,depth+1) for k,v in value.items()}
+        return value
     provider=ChromeProvider()
     lifecycle=BrowserLifecycle(ctx,provider);lifecycle.register()
     ctx.on_unload(provider.unload)
@@ -384,7 +393,7 @@ def register(ctx):
                 result=json.loads(provider.execute(args,**kw))
                 result['browser_cleanup']=lifecycle.status(kw.get('session_id'))
                 result['automatic_cleanup']='session finalization or explicit interruption only; completed turns preserve pending/multi-turn work'
-                return json.dumps(result)
+                return json.dumps(scrub_result(result))
         return browser_exec(code=args.get('code',''),session=args.get('session',''),timeout_s=args.get('timeout_s',300),task_id=kw.get('task_id'))
     ctx.register_browser_provider(provider)
     ctx.register_tool(name='browser_exec',toolset='browser-use',schema=copy.deepcopy(BROWSER_EXEC_SCHEMA),handler=handler,override=True)

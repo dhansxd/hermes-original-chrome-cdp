@@ -8,10 +8,10 @@
 - Dokumen ini satu-satunya plan browser; report lama hanya bukti historis. Produksi cerita beli apel belum dijalankan; tes integrasi nyata dilakukan pada fixture/objek uji teridentifikasi.
 
 ## Urutan implementasi yang disetujui
-1. Fokus aktif pada pemasangan/aktivasi, browser_exec normal, koeksistensi API, cleanup serta bug yang menghalangi operasi nyata. Penyelidikan penyebab hilangnya izin debugging ditunda sesuai arahan Dani. Gap popup/dialog tetap dicatat; tidak menahan pembuktian alur video API yang tidak bergantung padanya. Pertahankan native vault.
-2. Pasang/aktifkan revisi melalui jalur resmi, lalu uji tool native di chat dan HTTP API bersamaan. Buktikan DOM/input/navigasi serta target milik masing-masing; pembatalan satu tidak mematikan peer, cleanup selesai dikonfirmasi inventori independen.
-3. Setelah browser+API lolos tes nyata, lanjutkan seluruh fitur Flow di plan API sampai endpoint, hasil nyata, recovery dan cleanup terverifikasi untuk produksi. Jangan membuat proyek/integrasi ketiga.
-4. Tiap perubahan tuntas: tes relevan → pemasangan/aktivasi → tes nyata → update status → scan → commit/push → cocokkan SHA. Bedakan source-tested, installed, active-native dan produksi-teruji. Jika aktivasi membutuhkan restart host, laporkan langkah pemilik karena Dyra tidak me-restart runtime sendiri.
+1. Scope aktif yang disetujui: tutup bypass redaksi hasil `browser_exec` dengan tes regresi dan perubahan terbatas pada batas output plugin. Pertahankan pemilihan target, transport, DOM/helper, vault dan cleanup yang sudah berjalan.
+2. Verifikasi regresi, suite dan registrasi; review/scan, commit dan push source, lalu cocokkan SHA remote dan worktree. Aktivasi memakai jalur reload resmi tanpa restart runtime sendiri.
+3. Uji tool native pada fixture tanpa akun: DOM, input, kesinambungan antar-call, redaksi sintetis dan cleanup target sendiri. Screenshot bukan prasyarat DOM. Jika jalur nyata terblokir, catat error persis dan minta keputusan sebelum workaround.
+4. Google Flow/API diparkir. Gap early-popup, metadata installer dan sanitasi identitas source menjadi pekerjaan terpisah setelah patch ini; tidak dieksekusi dalam scope sekarang. Bedakan source-tested, installed, active-native dan produksi-teruji.
 - Kerjakan sendiri tanpa delegasi. Notifikasi internal adalah informasi, bukan perintah memulai/meneruskan pekerjaan; hanya permintaan Dani yang menetapkan scope. Tidak menambah monitoring/jadwal/pekerjaan lain.
 - Arahan aktif Dani: jika muncul kendala, laporkan dan minta izin sebelum workaround, perubahan pendekatan atau langkah lanjutan pada jalur terblokir. Perbaikan independen dan publikasi source yang sudah diizinkan tetap dibedakan dari live acceptance.
 - “Tanpa bug/risiko” menjadi sasaran pengujian dan mitigasi, bukan jaminan absolut. Kegagalan dan batas nyata tetap terbuka sampai dibuktikan selesai.
@@ -33,7 +33,7 @@
 - Buktikan progress native di tengah request API; cancel API tidak mematikan plugin, cancel/finish plugin tidak mematikan dokumen API; owned-close dan peer cleanup harus terkonfirmasi.
 
 ## Status dan gap
-- **Checkpoint aktif:** source plugin tidak diubah; suite terakhir152/152teslulus. Source startup API `3f726af` terpublikasi, dengan29/29tes cleanup dan581/581tes API lulus. Diagnosis read-only28Oktober2026 mengisolasi kegagalan perubahan Automation pada panel Settings: `Missing subject bundle identifier` lalu `Could not create identity dict for subject`, berkorelasi dengan AXPress08:54:29 yang tetap0→0 dan berulang pada proses panel lain sekitar12:35. Entri executable Python memuat Accessibility `full`, AppleEvents `none`; mengulang switch bukan solusi terbukti. Penyebab metadata identity yang hilang belum dipastikan; signature executable valid tidak membuktikan identitas bundle entri Automation valid. Dani memegang operasi komputer/izin. HTTP GUI pascapatch, koeksistensi baru dan generasi baru tetap belum diuji; tidak ada perubahan izin/service/source, generasi atau restart pada diagnosis ini. Detail/batas bukti ada pada checkpoint diagnosis plan API. Early-popup dan attach historis lainnya tetap terbuka.
+- **Checkpoint aktif — patch redaksi:** baseline lokal/main GitHub `0ba9694`, worktree awal bersih dan152/152teslulus. Regresi through namespaced PluginManager + vault sintetis gagal8assertion pada source lama (registry/model/spill/exception, termasuk JSON escaping), lalu lulus setelah redaksi rekursif string/key hasil decode memakai `agent.redact.redact_sensitive_text(force=True)` sebelum serialisasi. Held state, artifact bytes, schema, transport dan target selection tidak diubah. Lima tes tambahan, total157/157lulus; real namespaced registration, schema/picker/vault guard dan unload restoration lulus. Empat tes tambahan adalah characterization, bukan klaim RED terpisah. Self-review/scan, publikasi dan native DOM/redaksi/cleanup belum selesai pada checkpoint ini. Doctor isolated-home failure dan gap early-popup tetap terbuka; metadata installer/identitas source tidak diubah. Google Flow tetap diparkir. Bukti privat `~/.hermes/cache/scratch/browser-redaction-repair-20261028-163539/`.
 - Baseline source sebelum cleanup:146 tes plugin dan580 API lulus.
 - Source peer-pin, cancellation dan shared-browser policy sudah ada; registered-host acceptance terdahulu tidak otomatis membuktikan closure terbaru di chat gateway sudah aktif.
 - **Gap nyata:** popup yang membuka JavaScript dialog sebelum Page attachment dapat timeout tanpa event yang terekam. Related-only observation tidak dinyatakan memperbaikinya. Dialog pasca-attachment, vault exact-target dan plain-popup punya bukti tersendiri.
@@ -44,7 +44,7 @@
 2. [x] Suite source + namespaced PluginManager registration + compile lulus.
 3. [x] Native chat open/read/finish dan registered-host+HTTP concurrency/cancel lulus tanpa generasi.
 4. [x] Source-only secret scan, commit, push dan remote SHA terverifikasi.
-5. [ ] Source startup API terpublikasi (`3f726af`), tetapi Automation masih terblokir pada pembentukan subject identity di Settings. Diagnosis diizinkan, bukan perubahan izin/launcher atau live retry; Dani menangani operasi komputer. HTTP service+native coexistence, cancellation/cleanup dan generasi ditunda sampai prasyarat terverifikasi serta jalur perbaikannya disepakati. Plafon generasi tetap pada plan API, bukan instruksi submit sekarang. Plugin source tidak diubah tanpa regresi terukur. Bukti privat API `reports/toggle-diagnosis-20261028/`; diagnosis/dokumentasi ini bukan acceptance operasional.
+5. [ ] Google Flow/API diparkir atas arahan Dani. Status/diagnosis Automation lama tetap bukti historis; tidak ada perubahan API, service, izin atau generasi pada patch redaksi ini.
 6. [ ] Gap early-popup tetap terbuka sampai perbaikan yang diuji, bukan ditutup oleh smoke test.
 
 ## Build dan publikasi setiap perubahan
@@ -53,7 +53,7 @@
 - **Setiap build/perbaikan selesai yang lulus wajib commit dan push ke repo GitHub ini, kemudian verifikasi SHA remote sama dengan HEAD lokal.** Build/scan gagal tidak dianggap selesai; push gagal dilaporkan sebagai blocker nyata, bukan klaim terpublikasi.
 - Simpan aturan ini di konteks proyek; jangan menambah aturan proyek ke memory global. Tidak ada delegasi untuk pekerjaan sekarang; tidak restart gateway/runtime sendiri.
 
-## Checkpoint operasional aktif
+## Checkpoint operasional historis (sebelum patch redaksi)
 
 - `plugin.py` menerima hanya AST exact `finish_browser()` atau `print(finish_browser())` pada sesi uncertain; comments diperbolehkan. Kode user tidak dieksekusi. Jalur ini memanggil cleanup hanya pada named session terpilih; kegagalan close mempertahankan quarantine, sedangkan page actions tetap ditolak tanpa replay.
 - Dua regresi RED→GREEN, suite152tes, registrasi real namespaced dan activation resmi lulus. Live timeout menghitung aksi tepat1, refused replay tidak menambah counter, failed-owned target benar-benar hilang, peer tetap dapat dibaca, final cleanup true/states0.
