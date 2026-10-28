@@ -10,10 +10,16 @@ CHROME=Path('/Applications/Google Chrome.app')
 PERSONAL=Path.home()/'Library/Application Support/Google/Chrome'
 
 
-EXPECTED_ACCOUNT='developer@example.invalid'
+def expected_account():
+    # Profile-local operator setting; never derive authority from Chrome metadata.
+    from hermes_cli.config import read_raw_config
+    return read_raw_config().get('plugins',{}).get('entries',{}).get(NAME,{}).get('settings',{}).get('expected_account')
 
 
 def verify_account(data,expected):
+    if not isinstance(expected,str) or not expected.strip():
+        raise RuntimeError('account_binding_unconfigured: set the expected Default account in plugin settings; no Chrome launch')
+    expected=expected.strip()
     try:
         meta=json.loads((Path(data)/'Local State').read_text())['profile']['info_cache']['Default']
         prefs=json.loads((Path(data)/'Default/Preferences').read_text())
@@ -110,7 +116,7 @@ class ChromeProvider(BrowserProvider):
         return {'name':self.display_name,'badge':'local GUI','tag':'Original Default, owned windows; no profile copy','env_vars':[]}
     def endpoint(self,*,entry):
         # No arbitrary endpoint override: port file is tied to the authorized data root.
-        if self.data==PERSONAL.resolve():verify_account(self.data,EXPECTED_ACCOUNT)
+        if self.data==PERSONAL.resolve():verify_account(self.data,expected_account())
         # GUI explicitly selects Default BEFORE CDP work; never scan other contexts.
         seed=self.workspace/'seeds'/('chrome-agent-'+secrets.token_hex(16)+'.html')
         seed.parent.mkdir(parents=True,exist_ok=True)
@@ -280,7 +286,7 @@ class ChromeProvider(BrowserProvider):
         endpoint=None
         with self.lock:entry=self.states.get(key)
         try:
-            if self.data==PERSONAL.resolve():verify_account(self.data,EXPECTED_ACCOUNT)
+            if self.data==PERSONAL.resolve():verify_account(self.data,expected_account())
             timeout=max(5,min(1800,int(args.get('timeout_s',300))))
             if entry and entry.get('uncertain'):
                 # Only the exact finish expression can cross quarantine. It is

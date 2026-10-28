@@ -3,6 +3,32 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 
 class ProfileTest(unittest.TestCase):
+    def test_missing_account_configuration_refuses_before_metadata_or_launch(self):
+        from plugin import verify_account
+        from unittest.mock import patch
+        with patch.object(Path, 'read_text', side_effect=AssertionError('must not inspect an unconfigured profile')):
+            for expected in (None, '', '   ', 123, {}):
+                with self.subTest(expected=expected), self.assertRaisesRegex(RuntimeError, 'account_binding_unconfigured'):
+                    verify_account('/synthetic-unconfigured-profile', expected)
+
+    def test_provider_reads_expected_account_from_profile_local_settings(self):
+        from plugin import ChromeProvider, PERSONAL, NAME
+        from unittest.mock import patch
+        configured={'plugins':{'entries':{NAME:{'settings':{'expected_account':'approved@example.test'}}}}}
+        with patch('hermes_cli.config.read_raw_config',return_value=configured), patch('plugin.verify_account',side_effect=RuntimeError('identity gate reached')) as verify:
+            result=json.loads(ChromeProvider(data=PERSONAL).execute({'code':'pass'},task_id='configuration-test'))
+        self.assertFalse(result['success'])
+        verify.assert_called_once_with(PERSONAL.resolve(),'approved@example.test')
+
+    def test_provider_missing_setting_never_reads_profile_or_launches(self):
+        from plugin import ChromeProvider, PERSONAL
+        from unittest.mock import patch
+        with patch('hermes_cli.config.read_raw_config',return_value={}), patch('plugin.gui_launch',side_effect=AssertionError('must not launch')) as launch:
+            result=json.loads(ChromeProvider(data=PERSONAL).execute({'code':'pass'},task_id='unconfigured-test'))
+        self.assertFalse(result['success'])
+        self.assertIn('account_binding_unconfigured',result['error'])
+        launch.assert_not_called()
+
     def test_account_mismatch_refuses_before_launch(self):
         from plugin import verify_account
         with tempfile.TemporaryDirectory() as root:
@@ -10,10 +36,10 @@ class ProfileTest(unittest.TestCase):
             (p/'Local State').write_text(json.dumps({'profile':{'info_cache':{'Default':{'user_name':'other@example.com'}}}}))
             (p/'Default/Preferences').write_text(json.dumps({'account_info':[{'email':'other@example.com'}]}))
             with self.assertRaisesRegex(RuntimeError,'account_binding_mismatch'):
-                verify_account(p,'developer@example.invalid')
-            (p/'Local State').write_text(json.dumps({'profile':{'info_cache':{'Default':{'user_name':'developer@example.invalid'}}}}))
-            (p/'Default/Preferences').write_text(json.dumps({'account_info':[{'email':'developer@example.invalid'}]}))
-            verify_account(p,'developer@example.invalid')
+                verify_account(p,'approved@example.test')
+            (p/'Local State').write_text(json.dumps({'profile':{'info_cache':{'Default':{'user_name':'approved@example.test'}}}}))
+            (p/'Default/Preferences').write_text(json.dumps({'account_info':[{'email':'approved@example.test'}]}))
+            verify_account(p,'approved@example.test')
 
     def test_initialize_missing_seed_never_creates_in_any_context(self):
         from worker import initialize

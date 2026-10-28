@@ -20,7 +20,7 @@ class LifecycleTest(unittest.TestCase):
         self.env.start();self.addCleanup(self.env.stop)
         self.manager=PluginManager(scope_key=str(home))
         self.ctx=PluginContext(PluginManifest(name='original-chrome-default',source='user',capabilities=['tools.override']),self.manager)
-        self.provider=ChromeProvider()
+        self.provider=ChromeProvider(data=home/'chrome-fixture')
         self.calls=[]
         self.provider.endpoint=lambda **kw:'ws://inert'
         def worker(request,timeout,**kwargs):

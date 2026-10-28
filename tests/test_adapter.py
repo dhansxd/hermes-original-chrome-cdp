@@ -5,7 +5,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 class AdapterTest(unittest.TestCase):
     def test_failure_reports_without_silent_fallback_or_replay(self):
         from plugin import ChromeProvider
-        p=ChromeProvider()
+        p=ChromeProvider(data='/synthetic-adapter-fixture')
         def fail(*a,**k):raise RuntimeError('GUI unavailable')
         p.endpoint=fail
         result=json.loads(p.execute({'code':'print(1)'},task_id='fixture'))
@@ -18,7 +18,7 @@ class AdapterTest(unittest.TestCase):
     def test_first_call_timeout_is_quarantined_without_replay(self):
         import subprocess
         from plugin import ChromeProvider
-        p=ChromeProvider();p.endpoint=lambda **kw:'ws://fixture'
+        p=ChromeProvider(data='/synthetic-adapter-fixture');p.endpoint=lambda **kw:'ws://fixture'
         calls=[]
         def timeout(*a,**kw):
             calls.append(True)

@@ -5,7 +5,7 @@ Native Hermes `browser_exec` and exact-target `browser_vault` adapter for origin
 ## Runtime contract
 
 - Install/enable with Hermes' official plugin manager and the operator's `tools.override` grant. Select `browser.backend=browser-use` and `browser.cloud_provider=original-chrome-default`.
-- Verify the original Default profile/account binding before work. Attach a current endpoint or cold-launch through the verified macOS GUI destination. Never clone login/cookies or reset profile storage/Keychain.
+- Set `plugins.entries.original-chrome-default.settings.expected_account` through `hermes config set` to the explicitly approved account; no identity is shipped in source or inferred from a last-used profile. Missing settings refuse before launch. Verify the original Default profile/account binding before work. Attach a current endpoint or cold-launch through the verified macOS GUI destination. Never clone login/cookies or reset profile storage/Keychain.
 - One parent-held CDP observer per named session keeps dialog/event continuity; user Python runs in bounded workers. A worker timeout closes only that session transport, never its peers. `vendor/helpers.py` is the reviewed plugin-owned helper snapshot, with license/provenance in `vendor/`.
 - Different task/named-session pairs execute independently; one session stays serialized. Root launch/setup and consent/target-close still use their scoped coordination. Cancel fences already-queued actions, and vault borrowing holds only the selected session/transport, not the provider-wide state lock.
 - Named sessions own their confirmed targets, including proven opener-linked additions. Lost/unknown ownership does not select the first page or repeat an uncertain action.

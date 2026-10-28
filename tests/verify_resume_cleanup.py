@@ -5,7 +5,7 @@ ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 import plugin
 from vault_adapter import Wire
 p=plugin.ChromeProvider()
-plugin.verify_account(p.data,plugin.EXPECTED_ACCOUNT)
+plugin.verify_account(p.data,plugin.expected_account())
 assert p._chrome_processes(),'original Chrome not running'
 port,path=(p.data/'DevToolsActivePort').read_text().splitlines()[:2]
 w=Wire('ws://127.0.0.1:'+port+path,str(p.data))
