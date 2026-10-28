@@ -14,12 +14,14 @@ class DestinationTests(unittest.TestCase):
    commands.append((argv,kwargs))
    if argv==['/bin/launchctl','managername']:return Mock(returncode=0,stdout='Background')
    return Mock(returncode=0,stdout=GUI.replace('gui/501','pid/42') if argv[-1]=='pid/42' else GUI)
+  proc=Mock(pid=42,info={'name':'Google Chrome','exe':str(plugin.CHROME/'Contents/MacOS/Google Chrome'),'cmdline':['--user-data-dir=/fixture'],'create_time':10})
+  proc.as_dict.side_effect=lambda **kw:dict(proc.info)
   with patch('plugin.subprocess.run',side_effect=run),patch('plugin.ctypes.CDLL') as lib,patch('plugin.os.getuid',return_value=501),patch('plugin.os.geteuid',return_value=501),patch('plugin.os.stat',return_value=Mock(st_uid=501)):
    def info(request,sid,flags):
     sid._obj.value=100002;flags._obj.value=0x10 if int(request.value)==100002 else 0;return 0
    lib.return_value.SessionGetInfo.side_effect=info
    # Independent browser inventory boundary: this test checks dispatch, GUI integration checks process.
-   with patch('psutil.process_iter',return_value=[Mock(pid=42,info={'name':'Google Chrome','exe':str(plugin.CHROME/'Contents/MacOS/Google Chrome'),'cmdline':['--user-data-dir=/fixture'],'create_time':10})]):plugin.gui_launch(Path('/fixture'), 'file:///fixture/seed.html')
+   with patch('psutil.process_iter',return_value=[proc]):plugin.gui_launch(Path('/fixture'), 'file:///fixture/seed.html')
   opens=[(a,k)for a,k in commands if a[0]=='/usr/bin/open']
   self.assertEqual(len(opens),1)
   self.assertIn('-n',opens[0][0]);self.assertIn('-g',opens[0][0])
@@ -31,7 +33,9 @@ class DestinationTests(unittest.TestCase):
    calls.append(argv)
    text=GUI.replace('gui/501','pid/42').replace('100002','100024') if argv[-1]=='pid/42' else GUI
    return Mock(returncode=0,stdout=text)
-  with patch('plugin.subprocess.run',side_effect=run),patch('plugin.ctypes.CDLL') as lib,patch('plugin.os.getuid',return_value=501),patch('plugin.os.geteuid',return_value=501),patch('plugin.os.stat',return_value=Mock(st_uid=501)),patch('psutil.process_iter',return_value=[Mock(pid=42,info={'name':'Google Chrome','exe':str(plugin.CHROME/'Contents/MacOS/Google Chrome'),'cmdline':['--user-data-dir=/fixture'],'create_time':10})]):
+  proc=Mock(pid=42,info={'name':'Google Chrome','exe':str(plugin.CHROME/'Contents/MacOS/Google Chrome'),'cmdline':['--user-data-dir=/fixture'],'create_time':10})
+  proc.as_dict.side_effect=lambda **kw:dict(proc.info)
+  with patch('plugin.subprocess.run',side_effect=run),patch('plugin.ctypes.CDLL') as lib,patch('plugin.os.getuid',return_value=501),patch('plugin.os.geteuid',return_value=501),patch('plugin.os.stat',return_value=Mock(st_uid=501)),patch('psutil.process_iter',return_value=[proc]):
    def info(request,sid,flags):
     sid._obj.value=request.value;flags._obj.value=0x10;return 0
    lib.return_value.SessionGetInfo.side_effect=info

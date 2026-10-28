@@ -123,11 +123,14 @@ class NativeDialogs:
         if (self.root/'DevToolsActivePort').read_text().splitlines()!=[str(parsed.port),parsed.path]:raise RuntimeError('native_dialog_endpoint_changed')
         if self.process is None:
             matches=[]
-            for proc in psutil.process_iter(['name','cmdline']):
-                if proc.info['name']!='Google Chrome':continue
-                args=proc.info['cmdline'] or []
-                root=Path(next((v.split('=',1)[1] for v in args if v.startswith('--user-data-dir=')),str(PERSONAL))).resolve()
-                if root==self.root and chrome_executable(proc.exe()) and any(x.status=='LISTEN' and x.laddr.port==parsed.port for x in proc.net_connections(kind='tcp')):matches.append(proc)
+            for proc in psutil.process_iter():
+                try:
+                    info=proc.as_dict(attrs=['name','cmdline'])
+                    if info['name']!='Google Chrome':continue
+                    args=info['cmdline'] or []
+                    root=Path(next((v.split('=',1)[1] for v in args if v.startswith('--user-data-dir=')),str(PERSONAL))).resolve()
+                    if root==self.root and chrome_executable(proc.exe()) and any(x.status=='LISTEN' and x.laddr.port==parsed.port for x in proc.net_connections(kind='tcp')):matches.append(proc)
+                except psutil.NoSuchProcess:continue
             if len(matches)!=1:raise RuntimeError('native_dialog_host_unavailable')
             self.process=(matches[0].pid,matches[0].create_time(),matches[0].exe())
         pid,started,exe=self.process;proc=psutil.Process(pid)

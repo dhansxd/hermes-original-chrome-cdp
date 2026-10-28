@@ -234,9 +234,10 @@ class MacConsent:
         if self.ax is None:self.ax=AX()
         if not self.ax.trusted():raise ConsentError('consent_accessibility: grant Accessibility manually; no permission change attempted')
         self.ax.clear();self.processes={};sheets=[]
-        for process in psutil.process_iter(['pid','exe','create_time','cmdline']):
+        for process in psutil.process_iter():
             try:
-                exe=Path(process.info['exe'] or '')
+                info=process.as_dict(attrs=['pid','exe','create_time','cmdline'])
+                exe=Path(info['exe'] or '')
                 if exe.name not in {'Google Chrome','app_mode_loader'}:continue
                 plist=plistlib.loads((exe.parents[1]/'Info.plist').read_bytes())
                 kind=host_identity(str(exe),plist,self.root)
@@ -244,13 +245,13 @@ class MacConsent:
                 if kind=='main':
                     check=subprocess.run(['/usr/bin/codesign','--verify','-R','=anchor apple generic and identifier "com.google.Chrome" and certificate leaf[subject.OU] = "EQHXZ8M8AV"',str(exe.parents[2])],capture_output=True,timeout=2)
                     if check.returncode:continue
-                    args=process.info['cmdline'] or []
+                    args=info['cmdline'] or []
                     data=next((x.split('=',1)[1] for x in args if x.startswith('--user-data-dir=')),str(Path.home()/'Library/Application Support/Google/Chrome'))
                     bound=Path(data).resolve()==self.root
                 else:
                     if not verify_pwa_host(exe,plist,self.root):continue
                     bound=True
-                self.processes[process.pid]={'started':process.info['create_time'],'exe':str(exe),'bound':bound,'kind':kind}
+                self.processes[process.pid]={'started':info['create_time'],'exe':str(exe),'bound':bound,'kind':kind}
                 sheets.extend(self.ax.sheets(process.pid))
             except (psutil.Error,OSError,ValueError,subprocess.SubprocessError):continue
         return sheets

@@ -12,6 +12,7 @@ class ReadinessTests(unittest.TestCase):
    provider=ChromeProvider(data=data,workspace=data/'work');entry={}
    started=f.stat().st_mtime+1;calls=[]
    proc=Mock(pid=42,info={'name':'Google Chrome','exe':str(CHROME/'Contents/MacOS/Google Chrome'),'cmdline':['--user-data-dir='+str(data)],'create_time':started})
+   proc.as_dict.side_effect=lambda **kw:dict(proc.info)
    proc.create_time.return_value=started
    proc.net_connections.return_value=[Mock(status='LISTEN',laddr=Mock(port=12345,ip='127.0.0.1'))]
    def refresh(*a):

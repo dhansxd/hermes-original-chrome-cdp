@@ -64,15 +64,16 @@ def gui_launch(data,seed_url=None):
     destination=gui_identity()
     def browsers():
         found=[]
-        for p in psutil.process_iter(['name','exe','cmdline','create_time']):
-            if p.info['name']!='Google Chrome':continue
+        for p in psutil.process_iter():
             try:
-                args=p.info['cmdline'] or []
+                info=p.as_dict(attrs=['name','exe','cmdline','create_time'])
+                if info['name']!='Google Chrome':continue
+                args=info['cmdline'] or []
                 root=Path(next((a.split('=',1)[1] for a in args if a.startswith('--user-data-dir=')),str(PERSONAL))).resolve()
                 if root!=data.resolve():continue
-                if not chrome_executable(p.info['exe']) or gui_identity(p.pid)!=destination:
+                if not chrome_executable(info['exe']) or gui_identity(p.pid)!=destination:
                     raise RuntimeError('safe_GUI_launch_unavailable: Chrome destination mismatch')
-                found.append((p.pid,p.info['create_time']))
+                found.append((p.pid,info['create_time']))
             except psutil.NoSuchProcess:continue
         return found
     browsers()
@@ -134,12 +135,13 @@ class ChromeProvider(BrowserProvider):
                 port=int(lines[0]);path=lines[1]
                 if not 0<port<65536 or not path.startswith('/devtools/browser/'):raise ValueError('invalid port file')
                 owners=[]
-                for process in psutil.process_iter(['name','exe','cmdline','create_time']):
-                    if process.info['name']!='Google Chrome':continue
-                    args=process.info['cmdline'] or []
+                for process in psutil.process_iter():
+                    info=process.as_dict(attrs=['name','exe','cmdline','create_time'])
+                    if info['name']!='Google Chrome':continue
+                    args=info['cmdline'] or []
                     root=Path(next((a.split('=',1)[1] for a in args if a.startswith('--user-data-dir=')),str(PERSONAL))).resolve()
-                    if root!=self.data or not chrome_executable(process.info['exe']):continue
-                    started=process.info['create_time']
+                    if root!=self.data or not chrome_executable(info['exe']):continue
+                    started=info['create_time']
                     if (self.data/'DevToolsActivePort').stat().st_mtime < started:continue
                     if any(c.status=='LISTEN' and c.laddr.port==port and c.laddr.ip in {'127.0.0.1','::1'} for c in process.net_connections(kind='tcp')):
                         if process.create_time()==started:owners.append(process.pid)
@@ -155,12 +157,13 @@ class ChromeProvider(BrowserProvider):
     def _chrome_processes(self):
         import psutil
         found=[]
-        for proc in psutil.process_iter(['name','exe','cmdline']):
-            if proc.info['name']!='Google Chrome':continue
+        for proc in psutil.process_iter():
             try:
-                args=proc.info['cmdline'] or []
+                info=proc.as_dict(attrs=['name','exe','cmdline'])
+                if info['name']!='Google Chrome':continue
+                args=info['cmdline'] or []
                 root=Path(next((v.split('=',1)[1] for v in args if v.startswith('--user-data-dir=')),str(PERSONAL))).resolve()
-                if root==self.data and chrome_executable(proc.info['exe']):found.append(proc)
+                if root==self.data and chrome_executable(info['exe']):found.append(proc)
             except psutil.NoSuchProcess:continue
         return found
 
