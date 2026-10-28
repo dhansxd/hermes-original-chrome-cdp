@@ -33,7 +33,7 @@
 - Buktikan progress native di tengah request API; cancel API tidak mematikan plugin, cancel/finish plugin tidak mematikan dokumen API; owned-close dan peer cleanup harus terkonfirmasi.
 
 ## Status dan gap
-- **Checkpoint aktif:** source plugin `550b8df` tidak diubah dan suite saat ini152/152teslulus. Perbaikan source regresi startup API `5702b9e` sudah terpublikasi sebagai `3f726af`, SHA GitHub cocok;29/29tes cleanup dan581/581tes API lulus. HTTP service pascapatch/koeksistensi belum diuji. Service aktif dan pemeriksaan health sebelumnya200; GUI terakhir502 sebelum patch. Accessibility API granted, sementara Automation System Events service pernah prompt/timeout dan pemulihannya belum terbukti. Live handling menunggu izin Dani. Early-popup dan attach historis lainnya tetap terbuka.
+- **Checkpoint aktif:** source plugin tidak diubah; suite terakhir152/152teslulus. Source startup API `3f726af` sudah terpublikasi, dengan29/29tes cleanup dan581/581tes API lulus. Dani telah mengizinkan penanganan Automation dan live HTTP/koeksistensi, termasuk generate bila diperlukan. Pemeriksaan28Oktober2026: health API200 dan native Accessibility trusted, tetapi switch `python3.12 → System Events` masih off; UI dan exact AXPress mengembalikan state0→0. Jalur terblokir dihentikan dan Dani diminta menyalakan switch langsung. HTTP GUI pascapatch, koeksistensi baru dan generasi baru belum diuji. Job tetap53,0generasi/debit baru dan tanpa restart Chrome/Hermes. Early-popup dan attach historis lainnya tetap terbuka.
 - Baseline source sebelum cleanup:146 tes plugin dan580 API lulus.
 - Source peer-pin, cancellation dan shared-browser policy sudah ada; registered-host acceptance terdahulu tidak otomatis membuktikan closure terbaru di chat gateway sudah aktif.
 - **Gap nyata:** popup yang membuka JavaScript dialog sebelum Page attachment dapat timeout tanpa event yang terekam. Related-only observation tidak dinyatakan memperbaikinya. Dialog pasca-attachment, vault exact-target dan plain-popup punya bukti tersendiri.
@@ -44,7 +44,7 @@
 2. [x] Suite source + namespaced PluginManager registration + compile lulus.
 3. [x] Native chat open/read/finish dan registered-host+HTTP concurrency/cancel lulus tanpa generasi.
 4. [x] Source-only secret scan, commit, push dan remote SHA terverifikasi.
-5. [ ] Perbaikan source startup API sudah dipublikasikan (`3f726af`); selanjutnya tangani kendala Automation dan verifikasi HTTP service+native coexistence tanpa generasi setelah izin Dani. Plugin source tidak diubah tanpa regresi plugin yang terukur;152tes plugin lulus. Koreksi status plan dipublikasikan sebagai dokumentasi tersendiri.
+5. [ ] Perbaikan source startup API sudah dipublikasikan (`3f726af`). Penanganan Automation sudah diizinkan tetapi switch System Events tetap off setelah tindakan/readback; menunggu tindakan pemilik, bukan meminta ulang izin umum. Setelah switch aktif, verifikasi HTTP service+native coexistence, cancellation dan cleanup sebelum maksimal1generasi uji sesuai batas plan API. Plugin source tidak diubah tanpa regresi plugin terukur. Bukti privat API `reports/automation-live-20261028-0856/RESULT.json`; koreksi status ini hanya dokumentasi, bukan acceptance operasional.
 6. [ ] Gap early-popup tetap terbuka sampai perbaikan yang diuji, bukan ditutup oleh smoke test.
 
 ## Build dan publikasi setiap perubahan
