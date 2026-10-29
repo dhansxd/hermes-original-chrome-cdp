@@ -10,13 +10,13 @@ class OwnershipTests(unittest.TestCase):
         import worker
         calls=[]
         class Wire:
-            def __init__(self,*args):pass
+            def __init__(self,*args):self.live=[{'targetId':'seed','type':'page','browserContextId':'ctx','url':'file:///exact-seed'}]
             def close(self):pass
             def __call__(self,method,params=None,session=None):
                 calls.append((method,params))
-                if method=='Target.getTargets':return {'targetInfos':[{'targetId':'seed','type':'page','browserContextId':'ctx','url':'file:///exact-seed'}]}
+                if method=='Target.getTargets':return {'targetInfos':self.live}
                 if method=='Browser.getWindowForTarget':return {'windowId':1}
-                if method=='Target.closeTarget':return {'success':True}
+                if method=='Target.closeTarget':self.live.clear();return {'success':True}
                 raise AssertionError('cleanup must not navigate/attach: '+method)
         with patch('worker.Wire',Wire):
             result=worker.run({'endpoint':'ws://fixture','profile':'/fixture/Default','state':{'pending_seed':'file:///exact-seed','owned':{}},'cleanup':True})

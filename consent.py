@@ -210,10 +210,19 @@ class AX:
                 result.append({'key':(pid,self.cf.CFHash(sheet)),'pid':pid,'name':self.text(sheet,'AXTitle'), 'headings':headings,'buttons':buttons,'elements':elements})
         return result
     def press(self,sheet):
-        completed=subprocess.run(['osascript','-e',PRESS_SCRIPT,str(sheet['pid']),sheet['bundle']],
-                                 capture_output=True,text=True,timeout=3)
-        if completed.returncode or completed.stdout.strip()!='clicked':
-            raise ConsentError('consent_press_not_confirmed')
+        try:
+            completed=subprocess.run(['osascript','-e',PRESS_SCRIPT,str(sheet['pid']),sheet['bundle']],
+                                     capture_output=True,text=True,timeout=3)
+        except subprocess.TimeoutExpired:
+            # TimeoutExpired includes the full script/argv. A killed helper is
+            # not proof no action occurred; never expose its payload or retry.
+            raise ConsentError('consent_press_timeout: helper deadline; press outcome unknown; no retry') from None
+        except OSError:
+            raise ConsentError('consent_press_unavailable: helper could not start; no retry') from None
+        status=completed.stdout.strip()
+        if completed.returncode or status!='clicked':
+            status=status if status in {'clicked','stale-host','not-found'} else 'unrecognized'
+            raise ConsentError(f'consent_press_not_confirmed: helper_status={status}; returncode={completed.returncode}; press outcome unknown; no retry')
 
 
 

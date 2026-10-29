@@ -1,4 +1,7 @@
 """Scoped CDP helper boundary. Not an arbitrary-Python sandbox."""
+import time
+
+
 class BoundBrowser:
     def __init__(self, wire, state, checkpoint=None):
         self.wire, self.state, self.sessions = wire, state, {}
@@ -138,18 +141,42 @@ class BoundBrowser:
 
     def cleanup(self, retain=()):
         self.track_popups()
-        remaining=[]
+        remaining=[];errors={};closing=set()
         live={t['targetId'] for t in self.wire('Target.getTargets')['targetInfos']}
         for target in list(self.state['owned']):
-            if target in retain: remaining.append(target);continue
+            if target in retain:remaining.append(target);continue
             if target in live:
                 try:
                     self.info(target)
                     if not self.wire('Target.closeTarget',{'targetId':target}).get('success',False):
-                        remaining.append(target);continue
-                except Exception:
-                    remaining.append(target);continue
-            self.state['owned'].pop(target,None)
+                        remaining.append(target);errors[target]={'code':'close_rejected'};continue
+                except Exception as exc:
+                    # Exceptions can contain page data/expressions. Preserve a
+                    # bounded category, never echo the transport payload.
+                    remaining.append(target);errors[target]={'code':'close_failed','error_type':type(exc).__name__};continue
+                closing.add(target)
+            else:self.state['owned'].pop(target,None)
+        # Chrome acknowledges a close before destruction completes. Poll on the
+        # same transport for one shared second; never resend the close. Each
+        # inventory call still has its existing transport/worker I/O deadline.
+        deadline=time.monotonic()+1
+        while closing:
+            try:live={t['targetId'] for t in self.wire('Target.getTargets')['targetInfos']}
+            except Exception as exc:
+                for target in closing:
+                    remaining.append(target);errors[target]={'code':'close_observation_failed','error_type':type(exc).__name__}
+                break
+            gone=closing-live
+            for target in gone:self.state['owned'].pop(target,None)
+            closing-=gone
+            if not closing:break
+            if time.monotonic()>=deadline:
+                for target in closing:
+                    remaining.append(target);errors[target]={'code':'close_not_observed'}
+                break
+            time.sleep(.05)
         self.checkpoint()
         unresolved=self.state.get('unresolved_creation',False)
-        return {'remaining_owned_targets':remaining,'unresolved_creation':unresolved,'success':not remaining and not unresolved}
+        result={'remaining_owned_targets':remaining,'unresolved_creation':unresolved,'success':not remaining and not unresolved}
+        if errors:result['cleanup_errors']=errors
+        return result

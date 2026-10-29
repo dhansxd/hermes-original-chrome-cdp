@@ -469,6 +469,22 @@ class BrowserLifecycle:
 
 
 def register(ctx):
+    if not ctx.has_capability('tools.override'):
+        # Doctor intentionally has no operator grants. Expose only inert,
+        # non-conflicting metadata there (and on any real no-grant host).
+        # Never register the provider or fall back to a different browser/vault.
+        def capability_required(args,**kw):
+            return json.dumps({'success':False,'error_type':'plugin_capability_required',
+                'error':'tools.override is not granted; native browser/vault integration is inactive. Enable through the official plugin consent flow.',
+                'fallback_used':False,'action_replayed':False})
+        from tools.browser_use_cli import BROWSER_EXEC_SCHEMA
+        for name,schema,toolset in (
+                ('original_chrome_default_browser_exec',BROWSER_EXEC_SCHEMA,'browser-use'),
+                ('original_chrome_default_browser_vault',json.loads((ROOT/'vault_schema.json').read_text()),'browser')):
+            schema=copy.deepcopy(schema);schema['name']=name
+            schema['description']='Inactive metadata only: tools.override consent required; no browser or credential access.'
+            ctx.register_tool(name=name,toolset=toolset,schema=schema,handler=capability_required)
+        return
     from tools.browser_use_cli import BROWSER_EXEC_SCHEMA, browser_exec
     from hermes_cli.config import read_raw_config
     from agent.redact import redact_sensitive_text, REDACT_WALK_MAX_DEPTH, REDACT_WALK_DEPTH_MARKER
