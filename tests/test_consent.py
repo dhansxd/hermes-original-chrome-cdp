@@ -323,6 +323,14 @@ class WorkerTests(unittest.TestCase):
             attach.assert_called_once_with('ws://127.0.0.1:5000/devtools/browser/id','/fixture',worker.connect)
 
 class NativeTests(unittest.TestCase):
+    def test_both_script_guards_retain_the_pid_predicate(self):
+        # Static tripwire for the behavior exercised by live_consent_process_identity.
+        selector='set p to a reference to (first application process whose unix id is hostPid)'
+        self.assertEqual(consent.PRESS_SCRIPT.count(selector),2)
+        self.assertNotIn('set p to first application process',consent.PRESS_SCRIPT)
+        self.assertEqual(consent.PRESS_SCRIPT.count('(bundle identifier of p as text) is not expectedBundle'),2)
+        self.assertEqual(consent.PRESS_SCRIPT.count('(unix id of p) is not hostPid'),2)
+
     def test_press_uses_pid_scoped_applescript_and_checks_clicked_receipt(self):
         from unittest.mock import patch,Mock
         sheet={'pid':42,'bundle':'com.google.Chrome','name':'','headings':['Izinkan proses debug jarak jauh?'],'buttons':['Izinkan']}
