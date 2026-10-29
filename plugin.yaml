@@ -1,9 +1,9 @@
 name: original-chrome-default
-version: 0.1.14
+version: 0.2.0
 manifest_version: 2
 api_version: 1
 homepage: https://github.com/dhansxd/hermes-original-chrome-default-plugin
-description: Scoped original headed Chrome Default adapter; partial acceptance, not production ready
+description: Original Chrome Default profile through owned GUI windows and CDP, with coordinated startup and parallel page work. Read-only status via hermes original-chrome status or /original-chrome-status; fixed operator diagnostic via /original-chrome-test.
 author: Dyra
 kind: backend
 capabilities:
@@ -13,7 +13,11 @@ provides_browser_providers:
 provides_tools:
   - browser_exec
   - browser_vault
+  # Inert, non-conflicting metadata when tools.override has not been granted.
+  - original_chrome_default_browser_exec
+  - original_chrome_default_browser_vault
 provides_hooks:
+  - pre_tool_call
   - on_session_finalize
   - agent_loop_stopped
   - on_session_end
@@ -26,6 +30,7 @@ config_schema:
   expected_account:
     type: str
     required: true
-    description: Explicit approved account associated with the original Chrome Default profile; stored only in profile-local settings.
+    description: Explicit profile-local setting confirming the approved account associated with the original Chrome Default profile.
 python_dependencies:
+  - psutil>=5.9,<8
   - websockets>=15,<17

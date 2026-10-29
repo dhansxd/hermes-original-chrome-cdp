@@ -1,0 +1,23 @@
+{
+  "name": "browser_exec",
+  "description": "Run a bounded browser script using the original Chrome GUI provider.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "code": {
+        "type": "string",
+        "description": "Bounded browser script using the documented helpers. Use print(...) to return data."
+      },
+      "session": {
+        "type": "string",
+        "description": "Named browser session within the calling task. Reuse its name for related calls; omission selects that task's default session."
+      },
+      "timeout_s": {
+        "type": "integer",
+        "default": 300,
+        "description": "Maximum seconds to wait for a script (default 300, maximum 1800)."
+      }
+    },
+    "required": ["code"]
+  }
+}

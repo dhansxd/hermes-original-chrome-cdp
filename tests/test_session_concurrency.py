@@ -21,7 +21,7 @@ class SessionIsolationTests(unittest.TestCase):
                 self.event_overflow=False;self.detached_sessions=set()
                 self.release=threading.Event()
             def __call__(self,method,params=None,session=None):
-                if method=='Fixture.block':
+                if method=='Target.getTargets':
                     self.release.wait(2)
                     if self.closed:raise OSError('transport closed while awaiting response')
                 return {'marker':'peer'}
@@ -38,13 +38,13 @@ class SessionIsolationTests(unittest.TestCase):
             first:dict={'state':{'owned':{'a':1}}};peer:dict={'state':{'owned':{'b':2}}}
             provider.states={('a','default'):first,('b','default'):peer}
             def request(entry,method,timeout):
-                return provider._worker({'endpoint':'ws://fixture','profile':root+'/Default','method':method},timeout,entry=entry)
-            with patch('plugin.ROOT',Path(root)),patch('observer.Wire',Wire):
+                return provider._run_worker({'endpoint':'ws://fixture','profile':root+'/Default','method':method},timeout,entry=entry,worker_path=script)
+            with patch('observer.Wire',Wire):
                 try:
-                    self.assertTrue(request(peer,'Fixture.read',2)['success'])
-                    with self.assertRaises(subprocess.TimeoutExpired):request(first,'Fixture.block',.2)
+                    self.assertTrue(request(peer,'Browser.getVersion',2)['success'])
+                    with self.assertRaises(subprocess.TimeoutExpired):request(first,'Target.getTargets',.2)
                     self.assertFalse(peer['observer'].closed,'one worker timeout closed its peer observer')
-                    self.assertTrue(request(peer,'Fixture.read',2)['success'])
+                    self.assertTrue(request(peer,'Browser.getVersion',2)['success'])
                     self.assertIsNot(first['observer'],peer['observer'])
                 finally:
                     for entry in (first,peer):
@@ -52,8 +52,84 @@ class SessionIsolationTests(unittest.TestCase):
 
 
 class ParallelExecutionTests(unittest.TestCase):
+    def test_gui_launch_waits_for_peer_attachment_but_page_work_overlaps(self):
+        # Distinct provider objects have distinct setup locks. The shared-root
+        # consent lock must still cover each complete launch + attach sequence.
+        with tempfile.TemporaryDirectory() as root:
+            providers=[ChromeProvider(data=root),ChromeProvider(data=root)]
+            attaching=threading.Event();release_attach=threading.Event();second_launched=threading.Event()
+            page_barrier=threading.Barrier(2);results={};calls=[]
+            class Observer:
+                def __init__(self,endpoint,profile):
+                    self.closed=False;self.entries=[];self._lock=threading.RLock()
+                    calls.append(('attach',endpoint))
+                    if endpoint=='ws://first':
+                        attaching.set()
+                        if not release_attach.wait(2):raise AssertionError('test attach gate timed out')
+                def bind(self,entry):self.entries.append(entry)
+                def close(self):self.closed=True
+            def endpoint(**kwargs):
+                name=threading.current_thread().name
+                calls.append(('launch',name))
+                if name=='second':second_launched.set()
+                return 'ws://'+name
+            def worker(request,timeout,**kwargs):
+                if request.get('cleanup'):return {'success':True,'state':{'owned':{}}}
+                page_barrier.wait(2)
+                name=threading.current_thread().name
+                return {'success':True,'state':{'owned':{name:1},'verified':True}}
+            for provider in providers:provider.endpoint=endpoint;provider._worker=worker
+            def execute(index,name):results[name]=json.loads(providers[index].execute({'code':'pass'},task_id=name))
+            first=threading.Thread(target=execute,args=(0,'first'),name='first')
+            second=threading.Thread(target=execute,args=(1,'second'),name='second')
+            with patch('observer.ScopedObserver',Observer):
+                first.start()
+                try:
+                    self.assertTrue(attaching.wait(1));second.start()
+                    self.assertFalse(second_launched.wait(.1),'second GUI launch overlapped first consent/attachment')
+                finally:
+                    release_attach.set();first.join(3)
+                    if second.ident:second.join(3)
+                self.assertFalse(first.is_alive());self.assertFalse(second.is_alive())
+                self.assertTrue(results['first']['success'],results)
+                self.assertTrue(results['second']['success'],results)
+                self.assertEqual(calls,[('launch','first'),('attach','ws://first'),
+                                        ('launch','second'),('attach','ws://second')])
+                for provider in providers:provider.unload()
+
+    def test_held_observer_fast_path_does_not_take_setup_or_consent_lock(self):
+        from unittest.mock import Mock
+        provider=ChromeProvider(data='/fixture');held=Mock(closed=False)
+        entry={'endpoint':'ws://held','observer':held}
+        with patch('plugin._consent_guard',side_effect=AssertionError('held page work must not enter consent')):
+            self.assertIs(provider._prepare_observer(entry),held)
+        held.bind.assert_not_called()
+
+    def test_cleanup_reconnect_uses_serialized_preparation_without_changing_peer(self):
+        from unittest.mock import Mock
+        from contextlib import contextmanager
+        provider=ChromeProvider(data='/fixture')
+        stale=Mock(closed=True);fresh=Mock(closed=False);peer=Mock(closed=False)
+        entry={'endpoint':'ws://fixture','observer':stale};peer_entry={'endpoint':'ws://peer','observer':peer}
+        provider.states={('a','default'):entry,('b','default'):peer_entry};inside=[]
+        @contextmanager
+        def guard(data):
+            inside.append(True)
+            try:yield
+            finally:inside.pop()
+        def construct(endpoint,profile):
+            self.assertEqual(inside,[True]);self.assertEqual(endpoint,'ws://fixture')
+            return fresh
+        with patch('plugin._consent_guard',guard),patch('observer.ScopedObserver',side_effect=construct) as ctor:
+            self.assertIs(provider._prepare_observer(entry),stale,'ordinary work must not reconnect')
+            ctor.assert_not_called()
+            self.assertIs(provider._prepare_observer(entry,cleanup=True),fresh)
+        fresh.bind.assert_called_once_with(entry)
+        self.assertIs(peer_entry['observer'],peer);peer.close.assert_not_called()
+
     def test_peer_progresses_while_first_worker_is_waiting(self):
         provider=ChromeProvider(data='/fixture');provider.endpoint=lambda *a,**k:'ws://inert'
+        provider._prepare_observer=lambda *args,**kwargs:None # Synthetic workers never connect.
         entered=threading.Event();release=threading.Event();peer_done=threading.Event()
         results={}
         def worker(request,timeout:float=300,**kwargs):
@@ -79,6 +155,7 @@ class ParallelExecutionTests(unittest.TestCase):
 
     def test_same_session_waiters_remain_serial(self):
         provider=ChromeProvider(data='/fixture');provider.endpoint=lambda **kw:'ws://inert'
+        provider._prepare_observer=lambda *args,**kwargs:None # Synthetic workers never connect.
         entered=threading.Event();release=threading.Event();second_entered=threading.Event()
         calls=[]
         def worker(request,timeout:float=300,**kwargs):
@@ -101,6 +178,7 @@ class ParallelExecutionTests(unittest.TestCase):
         from plugin import BrowserLifecycle
         from types import SimpleNamespace
         provider=ChromeProvider(data='/fixture');provider.endpoint=lambda **kw:'ws://inert'
+        provider._prepare_observer=lambda *args,**kwargs:None # Synthetic workers never connect.
         lifecycle=BrowserLifecycle(SimpleNamespace(emit=lambda *a:None),provider)
         lifecycle.bind(task_id='a',session_id='chat-a',session_key='route-a')
         entered=threading.Event();release=threading.Event();cancel_started=threading.Event();peer_done=threading.Event()
@@ -140,7 +218,7 @@ class ParallelExecutionTests(unittest.TestCase):
             calls.append(request)
             return {'success':True,'state':{'owned':{'new':1},'verified':True}}
         provider._worker=worker
-        queued=threading.Thread(target=lambda:result.append(json.loads(provider.execute({'code':'must-not-run'},task_id='task'))))
+        queued=threading.Thread(target=lambda:result.append(json.loads(provider.execute({'code':'print("must-not-run")'},task_id='task'))))
         with provider.session_guard(key):
             queued.start()
             deadline=time.monotonic()+2
@@ -162,46 +240,13 @@ class ParallelExecutionTests(unittest.TestCase):
             barrier=threading.Barrier(2)
             def run(i):
                 barrier.wait(2)
-                results.append(provider._worker({'marker':str(i)},2,entry=entries[i]))
+                results.append(provider._run_worker({'marker':str(i)},2,entry=entries[i],worker_path=Path(root)/'worker.py'))
             workers=[threading.Thread(target=run,args=(i,)) for i in range(2)]
-            with patch('plugin.ROOT',Path(root)):
-                for worker in workers:worker.start()
-                for worker in workers:worker.join(3)
+            for worker in workers:worker.start()
+            for worker in workers:worker.join(3)
             self.assertTrue(all(not worker.is_alive() for worker in workers))
             self.assertEqual([e['state']['owned'] for e in entries],[{'0':1},{'1':1}])
             self.assertEqual({r['stdout'] for r in results},{'0','1'})
-
-
-class VaultConcurrencyTests(unittest.TestCase):
-    def test_vault_borrows_only_selected_session_without_blocking_peer_task(self):
-        import test_vault_adapter
-        import vault_adapter
-        fixture=test_vault_adapter.NativeSyntheticTests();fixture.setUp()
-        self.addCleanup(fixture.doCleanups)
-        provider=ChromeProvider(data='/synthetic-empty-root')
-        provider.states=fixture.provider.states;provider.last_sessions=fixture.provider.last_sessions
-        provider.endpoint=lambda **kw:'ws://inert'
-        provider._worker=lambda *a,**kw:{'success':True,'state':{'owned':{'peer':1},'verified':True}}
-        fixture.provider=provider
-        entered=threading.Event();release=threading.Event();peer_done=threading.Event();results=[]
-        original=vault_adapter._Transport
-        class SlowTransport(original):
-            def __init__(self,browser):
-                entered.set();release.wait(2);super().__init__(browser)
-        def fill():results.append(fixture.call())
-        def read():provider.execute({'code':'read'},task_id='peer');peer_done.set()
-        filling=threading.Thread(target=fill);peer=threading.Thread(target=read)
-        with patch('vault_adapter._Transport',SlowTransport):
-            filling.start()
-            try:
-                self.assertTrue(entered.wait(2));peer.start()
-                self.assertTrue(peer_done.wait(.5),'vault borrow held the provider-wide state lock')
-                self.assertTrue(filling.is_alive())
-            finally:
-                release.set();filling.join(3)
-                if peer.ident:peer.join(3)
-        self.assertTrue(results[0]['success'],results)
-        self.assertFalse(provider._session_locks)
 
 
 if __name__=='__main__':unittest.main()

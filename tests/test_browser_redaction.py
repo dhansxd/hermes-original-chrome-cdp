@@ -12,8 +12,6 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path.home() / '.hermes/hermes-agent'))
-import hermes_bootstrap
-import test_vault_adapter
 from hermes_cli.plugins import PluginManager
 from hermes_cli.plugins_manifest import PluginManifest
 from tools.registry import registry
@@ -22,9 +20,9 @@ from agent.redact import clear_vault_redaction_values, register_vault_redaction_
 
 class BrowserRedactionTests(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory(dir=Path.home() / '.hermes/cache/scratch', prefix='browser-redaction-')
+        tmp = tempfile.TemporaryDirectory(prefix='browser-redaction-')
         self.addCleanup(tmp.cleanup)
-        self.scope = tmp.name
+        self.scope = str(Path(tmp.name).resolve())
         env = patch.dict(os.environ, HERMES_HOME=self.scope)
         env.start()
         self.addCleanup(env.stop)
@@ -33,9 +31,7 @@ class BrowserRedactionTests(unittest.TestCase):
             'browser': {'backend': 'browser-use', 'cloud_provider': 'original-chrome-default'},
             'plugins': {'entries': {'original-chrome-default': {'granted_capabilities': ['tools.override']}}},
         }))
-        self.fixture = test_vault_adapter.NativeSyntheticTests()
-        self.fixture.setUp()
-        self.addCleanup(self.fixture.doCleanups)
+        self.fixture_secret = 'SYNTHETIC-ONLY-never-a-real-secret'
         self.manager = PluginManager(scope_key=self.scope)
         self.addCleanup(self.manager.unload)
         self.manager._load_plugin(PluginManifest(name='original-chrome-default', source='user',
@@ -46,8 +42,8 @@ class BrowserRedactionTests(unittest.TestCase):
         assert entry is not None
         self.provider = inspect.getclosurevars(entry.handler).nonlocals['provider']
         self.provider.data = Path('/synthetic-empty-root')
-        self.provider.states = self.fixture.provider.states
-        self.provider.last_sessions = self.fixture.provider.last_sessions
+        self.provider.states = {('synthetic-task', 'named'): {'endpoint': 'ws://inert',
+            'state': {'current': 'agent', 'owned': {'agent': 2}, 'verified': True}}}
         # Never let a teardown attempt real browser cleanup, even after an assertion fails.
         self.addCleanup(self.provider.states.clear)
 
@@ -62,11 +58,8 @@ class BrowserRedactionTests(unittest.TestCase):
         from agent.tool_dispatch_helpers import make_tool_result_message
         from tools.tool_result_storage import maybe_persist_tool_result, extract_persisted_path
 
-        fill = registry.dispatch('browser_vault', {'action': 'fill', 'handle': 'synthetic-handle'},
-            scope=self.scope, task_id='synthetic-task')
-        assert isinstance(fill, str)
-        self.assertTrue(json.loads(fill)['success'])
-        marker = self.fixture.fixture_secret
+        marker = self.fixture_secret
+        register_vault_redaction_value(marker)
         escaped = 'SYNTHETIC-ONLY-quote"-slash\\-tab\t-雪\r\nend'
         register_vault_redaction_value(escaped)
         self.assertNotEqual(redact_registered_vault_values(marker), marker)
@@ -90,7 +83,7 @@ class BrowserRedactionTests(unittest.TestCase):
         self.provider._worker = fail
         error = self.dispatch()
         self.assertFalse(json.loads(error)['success'])
-        for label, output in [('vault', fill), ('registry', raw), ('model', message['content']),
+        for label, output in [('registry', raw), ('model', message['content']),
                               ('spill', spill), ('exception', error)]:
             for secret in (marker, escaped, escaped.replace('\r', '').replace('\n', '')):
                 with self.subTest(surface=label, escaped=secret != marker):
@@ -100,8 +93,8 @@ class BrowserRedactionTests(unittest.TestCase):
 
     def test_ordinary_dom_results_and_held_state_are_unchanged(self):
         state = self.provider.states[('synthetic-task', 'named')]['state']
-        register_vault_redaction_value(self.fixture.fixture_secret)
-        state['fixture_marker'] = self.fixture.fixture_secret
+        register_vault_redaction_value(self.fixture_secret)
+        state['fixture_marker'] = self.fixture_secret
         before = copy.deepcopy(state)
         payload = {'success': True, 'stdout': 'DOM ready\n雪', 'stderr': '',
             'nested': {'count': 2, 'visible': True, 'optional': None, 'items': [1, 'plain']},
@@ -111,13 +104,14 @@ class BrowserRedactionTests(unittest.TestCase):
         self.provider._worker = lambda *args, **kwargs: copy.deepcopy(payload)
         raw = self.dispatch()
         result = json.loads(raw)
-        for key, expected in payload.items():
-            if key != 'state':
-                self.assertEqual(result[key], expected)
+        self.assertEqual(result['stdout'], payload['stdout'])
+        self.assertEqual(result['screenshot_path'], payload['screenshot_path'])
+        self.assertNotIn('nested', result)
+        self.assertNotIn('workspace', result)
         self.assertEqual(self.provider.states[('synthetic-task', 'named')]['state'], before)
         self.assertEqual(state, before)
         self.assertFalse(result['fallback_used'])
-        self.assertIn('browser_cleanup', result)
+        self.assertNotIn('browser_cleanup', result)
 
     def test_forced_redaction_when_global_preference_is_disabled(self):
         from agent import redact
@@ -132,19 +126,19 @@ class BrowserRedactionTests(unittest.TestCase):
         handler = registry.get_entry('browser_exec', scope=self.scope)
         assert handler is not None
         lifecycle = inspect.getclosurevars(handler.handler).nonlocals['lifecycle']
-        marker = self.fixture.fixture_secret
+        marker = self.fixture_secret
         register_vault_redaction_value(marker)
         notice = {'success': False, 'error': marker, 'results': [{'error': marker}]}
         lifecycle.notices['synthetic-session'] = [copy.deepcopy(notice)]
         self.provider._worker = lambda *args, **kwargs: {'success': True, 'stdout': 'DOM ready'}
         raw = self.dispatch()
         self.assertTrue(marker not in raw, 'cleanup notice reached registry with a secret')
-        self.assertFalse(json.loads(raw)['browser_cleanup'][0]['success'])
+        self.assertFalse(json.loads(raw)['cleanup_complete'])
         self.assertEqual(lifecycle.notices['synthetic-session'], [notice])
 
     def test_deep_browser_output_is_bounded_before_secret_egress(self):
         from agent.redact import REDACT_WALK_MAX_DEPTH, REDACT_WALK_DEPTH_MARKER
-        marker = self.fixture.fixture_secret
+        marker = self.fixture_secret
         register_vault_redaction_value(marker)
         nested = marker
         for _ in range(REDACT_WALK_MAX_DEPTH + 1):
@@ -153,7 +147,7 @@ class BrowserRedactionTests(unittest.TestCase):
         raw = self.dispatch()
         self.assertTrue(json.loads(raw)['success'])
         self.assertTrue(marker not in raw, 'nesting limit must never return raw remainder')
-        self.assertIn(REDACT_WALK_DEPTH_MARKER, raw)
+        self.assertNotIn('nested', json.loads(raw))
 
 
 if __name__ == '__main__':

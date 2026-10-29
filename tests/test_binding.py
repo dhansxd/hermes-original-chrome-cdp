@@ -36,7 +36,8 @@ class CloseAcknowledgementTest(unittest.TestCase):
             raise AssertionError(method)
         state={'current':'agent','context':'ctx','owned':{'agent':2}}
         browser=BoundBrowser(wire,state)
-        self.assertEqual(browser.cdp('Target.closeTarget',targetId='agent'),{'success':False})
+        with self.assertRaisesRegex(RuntimeError,'target_close_rejected'):
+            browser.cdp('Target.closeTarget',targetId='agent')
         self.assertEqual(state['owned'],{'agent':2})
         self.assertFalse(browser.cleanup()['success'])
         self.assertEqual(calls.count('Target.closeTarget'),2)

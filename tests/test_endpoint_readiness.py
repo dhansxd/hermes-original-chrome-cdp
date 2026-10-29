@@ -50,15 +50,40 @@ class ReadinessTests(unittest.TestCase):
                              'cmdline':['--user-data-dir='+str(data)],'create_time':1}
    proc.create_time.return_value=1
    proc.net_connections.return_value=[Mock(status='LISTEN',laddr=Mock(port=12345,ip='127.0.0.1'))]
+   clock=[0.0]
+   def expire_on_seed_wait(seconds):clock[0]=21.0
    with patch('plugin.gui_launch') as launch,patch('psutil.process_iter',return_value=[proc]), \
         patch('plugin.seed_window_ready',create=True,return_value=False), \
-        patch('plugin.time.monotonic',side_effect=[0,0,21]),patch('plugin.time.sleep'):
+        patch('plugin.time.monotonic',side_effect=lambda:clock[0]), \
+        patch('plugin.time.sleep',side_effect=expire_on_seed_wait):
     with self.assertRaisesRegex(RuntimeError,'Default_seed_window_unavailable'):
      provider.endpoint(entry=entry)
    launch.assert_called_once()
    self.assertFalse(entry['state']['verified'])
    self.assertEqual(entry['state']['owned'],{})
    self.assertIn('pending_seed',entry['state'])
+
+ def test_removal_during_seed_record_creation_refuses_launch_and_retires_unused_marker(self):
+  with tempfile.TemporaryDirectory() as d:
+   data=Path(d);provider=ChromeProvider(data=data/'chrome',workspace=data/'work');entry={}
+   journal=provider._journal();begin_seed=journal.begin_seed;created=[]
+   def begin_then_signal_removal():
+    record=begin_seed();created.append(record)
+    # The source watcher has started unload while endpoint setup was writing
+    # provenance; no GUI request has yet been authorized or issued.
+    with provider.lock:provider._unloading=True
+    return record
+   try:
+    with patch.object(journal,'begin_seed',side_effect=begin_then_signal_removal), \
+         patch('plugin.gui_launch') as launch,patch.object(provider,'_endpoint_identity') as endpoint:
+     with self.assertRaisesRegex(RuntimeError,'session_cleanup_in_progress: no GUI launch sent'):
+      provider.endpoint(entry=entry)
+    launch.assert_not_called();endpoint.assert_not_called()
+    self.assertEqual(len(created),1);self.assertEqual(journal.records(),[])
+    self.assertNotIn('journal_id',entry);self.assertIsNone(entry['state'])
+    self.assertFalse((journal.folder/'seeds'/(created[0]['id']+'.html')).exists())
+   finally:
+    if provider._runtime_snapshot is not None:provider._runtime_snapshot.close()
 
 class SeedWindowTests(unittest.TestCase):
  def test_readiness_requires_one_exact_document_in_a_standard_window(self):

@@ -1,5 +1,9 @@
-"""Scoped CDP helper boundary. Not an arbitrary-Python sandbox."""
+"""Owned-target CDP adapter for plugin-owned GUI helpers."""
 import time
+if __package__:
+    from .cdp_policy import validate_cdp, validate_navigation_url
+else:
+    from cdp_policy import validate_cdp, validate_navigation_url
 
 
 class BoundBrowser:
@@ -38,6 +42,8 @@ class BoundBrowser:
 
     def session(self, target=None):
         target = target or self.state['current']
+        if target in self.state.get('pending_closes',{}):
+            raise RuntimeError('target_close_pending: inspect or finish; no action replay')
         self.info(target)
         if target not in self.sessions:
             self.sessions[target] = self.wire('Target.attachToTarget', {'targetId':target,'flatten':True})['sessionId']
@@ -48,6 +54,7 @@ class BoundBrowser:
         return self.sessions[target]
 
     def create(self, url='about:blank'):
+        validate_navigation_url(url)
         self.info()
         # Each explicit new tab gets a separate owned window: no last-active-window heuristic.
         self.state['unresolved_creation']=True;self.checkpoint()
@@ -65,21 +72,21 @@ class BoundBrowser:
         return target
 
     def cdp(self, method, session_id=None, _response_timeout=None, **params):
-        if session_id is not None and session_id not in self.sessions.values():
-            raise RuntimeError('session_not_owned')
+        target=validate_cdp(method,params,self.state,self.sessions,session_id)
         if method == 'Target.getTargets':
             return {'targetInfos':[self.info(t) for t in list(self.state['owned'])]}
+        if method == 'Browser.getVersion':return self.wire(method,params)
         if method == 'Target.createTarget': return {'targetId':self.create(params.get('url','about:blank'))}
+        if method == 'Target.closeTarget':return self.close_target(target)
+        if target in self.state.get('pending_closes',{}) and method not in ('Target.getTargetInfo','Browser.getWindowForTarget'):
+            raise RuntimeError('target_close_pending: inspect or finish; no action replay')
         if method in ('Target.closeTarget','Target.activateTarget','Target.attachToTarget','Target.getTargetInfo','Browser.getWindowForTarget'):
-            target=params.get('targetId',self.state['current']);self.info(target)
+            self.info(target)
             if method=='Target.attachToTarget': return {'sessionId':self.session(target)}
             result=self.wire(method,{**params,'targetId':target})
-            if method=='Target.closeTarget' and result.get('success'):
-                self.state['owned'].pop(target,None);self.checkpoint()
             return result
-        if method in ('Browser.close','Browser.setDownloadBehavior') or method.startswith(('Storage.','Target.','BrowserContext.')):
-            raise RuntimeError('browser_wide_operation_not_supported')
-        result=self.wire(method,params,session_id or self.session())
+        if session_id is not None:self.info(target)
+        result=self.wire(method,params,session_id or self.session(target))
         if method=='Page.handleJavaScriptDialog':
             target=next((t for t,s in self.sessions.items() if s==session_id),self.state['current'])
             self.state.setdefault('dialogs',{}).pop(target,None);self.checkpoint()
@@ -139,6 +146,56 @@ class BoundBrowser:
                 self.checkpoint()
         return added
 
+    def _retire_target(self,target):
+        self.state['owned'].pop(target,None)
+        self.state.get('pending_closes',{}).pop(target,None)
+        if not self.state.get('pending_closes'):self.state.pop('pending_closes',None)
+        self.state.get('dialogs',{}).pop(target,None)
+        self.sessions.pop(target,None)
+
+    def _begin_close(self,target):
+        """Record intent before sending; a later call can only observe it."""
+        if target in self.state.get('pending_closes',{}):return
+        self.info(target)
+        self.state.setdefault('pending_closes',{})[target]='sent'
+        self.checkpoint()
+        result=self.wire('Target.closeTarget',{'targetId':target})
+        if result.get('success') is not True:
+            self.state['pending_closes'].pop(target,None)
+            if not self.state['pending_closes']:self.state.pop('pending_closes')
+            self.checkpoint()
+            raise RuntimeError('target_close_rejected')
+        self.state['pending_closes'][target]='acknowledged'
+        self.checkpoint()
+
+    def _observe_closes(self,closing,errors):
+        """One shared polling budget, without issuing or repeating any action."""
+        closing=set(closing)
+        deadline=time.monotonic()+1
+        while closing:
+            try:live={t['targetId'] for t in self.wire('Target.getTargets')['targetInfos']}
+            except Exception as exc:
+                for target in closing:errors[target]={'code':'close_observation_failed','error_type':type(exc).__name__}
+                break
+            gone=closing-live
+            for target in gone:self._retire_target(target)
+            closing-=gone
+            if not closing:break
+            if time.monotonic()>=deadline:
+                for target in closing:errors[target]={'code':'close_not_observed'}
+                break
+            time.sleep(.05)
+        self.checkpoint()
+        return closing
+
+    def close_target(self,target):
+        if target not in self.state['owned']:raise RuntimeError('target_not_owned')
+        self._begin_close(target)
+        errors={}
+        if self._observe_closes({target},errors):
+            raise TimeoutError('target_close_unconfirmed: ownership retained; do not replay')
+        return {'success':True}
+
     def cleanup(self, retain=()):
         self.track_popups()
         remaining=[];errors={};closing=set()
@@ -147,35 +204,17 @@ class BoundBrowser:
             if target in retain:remaining.append(target);continue
             if target in live:
                 try:
-                    self.info(target)
-                    if not self.wire('Target.closeTarget',{'targetId':target}).get('success',False):
-                        remaining.append(target);errors[target]={'code':'close_rejected'};continue
+                    self._begin_close(target)
                 except Exception as exc:
                     # Exceptions can contain page data/expressions. Preserve a
                     # bounded category, never echo the transport payload.
-                    remaining.append(target);errors[target]={'code':'close_failed','error_type':type(exc).__name__};continue
+                    remaining.append(target)
+                    errors[target]=({'code':'close_rejected'} if str(exc)=='target_close_rejected' else
+                                    {'code':'close_failed','error_type':type(exc).__name__})
+                    continue
                 closing.add(target)
-            else:self.state['owned'].pop(target,None)
-        # Chrome acknowledges a close before destruction completes. Poll on the
-        # same transport for one shared second; never resend the close. Each
-        # inventory call still has its existing transport/worker I/O deadline.
-        deadline=time.monotonic()+1
-        while closing:
-            try:live={t['targetId'] for t in self.wire('Target.getTargets')['targetInfos']}
-            except Exception as exc:
-                for target in closing:
-                    remaining.append(target);errors[target]={'code':'close_observation_failed','error_type':type(exc).__name__}
-                break
-            gone=closing-live
-            for target in gone:self.state['owned'].pop(target,None)
-            closing-=gone
-            if not closing:break
-            if time.monotonic()>=deadline:
-                for target in closing:
-                    remaining.append(target);errors[target]={'code':'close_not_observed'}
-                break
-            time.sleep(.05)
-        self.checkpoint()
+            else:self._retire_target(target)
+        self._observe_closes(closing,errors)
         # Confirmation can checkpoint opener-linked children after the close
         # snapshot. Account for all final ownership without issuing more closes.
         remaining=list(self.state['owned'])

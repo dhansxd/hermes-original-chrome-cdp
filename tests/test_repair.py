@@ -40,7 +40,7 @@ class OwnershipTests(unittest.TestCase):
             self.assertIn('uncertain',second['error'])
 
 class ProgressTests(unittest.TestCase):
-    def test_uncertain_session_accepts_only_explicit_named_cleanup(self):
+    def test_uncertain_session_refuses_page_replay_and_automatically_cleans_only_its_name(self):
         p=ChromeProvider(data='/synthetic-empty-root')
         for name in ('failed','peer'):
             p.states[('task',name)]={'endpoint':'ws://fixture','state':{'owned':{name:1}},'uncertain':True}
@@ -50,13 +50,19 @@ class ProgressTests(unittest.TestCase):
             return {'success':True,'state':{'owned':{}},'remaining_owned_targets':[]}
         p._worker=worker
         refused=json.loads(p.execute({'session':'failed','code':'print(finish_browser(), new_tab())'},task_id='task'))
-        self.assertFalse(refused['success']);self.assertFalse(requests)
+        self.assertFalse(refused['success']);self.assertEqual(len(requests),1)
+        self.assertEqual(refused['recovery']['status'],'fresh_session_ready')
+        self.assertTrue(requests[0]['cleanup']);self.assertNotIn('code',requests[0])
+        self.assertNotIn(('task','failed'),p.states)
+        self.assertIn(('task','peer'),p.states)
+        # Explicit cleanup remains available for an independently unresolved
+        # session; the exact finish expression is never executed as page code.
+        p.states[('task','failed')]={'endpoint':'ws://fixture','state':{'owned':{'failed':1}},'uncertain':True}
         result=json.loads(p.execute({'session':'failed','code':'# cleanup only\nprint(finish_browser())'},task_id='task'))
         self.assertTrue(result['success'],result)
-        self.assertEqual(len(requests),1)
-        self.assertTrue(requests[0]['cleanup'])
-        self.assertNotIn('code',requests[0])
-        self.assertEqual(requests[0]['state']['owned'],{'failed':1})
+        self.assertEqual(len(requests),2)
+        self.assertTrue(all(request['cleanup'] and 'code' not in request for request in requests))
+        self.assertEqual(requests[-1]['state']['owned'],{'failed':1})
         self.assertNotIn(('task','failed'),p.states)
         self.assertIn(('task','peer'),p.states)
         self.assertFalse(result['action_replayed'])
@@ -74,19 +80,31 @@ class ProgressTests(unittest.TestCase):
         self.assertFalse(result['success'])
         self.assertIn(key,p.states);self.assertTrue(p.states[key]['uncertain'])
         refused=json.loads(p.execute({'session':'failed','code':'new_tab()'},task_id='task'))
-        self.assertFalse(refused['success']);self.assertEqual(len(requests),1)
+        self.assertFalse(refused['success']);self.assertEqual(len(requests),2)
+        self.assertTrue(all(request['cleanup'] and 'code' not in request for request in requests))
+        self.assertEqual(refused['recovery']['status'],'fresh_session_required')
+        self.assertFalse(refused['recovery']['cleanup_complete'])
+        self.assertIn(key,p.states);self.assertTrue(p.states[key]['uncertain'])
         self.assertEqual(p.last_cleanup[key]['error'],'close_unconfirmed')
 
     def test_wire_timeout_result_quarantines_session_without_replay(self):
         p=ChromeProvider(data='/synthetic-empty-root');p.endpoint=lambda **kw:'ws://fixture'
+        p._prepare_observer=lambda *args,**kwargs:None # The worker below supplies its own transport result.
         calls=[]
-        def worker(*args,**kwargs):
-            calls.append(True)
+        def worker(request,*args,**kwargs):
+            calls.append(request)
+            if request.get('cleanup'):
+                return {'success':False,'error':'close_unconfirmed','remaining_owned_targets':['old']}
             return {'success':False,'uncertain':True,'state':{'owned':{'old':1},'verified':True},'error':'CDP_response_timeout'}
         p._worker=worker
-        p.execute({'code':'pass'},task_id='fixture')
+        first=json.loads(p.execute({'code':'pass'},task_id='fixture'))
+        self.assertEqual(len(calls),2)
+        self.assertEqual(first['recovery']['status'],'fresh_session_required')
         again=json.loads(p.execute({'code':'pass'},task_id='fixture'))
-        self.assertEqual(len(calls),1)
+        self.assertEqual(len(calls),3)
+        self.assertEqual(sum('code' in request for request in calls),1)
+        self.assertEqual(sum(bool(request.get('cleanup')) for request in calls),2)
+        self.assertTrue(p.states[('fixture','default')]['uncertain'])
         self.assertIn('uncertain',again['error'])
 
     def test_unknown_create_response_remains_unresolved_after_known_cleanup(self):
@@ -125,8 +143,7 @@ class ProgressTests(unittest.TestCase):
             script.write_text('import json,subprocess,sys\njson.load(sys.stdin)\nsubprocess.Popen([sys.executable,"-c","import time;time.sleep(1.5)"])\nprint(json.dumps({"result":{"success":True,"stdout":"actual-output"}}),flush=True)\n')
             p=ChromeProvider(data=root);entry={'state':None}
             start=time.monotonic()
-            with patch('plugin.ROOT',Path(root)):
-                result=p._worker({},1,entry=entry)
+            result=p._run_worker({},1,entry=entry,worker_path=script)
             self.assertEqual(result['stdout'],'actual-output')
             self.assertLess(time.monotonic()-start,.8)
 
@@ -137,8 +154,7 @@ class ProgressTests(unittest.TestCase):
             script.write_text('import subprocess,sys,time\nsubprocess.Popen([sys.executable,"-c","import time;time.sleep(1.5)"])\ntime.sleep(5)\n')
             p=ChromeProvider(data=root);entry={'state':None}
             start=time.monotonic()
-            with patch('plugin.ROOT',Path(root)):
-                with self.assertRaises(subprocess.TimeoutExpired):p._worker({},.1,entry=entry)
+            with self.assertRaises(subprocess.TimeoutExpired):p._run_worker({},.1,entry=entry,worker_path=script)
             self.assertLess(time.monotonic()-start,.8)
 
     def test_parent_retains_checkpoint_on_timeout_and_reaps_worker(self):
@@ -147,8 +163,7 @@ class ProgressTests(unittest.TestCase):
             script=Path(root)/'worker.py'
             script.write_text('import json,sys,time,os\njson.load(sys.stdin)\nprint(json.dumps({"checkpoint":{"current":"new","context":"ctx","owned":{"old":1,"new":None}},"pid":os.getpid()}),flush=True)\ntime.sleep(10)\n')
             p=ChromeProvider(data=root);entry={'endpoint':'ws://fixture','state':{'owned':{'old':1}}}
-            with patch('plugin.ROOT',Path(root)):
-                with self.assertRaises(subprocess.TimeoutExpired):p._worker({},.15,entry=entry)
+            with self.assertRaises(subprocess.TimeoutExpired):p._run_worker({},.15,entry=entry,worker_path=script)
             self.assertEqual(entry['state']['owned'],{'old':1,'new':None})
 
     def test_created_target_is_published_before_window_lookup_failure(self):

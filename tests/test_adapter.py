@@ -19,6 +19,7 @@ class AdapterTest(unittest.TestCase):
         import subprocess
         from plugin import ChromeProvider
         p=ChromeProvider(data='/synthetic-adapter-fixture');p.endpoint=lambda **kw:'ws://fixture'
+        p._prepare_observer=lambda *args,**kwargs:None # The worker below is synthetic.
         calls=[]
         def timeout(*a,**kw):
             calls.append(True)
@@ -34,6 +35,7 @@ class SelectionTest(unittest.TestCase):
         from plugin import ChromeProvider
         p=ChromeProvider(data='/synthetic-test-only')
         p.endpoint=lambda **kw:'ws://synthetic'
+        p._prepare_observer=lambda *args,**kwargs:None # The worker below is synthetic.
         p._worker=lambda *a,**k:{'success':True,'state':{'owned':{'a':1}}}
         p.execute({'code':'pass','session':'one'},task_id='fixture')
         self.assertEqual(p.last_sessions,{'fixture':'one'})

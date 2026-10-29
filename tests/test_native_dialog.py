@@ -5,6 +5,32 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from worker import Wire
 
 
+class NativeDialogShapeTests(unittest.TestCase):
+    def button(self,title,key):return {'role':'AXButton','title':title,'key':key}
+
+    def test_duplicate_buttons_with_same_title_are_ambiguous(self):
+        from native_dialog import dialog_controls
+        for title in ('OK','Oke','Cancel','Batal'):
+            buttons=[self.button('OK',1)] if title not in ('OK','Oke') else []
+            buttons.extend([self.button(title,2),self.button(title,3)])
+            with self.subTest(title=title):self.assertIsNone(dialog_controls(buttons))
+
+    def test_unknown_button_or_reused_identity_is_not_a_supported_dialog(self):
+        from native_dialog import dialog_controls
+        for buttons in ([self.button('OK',1),self.button('Allow',2)],
+                        [self.button('OK',1),self.button('Cancel',1)]):
+            self.assertIsNone(dialog_controls(buttons))
+
+    def test_exact_alert_confirm_and_prompt_shapes(self):
+        from native_dialog import dialog_controls
+        ok=self.button('Oke',1);cancel=self.button('Batal',2)
+        field={'role':'AXTextField','title':'message','value':'default','key':3}
+        self.assertEqual(dialog_controls([ok])['type'],'alert')
+        self.assertEqual(dialog_controls([ok,cancel])['type'],'confirm')
+        self.assertEqual(dialog_controls([ok,cancel,field])['type'],'prompt')
+        self.assertIsNone(dialog_controls([ok,field]))
+
+
 class NativeDialogTransportTests(unittest.TestCase):
     def test_native_dialog_yields_pending_command_before_response_deadline(self):
         class Socket:
@@ -159,6 +185,63 @@ class NativeDialogSessionTests(unittest.TestCase):
         self.assertEqual(sum(m=='Page.handleJavaScriptDialog' for m,s in calls),1)
 
 
+class NativeDialogScanTests(unittest.TestCase):
+    def fixture(self):
+        from unittest.mock import Mock
+        from native_dialog import NativeDialogs
+        helper=NativeDialogs('/fixture','fixture');helper._host=Mock();helper.ax=Mock()
+        state={'context':'ctx','owned':{'owned':10},'verified':True}
+        count=[0]
+        def metadata(method,params=None):
+            if method=='Target.getTargets':
+                count[0]+=1
+                return {'targetInfos':[{'targetId':'owned','type':'page','browserContextId':'ctx',
+                                        'url':'https://example.test/'+str(count[0])}]}
+            if method=='Browser.getWindowForTarget':
+                return {'windowId':10,'bounds':{'left':0,'top':0,'width':900,'height':600}}
+            raise AssertionError('scan attempted a browser action')
+        wire=Mock(side_effect=metadata)
+        return helper,state,wire
+
+    def test_transient_scan_rebuilds_metadata_and_ax_snapshot_before_selecting(self):
+        from unittest.mock import patch
+        from consent import ConsentError
+        for code in (-25202,-25204):
+            with self.subTest(code=code):
+                helper,state,wire=self.fixture()
+                helper.ax.scan.side_effect=[ConsentError('consent_ax_read:'+str(code)),
+                    [{'key':1,'frame':(0,0,900,600),'document':'https://example.test/2',
+                      'dialogs':[{'key':100,'type':'alert','message':'fixture'}]}]]
+                with patch('native_dialog.time.sleep') as sleep:found=helper.scan(state,wire)
+                self.assertEqual(found['owned']['document'],'https://example.test/2')
+                self.assertEqual(helper._host.call_count,2);self.assertEqual(helper.ax.scan.call_count,2)
+                self.assertEqual([call.args[0] for call in wire.call_args_list],
+                                 ['Target.getTargets','Browser.getWindowForTarget']*2)
+                sleep.assert_called_once_with(.05);helper.ax.answer.assert_not_called()
+
+    def test_repeated_transient_failure_stops_at_three_observations(self):
+        from unittest.mock import patch
+        from consent import ConsentError
+        helper,state,wire=self.fixture();failure=ConsentError('consent_ax_read:-25202')
+        helper.ax.scan.side_effect=failure
+        with patch('native_dialog.time.sleep') as sleep:
+            with self.assertRaises(ConsentError) as caught:helper.scan(state,wire)
+        self.assertIs(caught.exception,failure)
+        self.assertEqual(helper._host.call_count,3);self.assertEqual(helper.ax.scan.call_count,3)
+        self.assertEqual(sleep.call_count,2);helper.ax.answer.assert_not_called()
+
+    def test_other_error_or_same_text_in_non_consent_error_is_not_retried(self):
+        from unittest.mock import patch
+        from consent import ConsentError
+        for failure in (ConsentError('consent_ax_read:-25200'),RuntimeError('consent_ax_read:-25202')):
+            with self.subTest(error=type(failure).__name__):
+                helper,state,wire=self.fixture();helper.ax.scan.side_effect=failure
+                with patch('native_dialog.time.sleep') as sleep:
+                    with self.assertRaises(type(failure)) as caught:helper.scan(state,wire)
+                self.assertIs(caught.exception,failure);helper.ax.scan.assert_called_once()
+                sleep.assert_not_called();helper.ax.answer.assert_not_called()
+
+
 class NativeDialogAnswerTests(unittest.TestCase):
     def setUp(self):
         from types import SimpleNamespace
@@ -205,16 +288,19 @@ class NativeDialogAnswerTests(unittest.TestCase):
     def test_native_action_or_post_press_read_error_is_uncertain(self):
         from unittest.mock import Mock
         from native_dialog import NativeDialogs
+        from consent import ConsentError
         expected={'dialog':{'key':100,'type':'alert'}}
-        for failed_stage in ('press','readback'):
+        for failed_stage in ('press','readback','transient_readback'):
             with self.subTest(stage=failed_stage):
                 helper=NativeDialogs('/fixture','fixture');helper.ax=Mock()
                 helper.scan=lambda state,wire:{'child':expected}
                 if failed_stage=='press':helper.ax.answer.side_effect=RuntimeError('native_press_unconfirmed')
+                elif failed_stage=='transient_readback':helper.ax.scan.side_effect=ConsentError('consent_ax_read:-25202')
                 else:helper.ax.scan.side_effect=RuntimeError('invalid_native_snapshot')
                 with self.assertRaises(TimeoutError):
                     helper.answer('child',expected,{'accept':True},{},Mock())
                 helper.ax.answer.assert_called_once()
+                if failed_stage!='press':helper.ax.scan.assert_called_once()
 
     def test_changed_native_identity_never_presses(self):
         from unittest.mock import Mock

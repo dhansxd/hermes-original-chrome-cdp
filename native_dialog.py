@@ -9,6 +9,22 @@ else:
     from consent import AX, ConsentError
 
 
+def dialog_controls(controls):
+    """Retain button occurrences; equal titles never identify one AX element."""
+    fields=[n for n in controls if n['role']=='AXTextField']
+    buttons=[n for n in controls if n['role']=='AXButton']
+    ok=[n['key'] for n in buttons if n.get('title') in ('Oke','OK')]
+    cancel=[n['key'] for n in buttons if n.get('title') in ('Batal','Cancel')]
+    if (len(ok)!=1 or len(fields)>1 or len(cancel)>1
+        or len(buttons)!=len(ok)+len(cancel)
+        or len({n['key'] for n in buttons+fields})!=len(buttons)+len(fields)
+        or fields and len(cancel)!=1):
+        return None
+    return {'type':'prompt' if fields else ('confirm' if cancel else 'alert'),
+            'field':fields[0] if fields else None,
+            'ok':ok[0],'cancel':cancel[0] if cancel else None}
+
+
 def select_dialogs(state, infos, windows, snapshot, bindings=None):
     bindings={} if bindings is None else bindings
     pages={t['targetId']:t for t in infos if t.get('type','page')=='page' and t.get('browserContextId')==state.get('context')}
@@ -40,6 +56,7 @@ def select_dialogs(state, infos, windows, snapshot, bindings=None):
         native=matches[0]
         bindings[win['windowId']]=native['key']
         if len(native.get('dialogs',[]))!=1:continue
+        if native['dialogs'][0].get('unsupported'):continue
         if sum(w['windowId']==win['windowId'] and pages.get(t,{}).get('url')==pages[tid].get('url') for t,w in windows.items())!=1:continue
         result[tid]={'dialog':native['dialogs'][0],'window_key':native['key'],'window_id':win['windowId'],'document':pages[tid]['url'],'frame':frame}
     return result
@@ -88,15 +105,17 @@ class NativeAX(AX):
             dialogs=[]
             for dialog in nodes(tree):
                 if dialog['subrole']!='AXApplicationDialog':continue
-                controls=list(nodes(dialog));fields=[n for n in controls if n['role']=='AXTextField']
-                buttons={n['title']:n['key'] for n in controls if n['role']=='AXButton'}
-                ok=[buttons[k] for k in ('Oke','OK') if k in buttons];cancel=[buttons[k] for k in ('Batal','Cancel') if k in buttons]
-                if len(ok)!=1 or len(fields)>1 or len(cancel)>1:continue
+                shape=dialog_controls(list(nodes(dialog)))
+                if shape is None:
+                    # Keep the presence of an unrecognized dialog: ignoring it
+                    # could make another dialog appear unique or already closed.
+                    dialogs.append({'key':dialog['key'],'unsupported':True})
+                    continue
                 # A prompt's accessible field label is its message, not page instructions.
-                kind='prompt' if fields else ('confirm' if cancel else 'alert')
-                dialogs.append({'key':dialog['key'],'type':kind,'message':fields[0]['title'] if fields else self.text(self.elements[dialog['key']],'AXDescription'),
-                                'defaultPrompt':fields[0]['value'] if fields else '', 'field':fields[0]['key'] if fields else None,
-                                'ok':ok[0],'cancel':cancel[0] if cancel else None})
+                field=shape['field']
+                dialogs.append({'key':dialog['key'],'type':shape['type'],'message':field['title'] if field else self.text(self.elements[dialog['key']],'AXDescription'),
+                                'defaultPrompt':field['value'] if field else '', 'field':field['key'] if field else None,
+                                'ok':shape['ok'],'cancel':shape['cancel']})
             addresses=[n['value'] for n in nodes(tree) if n['role']=='AXTextField' and n['title'] in ('Bilah penelusuran dan alamat','Address and search bar')]
             result.append({'key':tree['key'],'frame':tuple(frame),'document':self.text(root,'AXDocument'),'address':addresses[0] if len(addresses)==1 else '', 'dialogs':dialogs})
         return result
@@ -137,12 +156,19 @@ class NativeDialogs:
         if proc.create_time()!=started or proc.exe()!=exe:raise RuntimeError('native_dialog_host_changed')
         if self.ax is None:self.ax=NativeAX(pid)
     def scan(self,state,wire):
-        self._host()
-        infos=wire('Target.getTargets')['targetInfos']
-        windows={t['targetId']:wire('Browser.getWindowForTarget',{'targetId':t['targetId']}) for t in infos if t.get('type')=='page' and t.get('browserContextId')==state.get('context')}
-        assert self.ax is not None
-        found=select_dialogs(state,infos,windows,self.ax.scan(),self.bindings)
-        return found
+        # Native windows can change while this read-only tree is traversed.
+        # Rebuild host proof, CDP metadata, and AX references together; never
+        # retry a button action or its post-press readback here.
+        for attempt in range(3):
+            try:
+                self._host()
+                infos=wire('Target.getTargets')['targetInfos']
+                windows={t['targetId']:wire('Browser.getWindowForTarget',{'targetId':t['targetId']}) for t in infos if t.get('type')=='page' and t.get('browserContextId')==state.get('context')}
+                assert self.ax is not None
+                return select_dialogs(state,infos,windows,self.ax.scan(),self.bindings)
+            except ConsentError as exc:
+                if attempt==2 or str(exc) not in {'consent_ax_read:-25202','consent_ax_read:-25204'}:raise
+                time.sleep(.05)
     def answer(self,target,expected,params,state,wire):
         accept=params.get('accept')
         if not isinstance(accept,bool) or not isinstance(params.get('promptText',''),str):raise ValueError('native_dialog_explicit_decision_required')

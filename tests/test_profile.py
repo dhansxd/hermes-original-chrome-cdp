@@ -12,18 +12,21 @@ class ProfileTest(unittest.TestCase):
                     verify_account('/synthetic-unconfigured-profile', expected)
 
     def test_provider_reads_expected_account_from_profile_local_settings(self):
-        from plugin import ChromeProvider, PERSONAL, NAME
-        from unittest.mock import patch
-        configured={'plugins':{'entries':{NAME:{'settings':{'expected_account':'approved@example.test'}}}}}
-        with patch('hermes_cli.config.read_raw_config',return_value=configured), patch('plugin.verify_account',side_effect=RuntimeError('identity gate reached')) as verify:
-            result=json.loads(ChromeProvider(data=PERSONAL).execute({'code':'pass'},task_id='configuration-test'))
+        from plugin import ChromeProvider, PERSONAL, NAME, APPROVED_ACCOUNT
+        from unittest.mock import Mock,patch
+        get_setting=Mock(return_value=APPROVED_ACCOUNT)
+        with patch('plugin.verify_account',side_effect=RuntimeError('identity gate reached')) as verify:
+            provider=ChromeProvider(data=PERSONAL,get_setting=get_setting,
+                read_browser_config=lambda:{'cloud_provider':NAME,'backend':'browser-use'},has_override=lambda:True)
+            result=json.loads(provider.execute({'code':'pass'},task_id='configuration-test'))
         self.assertFalse(result['success'])
-        verify.assert_called_once_with(PERSONAL.resolve(),'approved@example.test')
+        get_setting.assert_called_once_with('expected_account')
+        verify.assert_called_once_with(PERSONAL.resolve(),APPROVED_ACCOUNT)
 
     def test_provider_missing_setting_never_reads_profile_or_launches(self):
         from plugin import ChromeProvider, PERSONAL
         from unittest.mock import patch
-        with patch('hermes_cli.config.read_raw_config',return_value={}), patch('plugin.gui_launch',side_effect=AssertionError('must not launch')) as launch:
+        with patch('hermes_cli.config.read_raw_config',side_effect=AssertionError('no ambient config fallback')), patch('plugin.gui_launch',side_effect=AssertionError('must not launch')) as launch:
             result=json.loads(ChromeProvider(data=PERSONAL).execute({'code':'pass'},task_id='unconfigured-test'))
         self.assertFalse(result['success'])
         self.assertIn('account_binding_unconfigured',result['error'])
@@ -70,16 +73,46 @@ class ProfileTest(unittest.TestCase):
         from worker import initialize
         calls=[];url='data:text/html,unique-seed'
         def wire(method,params=None,session=None):
+            nonlocal url
             calls.append((method,params))
             if method=='Target.getTargets':return {'targetInfos':[{'targetId':'other','type':'page','browserContextId':'other-context','url':'about:blank'},{'targetId':'seed','type':'page','browserContextId':'default-context','url':url}]}
             if method=='Browser.getWindowForTarget':return {'windowId':2}
             if method=='Target.attachToTarget':return {'sessionId':'sid'}
             if method=='Runtime.evaluate':return {'result':{'value':'/fixture/Default'}}
+            if method=='Page.navigate':url=params['url'];return {'frameId':'seed'}
             return {}
         state=initialize(wire,'/fixture/Default',seed_url=url)
         self.assertEqual(state['context'],'default-context')
         self.assertEqual(state['owned'],{'seed':2})
         self.assertFalse(any(m=='Target.createTarget' for m,p in calls))
         self.assertFalse(any(p.get('targetId')=='other' for m,p in calls if isinstance(p,dict)))
+
+    def test_profile_not_verified_until_blank_navigation_is_observed(self):
+        import copy
+        from unittest.mock import patch
+        from worker import initialize
+        url='file:///owned-seed';pending=0;checkpoints=[];navigations=[]
+        def wire(method,params=None,session=None):
+            nonlocal url,pending
+            if method=='Target.getTargets':
+                if pending:
+                    pending-=1
+                    if not pending:url='about:blank'
+                return {'targetInfos':[{'targetId':'seed','type':'page','browserContextId':'ctx','url':url}]}
+            if method=='Browser.getWindowForTarget':return {'windowId':2}
+            if method=='Target.attachToTarget':return {'sessionId':'sid'}
+            if method=='Runtime.evaluate':return {'result':{'value':'/fixture/Default'}}
+            if method=='Page.navigate':
+                navigations.append(params['url'])
+                if params['url']=='about:blank':pending=3
+                else:url=params['url']
+                return {'frameId':'seed'}
+            return {}
+        wire.checkpoint=lambda state:checkpoints.append((copy.deepcopy(state),url))
+        with patch('worker.time.sleep') as sleep:
+            state=initialize(wire,'/fixture/Default',seed_url=url)
+        self.assertTrue(state['verified']);self.assertGreaterEqual(sleep.call_count,2)
+        self.assertEqual(navigations,['chrome://version/','about:blank'])
+        self.assertTrue(all(url=='about:blank' for snapshot,url in checkpoints if snapshot['verified']))
 
 if __name__=='__main__':unittest.main()

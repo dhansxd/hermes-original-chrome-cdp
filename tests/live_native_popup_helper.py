@@ -280,39 +280,7 @@ def main():
             manual_result = control('Runtime.evaluate', {'expression': 'window.foreignAnswer===null && window.foreignAfter===1 && document.getElementById("pw").value===""', 'returnByValue': True}, manual_session)
             assert manual_result['result'].get('value') is True, 'foreign native prompt changed'
             out['checks']['same_message_foreign_prompt_untouched'] = True
-            from vault_adapter import invoke
-            from tools import browser_vault_tool as native
-            secret = 'synthetic-only-' + secrets.token_hex(32)
-            meta = SimpleNamespace(kind='login', origin=base, allowed_origins=[base], has_otp=False, label='synthetic', id='synthetic-handle')
-            backend = SimpleNamespace(name='synthetic', needs_unlock=False, get_meta=lambda handle: meta, resolve_password=lambda handle: secret)
-            observer = entry['observer']
-            held_session = observer.sessions[parent]
-            callback = getattr(observer.wire, 'on_event', None)
-            with patch('vault_adapter.Wire', side_effect=RuntimeError('new_peer_forbidden')), patch.object(p, '_worker', side_effect=RuntimeError('worker_forbidden')), patch('agent.vault_backends.backend_for_handle', return_value=backend), patch.object(native, '_bot_desktop_browser_session', return_value=False), patch.object(native, '_fenced_page_op', side_effect=lambda task, fn: fn()):
-                raw = invoke(p, native._handle_vault, {'action': 'fill', 'handle': 'synthetic-handle'}, {'task_id': 'case'})
-            assert secret not in raw, 'vault response redaction failed'
-            filled = json.loads(raw)
-            assert filled.get('success') and filled.get('filled_fields') == 1, 'native synthetic fill failed'
-            with observer._lock:
-                value = observer.wire('Runtime.evaluate', {'expression': 'document.getElementById("pw").value === ' + json.dumps(secret), 'returnByValue': True}, held_session)['result'].get('value')
-            assert value is True, 'exact vault target fill failed'
-            assert not observer.closed and observer.sessions[parent] == held_session and getattr(observer.wire, 'on_event', None) is callback
-            manual_empty = control('Runtime.evaluate', {'expression': 'document.getElementById("pw").value === ""', 'returnByValue': True}, manual_session)['result'].get('value')
-            assert manual_empty is True, 'same-origin comparator was filled'
-            assert checked('print(js(' + repr('document.getElementById("pw").value.length') + '))', 'peer')['stdout'].strip() == '0'
-            out['checks']['native_vault_exact_target_no_new_peer_or_worker'] = True
-            out['checks']['vault_result_secret_silent_same_origin_controls_empty'] = True
-            checked('js(' + repr('setTimeout(()=>{window.afterVault=confirm("after-helper-vault")},100);true') + ')')
-            deadline = time.monotonic() + 5
-            while True:
-                info = checked('print(page_info())')
-                if 'after-helper-vault' in info['stdout']:
-                    break
-                assert time.monotonic() < deadline, 'held observer missed post-vault dialog'
-                time.sleep(.05)
-            checked('cdp("Page.handleJavaScriptDialog",accept=False)')
-            assert checked('print(js("window.afterVault === false && window.popupCount === 1"))')['stdout'].strip() == 'True'
-            out['checks']['post_helper_vault_observer_confirm_continuity'] = True
+            out['checks']['vault_page_actions_supported'] = False
         out['success'] = True
     except Exception as exc:
         # Once a synthetic secret exists, even transport exception text stays local.

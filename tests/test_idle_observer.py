@@ -48,9 +48,9 @@ class IdleObserverTests(unittest.TestCase):
                 self.calls = []
             def wire(self, *args):
                 raise AssertionError('finish bypassed serialized observer request')
-            def request(self, request, state):
-                self.calls.append(request['method'])
-                return {'value': {}}
+            def close_disposable_browser(self, state):
+                self.calls.append('Browser.close')
+                return {}
             def close(self): self.closed = True
         observer = CheckedObserver()
         provider = ChromeProvider(data='/fixture')
@@ -84,7 +84,7 @@ class IdleObserverTests(unittest.TestCase):
             # Same library/queue as production, shorter heartbeat for a tight test.
             def connection(url, data, connector):
                 return connector(url, ping_interval=.1, ping_timeout=.2, close_timeout=.2)
-            with patch('vault_adapter.connect_with_consent', connection):
+            with patch('transport.connect_with_consent', connection):
                 observer = ScopedObserver(endpoint, '/fixture/Default')
             state={'owned':{'owned':1}}
             observer.sessions={'owned':'held'}

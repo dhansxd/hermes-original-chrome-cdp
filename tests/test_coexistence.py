@@ -46,6 +46,7 @@ class SharedFinishTests(unittest.TestCase):
         self.assertEqual(result.get('browser_close_deferred'),'shared_browser')
         self.assertFalse(result['browser_closed'])
         observer.request.assert_not_called()
+        observer.close_disposable_browser.assert_not_called()
 
 
 class ScopedAttachTests(unittest.TestCase):
@@ -96,6 +97,8 @@ class ConsentCloseRaceTests(unittest.TestCase):
         entered=threading.Event();release=threading.Event();closed=threading.Event();errors=[]
         wire=Mock();wire.events=[];wire.dialogs={};wire.event_overflow=False;wire.event_gaps={};wire.detached_sessions=set()
         def response(method,params=None,session=None):
+            if method=='Target.getTargets':return {'targetInfos':[{'targetId':'owned','type':'page','browserContextId':'ctx'}]}
+            if method=='Browser.getWindowForTarget':return {'windowId':1}
             if method=='Target.closeTarget':closed.set();return {'success':True}
             return {}
         wire.side_effect=response
@@ -103,13 +106,17 @@ class ConsentCloseRaceTests(unittest.TestCase):
         def handshake():
             try:consent.connect_with_consent('ws://127.0.0.1:5000/devtools/browser/fixture',root,Mock())
             except Exception as exc:errors.append(str(exc))
+        state={'current':'owned','context':'ctx','owned':{'owned':1}}
+        def close_owned():
+            try:obs.request({'method':'Target.closeTarget','params':{'targetId':'owned'}},state)
+            except Exception as exc:errors.append(str(exc))
         with patch('observer.Wire',return_value=wire),patch.object(consent,'_connect_with_consent',side_effect=pending):
             obs=ScopedObserver('fixture',str(root/'Default'))
-            attaching=threading.Thread(target=handshake);closing=threading.Thread(target=lambda:obs.request({'method':'Target.closeTarget','params':{'targetId':'owned'}},{'owned':{'owned':1}}))
+            attaching=threading.Thread(target=handshake);closing=threading.Thread(target=close_owned)
             attaching.start()
             try:
                 self.assertTrue(entered.wait(2))
-                self.assertEqual(obs.request({'method':'Browser.getVersion'},{'owned':{'owned':1}})['value'],{})
+                self.assertEqual(obs.request({'method':'Browser.getVersion'},state)['value'],{})
                 closing.start()
                 self.assertFalse(closed.wait(.2),'target close destroyed the other client consent host')
             finally:

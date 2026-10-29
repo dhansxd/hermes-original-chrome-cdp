@@ -5,9 +5,13 @@ from websockets.sync.client import connect
 if __package__:
     from .binding import BoundBrowser
     from .consent import connect_with_consent
+    from .execution_policy import validate_source, execute_source
+    from .browser_actions import public_helpers
 else:
     from binding import BoundBrowser
     from consent import connect_with_consent
+    from execution_policy import validate_source, execute_source
+    from browser_actions import public_helpers
 
 class Wire:
     def __init__(self, endpoint, data_root=None):
@@ -126,6 +130,9 @@ def helper_namespace(browser):
     source=Path(__file__).resolve().parent/'vendor/helpers.py'
     ns={'__name__':'__browser_exec__','cdp':browser.cdp,'_send':browser.send,'AGENT_WORKSPACE':None}
     exec(compile(source.read_text(),str(source),'exec'),ns)
+    # All expressions are now plugin-owned. The vendor's arbitrary-JS syntax
+    # retry can replay a side effect on page-controlled error text; never use it.
+    ns['js']=lambda expression:ns['_runtime_evaluate'](expression,await_promise=True)
     ns['ensure_real_tab']=lambda:browser.info()
     ns['new_tab']=browser.create
     def finish(retain=()):
@@ -179,24 +186,46 @@ def initialize(wire,profile,seed_url=None,cleanup=False):
         wire('Target.closeTarget',{'targetId':target})
         raise RuntimeError('Default_profile_binding_mismatch: explicit seed was not requested Default')
     ns['goto_url']('about:blank')
+    # Page.navigate acknowledges the request before target metadata necessarily
+    # leaves chrome://version. Keep setup private until that navigation commits;
+    # model helpers must never run against the verification document.
+    blank_deadline=time.monotonic()+5
+    while browser.info().get('url')!='about:blank':
+        if time.monotonic()>=blank_deadline:
+            raise RuntimeError('Default_seed_navigation_unconfirmed: no agent page action sent')
+        time.sleep(.05)
     state['verified']=True
     checkpoint(state)
     return state
 
 
-def run(request, publish=lambda state:None, transport=None):
-    wire=None;state=request.get('state');out=io.StringIO()
+class ProgressOutput(io.StringIO):
+    """Publish bounded completed output writes independently of the final result."""
+    def __init__(self,progress=None):
+        super().__init__();self.progress=progress
+    def write(self,text):
+        written=len(text)
+        tail=(self.getvalue()+text)[-20000:]
+        self.seek(0);self.truncate(0);super().write(tail)
+        if callable(self.progress):self.progress({'stdout':tail})
+        return written
+
+
+def run(request, publish=lambda state:None, transport=None, progress=None):
+    wire=None;state=request.get('state');out=ProgressOutput(progress)
     def checkpoint(value):
         nonlocal state
         state=value;publish(state)
     try:
+        if not request.get('cleanup'):
+            validate_source(request.get('code', ''))
         wire=transport or Wire(request['endpoint'],str(Path(request['profile']).parent))
         wire.checkpoint=checkpoint
         if not state or not state.get('context'):
             state=initialize(wire,request['profile'],(state or {}).get('pending_seed') or request.get('seed_url'),cleanup=request.get('cleanup',False))
         browser=BoundBrowser(wire,state,lambda:checkpoint(state))
         if request.get('cleanup'):return {'state':state,**browser.cleanup(request.get('retain',[]))}
-        if state.get('verified') is False:raise RuntimeError('profile_binding_unverified: cleanup only')
+        if state.get('verified') is not True:raise RuntimeError('profile_binding_unverified: cleanup only')
         checkpoint(state)
         wire('Target.setDiscoverTargets',{'discover':True})
         browser.info()
@@ -205,12 +234,11 @@ def run(request, publish=lambda state:None, transport=None):
         ns=helper_namespace(browser)
         ns['__name__']='__browser_exec__'
         workspace=Path(request['workspace']);workspace.mkdir(parents=True,exist_ok=True)
-        # Existing helper workspace globals are private to this namespace.
+        # Trusted helper implementation is private; scripts receive only named
+        # GUI operations through the data-only interpreter, never this namespace.
         ns['AGENT_WORKSPACE']=workspace
-        local=workspace/'agent_helpers.py'
         with contextlib.redirect_stdout(out):
-            if local.exists():exec(compile(local.read_text(),str(local),'exec'),ns)
-            exec(compile(request['code'],'<browser_exec>','exec'),ns)
+            execute_source(request['code'], public_helpers(browser,ns,workspace),out)
         return {'success':True,'stdout':out.getvalue()[-20000:],'state':state,'backend':'original-chrome-default','workspace':str(workspace)}
     except Exception as exc:
         return {'success':False,'error':str(exc),'error_type':type(exc).__name__,'uncertain':isinstance(exc,TimeoutError) or 'observer_lost' in str(exc) or bool((state or {}).get('unresolved_creation')),'stdout':out.getvalue()[-20000:],'state':state,'backend':'original-chrome-default','action_replayed':False}
@@ -221,8 +249,10 @@ if __name__=='__main__':
     protocol=sys.stdout
     def publish(state):
         protocol.write(json.dumps({'checkpoint':state})+'\n');protocol.flush()
+    def progress(value):
+        protocol.write(json.dumps({'progress':value})+'\n');protocol.flush()
     try:
         request=json.loads(sys.stdin.readline())
-        result=run(request,publish,PipeWire(protocol,sys.stdin) if request.get('parent_transport') else None)
+        result=run(request,publish,PipeWire(protocol,sys.stdin) if request.get('parent_transport') else None,progress)
     except Exception as exc:result={'success':False,'error':str(exc),'error_type':type(exc).__name__,'action_replayed':False}
     protocol.write(json.dumps({'result':result})+'\n');protocol.flush()

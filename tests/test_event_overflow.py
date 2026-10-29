@@ -106,20 +106,31 @@ class OverflowTests(unittest.TestCase):
         self.assertEqual(set(observer.wire.event_gaps),{'a-sid','b-sid'})
         # Explicit successful retirement, not silent reset of the damaged epoch.
         original=observer.wire.ws.send
+        closed=False
         def send(text):
+            nonlocal closed
             original(text)
-            if json.loads(text)['method']=='Target.closeTarget':observer.wire.ws.frames[-1]['result']={'success':True}
+            method=json.loads(text)['method']
+            if method=='Target.closeTarget':
+                observer.wire.ws.frames[-1]['result']={'success':True};closed=True
+            elif method=='Target.getTargets' and closed:
+                observer.wire.ws.frames[-1]['result']={'targetInfos':[{'targetId':'b','browserContextId':'ctx'}]}
         observer.wire.ws.send=send
         observer.request({'method':'Target.closeTarget','params':{'targetId':'a'}},states['a'])
+        self.assertIn('a-sid',observer.wire.event_gaps,'ACK does not retire observation history')
+        observer.request({'method':'Target.getTargets'},states['a'])
         self.assertNotIn('a-sid',observer.wire.event_gaps)
         observer.wire.event({'method':'Target.detachedFromTarget','params':{'sessionId':'a-sid'}})
         self.assertNotIn('a-sid',observer.wire.detached_sessions)
         # Distinct SID is the fresh observation epoch; historical loss stays retired.
         def new_send(text):
             original(text)
-            if json.loads(text)['method']=='Target.attachToTarget':observer.wire.ws.frames[-1]['result']={'sessionId':'a-fresh'}
+            method=json.loads(text)['method']
+            if method=='Target.getTargets':observer.wire.ws.frames[-1]['result']={'targetInfos':[{'targetId':t,'browserContextId':'ctx'} for t in ('fresh','b')]}
+            if method=='Target.attachToTarget':observer.wire.ws.frames[-1]['result']={'sessionId':'a-fresh'}
         observer.wire.ws.send=new_send
-        response=observer.request({'method':'Target.attachToTarget','params':{'targetId':'a'}},states['a'])
+        states['a'].update(current='fresh',owned={'fresh':1})
+        response=observer.request({'method':'Target.attachToTarget','params':{'targetId':'fresh'}},states['a'])
         self.assertEqual(response['event_gaps']['a-fresh'],False)
         self.assertTrue(observer.wire.event_overflow) # Never silently clear diagnostic.
 

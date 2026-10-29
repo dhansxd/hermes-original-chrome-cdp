@@ -4,7 +4,6 @@ from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0,str(Path.home()/'.hermes/hermes-agent'))
-import hermes_bootstrap
 from hermes_cli.plugins import PluginContext, PluginManager
 from hermes_cli.plugins_manifest import PluginManifest
 from plugin import ChromeProvider
@@ -23,6 +22,7 @@ class LifecycleTest(unittest.TestCase):
         self.provider=ChromeProvider(data=home/'chrome-fixture')
         self.calls=[]
         self.provider.endpoint=lambda **kw:'ws://inert'
+        self.provider._prepare_observer=lambda *args,**kwargs:None # This suite uses an inert worker.
         def worker(request,timeout,**kwargs):
             self.calls.append(request)
             return {'success':True,'state':{'owned':['agent-only']}}
@@ -61,7 +61,7 @@ class LifecycleTest(unittest.TestCase):
         self.fire('on_session_end',task_id='task-b',session_id='session-b',interrupted=True)
         self.assertFalse(self.provider.states)
 
-    def test_completed_turn_preserves_manual_wait_and_unknown_task_completion(self):
+    def test_completed_turn_waits_for_pending_human_then_cleans_owned_session(self):
         self.install();self.execute()
         self.fire('on_human_input_request',session_id='session-a',request_id='wait-1',kind='clarify')
         result=self.fire('on_session_end',session_id='session-a',task_id='task-a',completed=True)
@@ -69,8 +69,10 @@ class LifecycleTest(unittest.TestCase):
         self.assertEqual(result[0]['reason'],'pending_human_input')
         self.fire('on_human_input_resolved',session_id='session-a',request_id='wait-1',outcome='answered')
         result=self.fire('on_session_end',session_id='session-a',task_id='task-a',completed=True)
-        self.assertEqual(result[0]['reason'],'turn_is_not_task_completion')
-        self.assertIn(('task-a','default'),self.provider.states)
+        self.assertEqual(result[0][0]['reason'],'turn_completed')
+        self.assertTrue(result[0][0]['success'])
+        self.assertNotIn(('task-a','default'),self.provider.states)
+        self.assertEqual(len([r for r in self.calls if r.get('cleanup')]),1)
 
     def test_failed_cleanup_is_visible_in_event_next_tool_and_output_transform(self):
         self.install();self.execute()
@@ -78,13 +80,15 @@ class LifecycleTest(unittest.TestCase):
         def receive(**payload):events.append(payload);delivered.set()
         self.ctx.subscribe('original-chrome-default:browser_cleanup',receive)
         self.provider._worker=lambda *a,**k:{'success':False,'error':'owned target missing'}
-        self.fire('on_session_finalize',session_id='session-a',reason='exit')
+        finalized=self.fire('on_session_finalize',session_id='session-a',reason='exit')
+        self.assertEqual(finalized,[{'message':'Some browser tabs could not be confirmed closed.'}])
         self.assertIn(('task-a','default'),self.provider.states)
         self.assertFalse(self.lifecycle.status('session-a')[0]['success'])
         self.assertTrue(delivered.wait(3));self.assertFalse(events[0]['success'])
         response=self.fire('transform_llm_output',session_id='session-a',response_text='Done')
-        self.assertIn('Browser cleanup failed',response[0])
-        self.assertIn('owned target missing',response[0])
+        self.assertIn('Some browser tabs could not be confirmed closed.',response[0])
+        self.assertNotIn('owned target missing',response[0])
+        self.assertIn('owned target missing',json.dumps(self.lifecycle.status('session-a')))
         self.assertTrue(self.lifecycle.status('session-a'))
 
     def test_successful_retry_clears_failure_warning(self):
@@ -108,18 +112,17 @@ class LifecycleTest(unittest.TestCase):
     def test_registered_handler_binds_actual_caller_and_returns_cleanup_notice(self):
         from plugin import register
         from tools.registry import registry
-        from tools.approval_context import set_current_session_key,reset_current_session_key
-        token=set_current_session_key('actual-route')
-        self.addCleanup(reset_current_session_key,token)
-        with patch('plugin.ChromeProvider',return_value=self.provider),patch('hermes_cli.config.read_raw_config',return_value={'browser':{'cloud_provider':'original-chrome-default'}}):
+        from gateway.session_context import scoped_session_key
+        with scoped_session_key('actual-route'),patch('plugin.ChromeProvider',return_value=self.provider),patch('hermes_cli.config.read_raw_config',return_value={'browser':{'cloud_provider':'original-chrome-default','backend':'browser-use'}}):
             register(self.ctx)
             result=json.loads(registry.dispatch('browser_exec',{'code':'print(1)'},scope=str(Path(self.tmp.name)),task_id='actual-task',session_id='actual-session'))
             self.assertTrue(result['success'])
             self.provider._worker=lambda *a,**k:{'success':False,'error':'cleanup denied'}
             self.fire('agent_loop_stopped',session_key='actual-route',reason='stop')
             result=json.loads(registry.dispatch('browser_exec',{'code':'print(2)'},scope=str(Path(self.tmp.name)),task_id='actual-task',session_id='actual-session'))
-            self.assertFalse(result['browser_cleanup'][0]['success'])
-            self.assertIn('cleanup denied',json.dumps(result['browser_cleanup']))
+            self.assertFalse(result['cleanup_complete'])
+            self.assertNotIn('browser_cleanup',result)
+            self.assertNotIn('cleanup denied',json.dumps(result))
 
     def test_cancel_waits_for_running_worker_then_closes_once(self):
         self.install();self.lifecycle.bind(task_id='task-a',session_id='session-a',session_key='route-a')

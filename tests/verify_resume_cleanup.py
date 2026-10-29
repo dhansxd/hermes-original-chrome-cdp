@@ -3,7 +3,7 @@ import json,sys,hashlib,difflib
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 import plugin
-from vault_adapter import Wire
+from transport import Wire
 p=plugin.ChromeProvider()
 plugin.verify_account(p.data,plugin.expected_account())
 assert p._chrome_processes(),'original Chrome not running'

@@ -72,13 +72,13 @@ class ObserverTests(unittest.TestCase):
 
     def test_delayed_detach_after_confirmed_close_does_not_abort_next_cleanup(self):
         class Wire:
-            def __init__(self,*args):self.events=[];self.dialogs={};self.event_overflow=False;self.pending=False
+            def __init__(self,*args):self.events=[];self.dialogs={};self.event_overflow=False;self.pending=False;self.gone=False
             def __call__(self,method,params=None,session=None):
                 if method=='Target.getTargets':
                     if self.pending:
                         self.events.append({'method':'Target.detachedFromTarget','params':{'sessionId':'held'},'session_id':None})
-                        self.pending=False
-                    return {'targetInfos':[{'targetId':'owned','browserContextId':'ctx','type':'page'}]}
+                        self.pending=False;self.gone=True
+                    return {'targetInfos':[] if self.gone else [{'targetId':'owned','browserContextId':'ctx','type':'page'}]}
                 if method=='Browser.getWindowForTarget':return {'windowId':1}
                 if method=='Target.attachToTarget':return {'sessionId':'held'}
                 if method=='Target.closeTarget':self.pending=True;return {'success':True}
@@ -89,6 +89,7 @@ class ObserverTests(unittest.TestCase):
             observer=ScopedObserver('fixture','/fixture/Default')
             observer.request({'method':'Target.attachToTarget','params':{'targetId':'owned'}},state)
             observer.request({'method':'Target.closeTarget','params':{'targetId':'owned'}},state)
+            self.assertIn('owned',observer.sessions,'ACK alone must not retire the held session')
             try:observer.request({'method':'Target.getTargets'},state)
             except RuntimeError as e:self.fail(str(e))
             self.assertFalse(observer.closed)
@@ -98,7 +99,11 @@ class ObserverTests(unittest.TestCase):
         from unittest.mock import Mock
         state={'current':'owned','context':'ctx','owned':{'owned':1}}
         wire=Mock();wire.events=[];wire.dialogs={};wire.event_overflow=False;wire.event_gaps={};wire.detached_sessions=set()
-        wire.return_value={'success':False}
+        def respond(method,params=None,session=None):
+            if method=='Target.getTargets':return {'targetInfos':[{'targetId':'owned','browserContextId':'ctx','type':'page'}]}
+            if method=='Browser.getWindowForTarget':return {'windowId':1}
+            return {'success':False}
+        wire.side_effect=respond
         with patch('observer.Wire',return_value=wire):
             observer=ScopedObserver('fixture','/fixture/Default');observer.sessions={'owned':'held'}
             observer.request({'method':'Target.closeTarget','params':{'targetId':'owned'}},state)
@@ -106,14 +111,14 @@ class ObserverTests(unittest.TestCase):
 
     def test_held_wire_is_secret_silent_from_connection_creation(self):
         import logging
-        import vault_adapter
+        import transport
         from unittest.mock import Mock
         logger=logging.getLogger('websockets.client')
         before=(logger.level,logger.propagate,list(logger.handlers))
         connect=Mock(return_value=object())
         def consent(endpoint,data,connector):
             return connector(endpoint)
-        with patch.object(vault_adapter,'connect',connect), patch.object(vault_adapter,'connect_with_consent',consent):
+        with patch.object(transport,'connect',connect), patch.object(transport,'connect_with_consent',consent):
             observer=ScopedObserver('fixture','/fixture/Default')
         silent=connect.call_args.kwargs['logger']
         self.assertFalse(silent.propagate)

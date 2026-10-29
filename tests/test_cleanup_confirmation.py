@@ -85,7 +85,8 @@ class CleanupConfirmationTests(unittest.TestCase):
         self.assertTrue(result['success'],result)
         self.assertEqual(observations,3)
         self.assertEqual(sleep.call_count,2)
-        self.assertEqual(checkpoints,[{}])
+        self.assertEqual(checkpoints[-1],{})
+        self.assertTrue(all(snapshot=={'owned':7} for snapshot in checkpoints[:-1]))
         self.assertEqual(sum(m=='Target.closeTarget' for m,p in calls),1)
         self.assertEqual(set(live),{'manual'})
 
@@ -135,7 +136,8 @@ class CleanupConfirmationTests(unittest.TestCase):
         self.assertFalse(result['success'],result)
         self.assertEqual(result['state']['owned'],{'owned':7})
         self.assertEqual(result['cleanup_errors']['owned']['code'],'close_not_observed')
-        self.assertEqual(checkpoints,[{'owned':7}])
+        self.assertTrue(checkpoints)
+        self.assertTrue(all(snapshot=={'owned':7} for snapshot in checkpoints))
         self.assertEqual(sum(m=='Target.closeTarget' for m,p in calls),1)
 
 

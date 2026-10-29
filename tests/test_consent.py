@@ -74,7 +74,8 @@ class HandshakeTests(unittest.TestCase):
         backend=consent.MacConsent('/fixture',port,'/devtools/browser/queue')
         backend.prepare=Mock(return_value=[]);backend.scan=Mock(return_value=[]);backend.cleanup_abandoned=Mock()
         def completed(*args,**kwargs):
-            ws=connect(*args,**kwargs,max_queue=1,ping_interval=10,ping_timeout=1,close_timeout=.1)
+            kwargs['close_timeout']=.1
+            ws=connect(*args,**kwargs,max_queue=1,ping_interval=10,ping_timeout=1)
             retained.append(ws);deadline=time.monotonic()+1
             while not ws.recv_flow_control.locked()and time.monotonic()<deadline:time.sleep(.001)
             self.assertTrue(ws.recv_flow_control.locked(),'fixture must block the library receive queue')
@@ -188,10 +189,12 @@ class HandshakeTests(unittest.TestCase):
         from unittest.mock import patch,Mock
         b=Mock(spec=['scan','hosts','press','correlate']);b.scan.side_effect=consent.ConsentError('consent_ax_read:-25202')
         attach=Mock()
-        with patch('consent.time.monotonic',side_effect=[0,0,2]),patch('consent.time.sleep'):
-            with self.assertRaisesRegex(consent.ConsentError,'consent_preflight_failed.*-25202'):
+        clock=[0]
+        def advance(_):clock[0]+=2
+        with patch('consent.time.monotonic',side_effect=lambda:clock[0]),patch('consent.time.sleep',side_effect=advance):
+            with self.assertRaisesRegex(consent.ConsentError,'consent_deadline: phase=preflight'):
                 consent.connect_with_consent('ws://127.0.0.1:5000/devtools/browser/id','/fixture',attach,backend=b,timeout=1)
-        self.assertEqual(b.scan.call_count,2);attach.assert_not_called();b.press.assert_not_called()
+        self.assertGreaterEqual(b.scan.call_count,1);attach.assert_not_called();b.press.assert_not_called()
 
     def test_invalid_snapshot_during_pending_attach_does_not_restart_handshake(self):
         from unittest.mock import patch
@@ -323,26 +326,13 @@ class WorkerTests(unittest.TestCase):
             attach.assert_called_once_with('ws://127.0.0.1:5000/devtools/browser/id','/fixture',worker.connect)
 
 class NativeTests(unittest.TestCase):
-    def test_both_script_guards_retain_the_pid_predicate(self):
-        # Static tripwire for the behavior exercised by live_consent_process_identity.
-        selector='set p to a reference to (first application process whose unix id is hostPid)'
-        self.assertEqual(consent.PRESS_SCRIPT.count(selector),2)
-        self.assertNotIn('set p to first application process',consent.PRESS_SCRIPT)
-        self.assertEqual(consent.PRESS_SCRIPT.count('(bundle identifier of p as text) is not expectedBundle'),2)
-        self.assertEqual(consent.PRESS_SCRIPT.count('(unix id of p) is not hostPid'),2)
-
-    def test_press_uses_pid_scoped_applescript_and_checks_clicked_receipt(self):
-        from unittest.mock import patch,Mock
-        sheet={'pid':42,'bundle':'com.google.Chrome','name':'','headings':['Izinkan proses debug jarak jauh?'],'buttons':['Izinkan']}
+    def test_press_rejects_unbound_sheet_without_starting_other_process(self):
+        from unittest.mock import patch
         ax=object.__new__(consent.AX)
-        with patch('consent.subprocess.run',return_value=Mock(returncode=0,stdout='clicked',stderr='')) as run:
-            ax.press(sheet)
-            argv=run.call_args.args[0]
-            self.assertEqual(argv[0:2],['osascript','-e'])
-            self.assertEqual(argv[-2:],['42','com.google.Chrome'])
-        with patch('consent.subprocess.run',return_value=Mock(returncode=0,stdout='not-found',stderr='')):
-            with self.assertRaisesRegex(consent.ConsentError,'consent_press_not_confirmed'):
-                ax.press(sheet)
+        sheet={'pid':42,'name':'Allow remote debugging?','headings':[],'buttons':['Allow']}
+        with patch('consent.subprocess.run') as launch:
+            with self.assertRaisesRegex(consent.ConsentError,'consent_sheet_unbound'):ax.press(sheet)
+        launch.assert_not_called()
 
     def test_pending_attach_rechecked_immediately_before_ax_press(self):
         from unittest.mock import Mock
@@ -382,53 +372,14 @@ class NativeTests(unittest.TestCase):
                 consent.MacConsent('/fixture',5000).scan()
 
 class CancelIsolationTests(unittest.TestCase):
-    def test_distinct_questions_never_cancel_either_sheet(self):
+    def test_unclaimed_orphan_never_cancelled_even_without_peers(self):
         from unittest.mock import Mock
-        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],
-               'buttons':['Allow','Cancel'],'elements':{'Cancel':123}}
-        backend=consent.MacConsent('/fixture',5000);backend.ax=Mock()
-        backend.ax.ax.AXUIElementPerformAction.return_value=0
-        backend.scan=lambda:[sheet,dict(sheet,key=(42,2))]
-        backend.no_peers=lambda:True;backend.processes={42:{'kind':'main','bound':True}}
-        with self.assertRaisesRegex(consent.ConsentError,'consent_cancel_ambiguous'):
-            backend.cancel_sheet(sheet,orphan=True)
-        backend.ax.ax.AXUIElementPerformAction.assert_not_called()
-
-    def test_cancel_does_not_report_success_while_exact_sheet_remains(self):
-        from unittest.mock import Mock,patch
-        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],
-               'buttons':['Allow','Cancel'],'elements':{'Cancel':123}}
-        backend=consent.MacConsent('/fixture',5000);backend.ax=Mock()
-        backend.ax.ax.AXUIElementPerformAction.return_value=0
-        backend.scan=lambda:[sheet];backend.no_peers=lambda:True
-        backend.processes={42:{'kind':'main','bound':True}}
-        with patch('consent.time.monotonic',side_effect=[0,1]),patch('consent.time.sleep'):
-            with self.assertRaisesRegex(consent.ConsentError,'consent_cancel_not_dismissed'):
-                backend.cancel_sheet(sheet,orphan=True)
-        backend.ax.ax.AXUIElementPerformAction.assert_called_once()
-
-    def test_cancel_returns_only_after_exact_sheet_disappears(self):
-        from unittest.mock import Mock
-        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],
-               'buttons':['Allow','Cancel'],'elements':{'Cancel':123}}
-        backend=consent.MacConsent('/fixture',5000);backend.ax=Mock()
-        backend.ax.ax.AXUIElementPerformAction.return_value=0
-        backend.scan=Mock(side_effect=[[sheet],[]]);backend.no_peers=lambda:True
-        backend.processes={42:{'kind':'main','bound':True}}
-        backend.cancel_sheet(sheet,orphan=True)
-        backend.ax.ax.AXUIElementPerformAction.assert_called_once()
-        self.assertEqual(backend.scan.call_count,2)
-
-    def test_unknown_peer_prevents_cancellation(self):
-        from unittest.mock import Mock
-        sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],
-               'buttons':['Allow','Cancel'],'elements':{'Cancel':123}}
-        backend=consent.MacConsent('/fixture',5000);backend.ax=Mock()
-        backend.scan=lambda:[sheet];backend.no_peers=lambda:False
-        backend.processes={42:{'kind':'main','bound':True}}
-        with self.assertRaisesRegex(consent.ConsentError,'consent_preexisting'):
-            backend.cancel_sheet(sheet,orphan=True)
-        backend.ax.ax.AXUIElementPerformAction.assert_not_called()
+        backend=consent.MacConsent('/fixture',5000)
+        backend.ax=Mock();backend.no_peers=Mock(return_value=True)
+        with self.assertRaisesRegex(consent.ConsentError,'consent_cancel_not_owned'):
+            backend.cancel_sheet({'key':(42,1)},orphan=True)
+        backend.ax.press.assert_not_called()
+        backend.no_peers.assert_not_called()
 
 class StalePreflightTests(unittest.TestCase):
     def test_preexisting_prompt_blocks_before_new_handshake(self):
@@ -438,14 +389,13 @@ class StalePreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(consent.ConsentError,'preexisting'):
             consent.connect_with_consent('ws://127.0.0.1:5000/devtools/browser/id','/fixture',attach,backend=backend,timeout=1)
         attach.assert_not_called()
-    def test_orphan_cleanup_never_approves_and_preserves_other_dialogs(self):
+    def test_preexisting_orphan_is_preserved_without_attribution(self):
         from unittest.mock import Mock
         sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],'buttons':['Allow','Cancel']}
-        unrelated=dict(sheet,key=(42,2),name='Save password?',buttons=['Save'])
         b=consent.MacConsent('/fixture',5000,'/devtools/browser/id')
-        b.scan=Mock(side_effect=[[sheet,unrelated],[unrelated]]);b.no_peers=Mock(return_value=True);b.cancel_sheet=Mock()
-        b.prepare()
-        b.cancel_sheet.assert_called_once_with(sheet,orphan=True);self.assertEqual(b.scan.call_count,2)
+        b.scan=Mock(return_value=[sheet]);b.no_peers=Mock(return_value=True);b.cancel_sheet=Mock()
+        with self.assertRaisesRegex(consent.ConsentError,'preexisting'):b.prepare()
+        b.cancel_sheet.assert_not_called();b.no_peers.assert_not_called()
     def test_existing_peer_prevents_orphan_cleanup(self):
         from unittest.mock import Mock
         sheet={'key':(42,1),'pid':42,'name':'Allow remote debugging?','headings':[],'buttons':['Allow','Cancel']}
