@@ -174,7 +174,8 @@ class ScopedObserver:
         if not isinstance(request,dict):raise RuntimeError('cdp_request_invalid')
         params=request.get('params')
         validate_cdp(request.get('method'),{} if params is None else params,state,self.sessions,request.get('session'),transport=True)
-        guard=consent_guard(self.data_root) if request['method']=='Target.closeTarget' else nullcontext()
+        guard=consent_guard(self.data_root) if request['method'] in {
+            'Target.closeTarget','Target.activateTarget','Target.createTarget'} else nullcontext()
         with guard,self._lock:return self._request(request,state)
 
     def _request(self, request, state):

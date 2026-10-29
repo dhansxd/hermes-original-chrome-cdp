@@ -15,7 +15,7 @@ import threading
 
 
 DEPENDENCIES=('worker.py','binding.py','consent.py','execution_policy.py',
-              'browser_actions.py','cdp_policy.py','cdp_peers.py','vendor/helpers.py')
+              'browser_actions.py','cdp_policy.py','cdp_peers.py','gui_lease.py','vendor/helpers.py')
 OPTIONAL_DEPENDENCIES=('vendor/LICENSE.browser-harness',)
 
 

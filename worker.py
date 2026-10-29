@@ -237,11 +237,12 @@ def run(request, publish=lambda state:None, transport=None, progress=None):
         # Trusted helper implementation is private; scripts receive only named
         # GUI operations through the data-only interpreter, never this namespace.
         ns['AGENT_WORKSPACE']=workspace
-        with contextlib.redirect_stdout(out):
-            execute_source(request['code'], public_helpers(browser,ns,workspace),out)
+        with contextlib.ExitStack() as leases, contextlib.redirect_stdout(out):
+            execute_source(request['code'], public_helpers(browser,ns,workspace,
+                profile=request['profile'],lease_stack=leases),out)
         return {'success':True,'stdout':out.getvalue()[-20000:],'state':state,'backend':'original-chrome-default','workspace':str(workspace)}
     except Exception as exc:
-        return {'success':False,'error':str(exc),'error_type':type(exc).__name__,'uncertain':isinstance(exc,TimeoutError) or 'observer_lost' in str(exc) or bool((state or {}).get('unresolved_creation')),'stdout':out.getvalue()[-20000:],'state':state,'backend':'original-chrome-default','action_replayed':False}
+        return {'success':False,'error':str(exc),'error_type':type(exc).__name__,'retryable':False,'uncertain':isinstance(exc,TimeoutError) or 'observer_lost' in str(exc) or bool((state or {}).get('unresolved_creation')),'stdout':out.getvalue()[-20000:],'state':state,'backend':'original-chrome-default','action_replayed':False}
     finally:
         if wire:wire.close()
 

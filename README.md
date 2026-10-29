@@ -121,3 +121,9 @@ The regression runner uses inert browser transports, an isolated Hermes home, an
 The installation regression dispatches the official CLI against a disposable local Git source and Hermes home, including real registration, disable/re-enable, and uninstall. It checks that native handlers remain intact, the plugin's own tools disappear after removal, and global browser suppression survives uninstall. It replaces PM's dependency-environment solve/publication with a fixture while retaining its manifest checks, so it does not claim to test dependency installation. A passing runtime `doctor` or manifest validation does not imply catalog acceptance or compatibility with every future Hermes release.
 
 Vendored browser helper code retains its [upstream license](vendor/LICENSE.browser-harness). The repository's current source and tests are the behavior reference.
+
+## Cooperation with Flow
+
+GUI batches on Flow share a process-safe lease with the companion Flow service, keyed by the verified original profile. Flow URL aliases use one key. Other sites remain independent. Each script releases its leases on completion, exception, or process exit; a busy batch is not replayed automatically. Runtime source snapshots include the lease helper.
+
+This is cooperative coordination, not a separate login session. Manual activity and other programs do not honor the lease. Navigation through a redirect may reach Flow before its destination is known; subsequent GUI helpers check the actual origin before acting. The plugin continues to own and clean only its own targets.

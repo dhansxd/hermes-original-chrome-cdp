@@ -10,9 +10,11 @@ from pathlib import Path
 if __package__:
     from .execution_policy import HELPERS, PolicyError
     from .cdp_policy import validate_navigation_url
+    from . import gui_lease
 else:
     from execution_policy import HELPERS, PolicyError
     from cdp_policy import validate_navigation_url
+    import gui_lease
 
 
 def navigation_url(value):
@@ -37,9 +39,18 @@ def selector_text(value):
     return value
 
 
-def public_helpers(browser, trusted, workspace):
+def public_helpers(browser, trusted, workspace, profile=None, lease_stack=None):
     """The interpreter sees only these callables and their plain-data results."""
     workspace = Path(workspace)
+    leases = {}
+
+    def reserve_origin(url):
+        origin = gui_lease.origin_for_url(url)
+        if origin is None or origin in leases:
+            return
+        if profile is None or lease_stack is None:
+            raise PolicyError('browser_profile_unverified_for_shared_gui')
+        leases[origin] = lease_stack.enter_context(gui_lease.acquire(profile, origin, timeout=15))
 
     def page_guard():
         url=browser.info().get('url','')
@@ -57,6 +68,7 @@ def public_helpers(browser, trusted, workspace):
                               'chrome-extension','devtools','file','data','javascript','missing'}:
                 scheme='other'
             raise PolicyError('browser_document_not_allowed: scheme='+scheme) from None
+        reserve_origin(url)
 
     def wrap_page(fn):
         def guarded(*args, **kwargs):
@@ -65,7 +77,9 @@ def public_helpers(browser, trusted, workspace):
         return guarded
 
     def goto_url(url):
-        result=browser.cdp('Page.navigate', url=navigation_url(url))
+        url=navigation_url(url)
+        reserve_origin(url)
+        result=browser.cdp('Page.navigate', url=url)
         if not isinstance(result,dict):raise RuntimeError('browser_navigation_failed: invalid_response')
         if result.get('errorText'):
             error=result['errorText']
@@ -74,7 +88,9 @@ def public_helpers(browser, trusted, workspace):
         return result
 
     def new_tab(url='about:blank'):
-        return browser.create(navigation_url(url))
+        url=navigation_url(url)
+        reserve_origin(url)
+        return browser.create(url)
 
     def read_page(selector='body', limit=12000):
         selector = selector_text(selector)
@@ -208,7 +224,8 @@ def public_helpers(browser, trusted, workspace):
                    switch_tab=switch_tab,finish_browser=finish_browser)
     for name in ('page_info', 'read_page', 'click_element', 'click_at_xy',
                  'capture_screenshot', 'type_text', 'fill_input', 'press_key',
-                 'scroll', 'wait_for_load', 'wait_for_element', 'wait_for_network_idle'):
+                 'scroll', 'wait_for_load', 'wait_for_element', 'wait_for_network_idle',
+                 'answer_dialog'):
         actions[name] = wrap_page(actions[name])
     assert set(actions) == HELPERS
     return actions
