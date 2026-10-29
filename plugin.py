@@ -89,6 +89,27 @@ def gui_launch(data,seed_url=None):
     if gui_identity()!=destination:raise RuntimeError('safe_GUI_launch_unavailable: GUI destination changed')
 
 
+def seed_window_ready(pid,seed_url):
+    # A live listener can outlast its final window; approval needs a modal host.
+    if __package__:
+        from .consent import AX,ConsentError
+    else:
+        from consent import AX,ConsentError
+    ax=AX()
+    try:
+        if not ax.trusted():raise ConsentError('consent_accessibility: grant Accessibility manually; no permission change attempted')
+        app=ax.ax.AXUIElementCreateApplication(pid);ax.refs.append(app)
+        ax.ax.AXUIElementSetMessagingTimeout(app,.25)
+        values=ax.attr(app,'AXWindows')
+        windows=[ax.cf.CFArrayGetValueAtIndex(values,i) for i in range(ax.cf.CFArrayGetCount(values))] if values else []
+        matches=[w for w in windows if ax.text(w,'AXSubrole')=='AXStandardWindow' and ax.text(w,'AXDocument')==seed_url]
+        return len(matches)==1
+    except ConsentError as exc:
+        if str(exc) in {'consent_ax_read:-25202','consent_ax_read:-25204'}:return False
+        raise
+    finally:ax.clear()
+
+
 class ChromeProvider(BrowserProvider):
     name=NAME
     display_name='Original headed Chrome · Default'
@@ -128,7 +149,7 @@ class ChromeProvider(BrowserProvider):
         entry['state']={'pending_seed':seed_url,'owned':{},'verified':False}
         gui_launch(self.data,seed_url)
         import psutil
-        deadline=time.monotonic()+20
+        deadline=time.monotonic()+20;waiting_for_seed=False
         while time.monotonic()<deadline:
             try:
                 lines=(self.data/'DevToolsActivePort').read_text().splitlines()
@@ -147,8 +168,15 @@ class ChromeProvider(BrowserProvider):
                         if process.create_time()==started:owners.append(process.pid)
                 if len(owners)!=1 or (self.data/'DevToolsActivePort').read_text().splitlines()!=lines:
                     raise ValueError('endpoint not published by current browser generation')
+                waiting_for_seed=True
+                if not seed_window_ready(owners[0],seed_url):
+                    time.sleep(.05);continue
+                # AX readiness may take time; do not return a replaced endpoint.
+                if (self.data/'DevToolsActivePort').read_text().splitlines()!=lines:
+                    raise ValueError('endpoint changed during window readiness')
                 return f'ws://127.0.0.1:{port}{path}'
             except (OSError,ValueError,IndexError,psutil.Error):time.sleep(.2)
+        if waiting_for_seed:raise RuntimeError('Default_seed_window_unavailable: exact owned GUI seed not ready; no connection opened or launch replay')
         raise RuntimeError('Chrome_endpoint_unavailable: enable chrome://inspect/#remote-debugging; no headless fallback used')
     def _key(self,args,task_id):
         session=args.get('session') or 'default'

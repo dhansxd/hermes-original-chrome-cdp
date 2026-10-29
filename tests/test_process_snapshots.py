@@ -68,7 +68,7 @@ class ProcessSnapshotTests(unittest.TestCase):
             error = None
             endpoint = None
             with patch('psutil.process_iter', return_value=[proc]), \
-                    patch('plugin.gui_launch'), patch('plugin.chrome_executable', return_value=True):
+                    patch('plugin.gui_launch'), patch('plugin.seed_window_ready', return_value=True), patch('plugin.chrome_executable', return_value=True):
                 try:
                     endpoint = provider.endpoint(entry={})
                 except Exception as exc:
