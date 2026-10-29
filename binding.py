@@ -176,6 +176,9 @@ class BoundBrowser:
                 break
             time.sleep(.05)
         self.checkpoint()
+        # Confirmation can checkpoint opener-linked children after the close
+        # snapshot. Account for all final ownership without issuing more closes.
+        remaining=list(self.state['owned'])
         unresolved=self.state.get('unresolved_creation',False)
         result={'remaining_owned_targets':remaining,'unresolved_creation':unresolved,'success':not remaining and not unresolved}
         if errors:result['cleanup_errors']=errors
