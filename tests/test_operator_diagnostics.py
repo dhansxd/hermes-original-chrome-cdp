@@ -48,10 +48,10 @@ class OperatorDiagnosticTests(unittest.TestCase):
         with patch('plugin.ChromeProvider',return_value=provider),patch('plugin.BrowserLifecycle') as lifecycle:
             lifecycle.return_value.status.return_value=[]
             plugin.register(ctx)
-        call=next(c for c in ctx.register_tool.call_args_list if c.kwargs['name']=='browser_exec')
+        call=next(c for c in ctx.register_tool.call_args_list if c.kwargs['name']=='browser_original_chrome_exec')
         self.assertNotIn('_diagnostic_sink',json.dumps(call.kwargs['schema']))
         sink=[]
-        with patch('plugin.browser_config',return_value={'cloud_provider':plugin.NAME,'backend':'browser-use'}):
+        with patch('plugin.browser_config',return_value={'cloud_provider':plugin.NAME,'backend':'browser-use'}),patch('plugin.native_browser_tools_disabled',return_value=True):
             result=json.loads(call.kwargs['handler']({'code':'pass'},task_id='synthetic-task',
                 session_id='synthetic-session',_diagnostic_sink=sink.append))
         self.assertEqual(len(sink),1)

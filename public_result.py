@@ -36,7 +36,7 @@ def _error(result):
     if code.startswith(('consent_','native_dialog_accessibility','safe_GUI_',
                         'accessibility_','Default_','Chrome_endpoint_',
                         'account_binding_','browser_configuration_',
-                        'browser_provider_','browser_backend_','plugin_capability_')):
+                        'browser_provider_','browser_backend_','browser_native_','plugin_capability_')):
         return 'browser_unavailable','The browser is unavailable. Its configuration or permissions need operator attention.'
     if result.get('uncertain') is True:
         return 'browser_outcome_unknown','The preceding browser action could not be confirmed. Do not repeat its uncertain actions; preserve partial findings and follow the recovery guidance to continue research.'
@@ -65,14 +65,18 @@ def _error(result):
     return 'browser_action_failed','The browser action failed. Inspect the current page before continuing.'
 
 
-def model_result(result,cleanup_reports=(),scrub=lambda value:value):
-    """Allowlist result data. Never alter the provider's private state/report."""
+def model_result(result,cleanup_reports=()):
+    """Allowlist result fields; preserve requested output without text filtering.
+
+    This is a presentation boundary, not a secret redactor. Provider state and
+    operator diagnostics are excluded, and the private input is never mutated.
+    """
     if not isinstance(result,dict):
         result={'success':False,'error':'invalid_browser_result','uncertain':True}
     public={'success':result.get('success') is True,
             'fallback_used':result.get('fallback_used') is True,
             'action_replayed':result.get('action_replayed') is True}
-    if isinstance(result.get('stdout'),str):public['stdout']=scrub(result['stdout'])
+    if isinstance(result.get('stdout'),str):public['stdout']=result['stdout']
     if isinstance(result.get('uncertain'),bool):public['uncertain']=result['uncertain']
     recovery=_recovery(result.get('recovery'),public['success'])
     if recovery is not None:public['recovery']=recovery
@@ -84,8 +88,7 @@ def model_result(result,cleanup_reports=(),scrub=lambda value:value):
         public['notice']='Some browser tabs could not be confirmed closed.'
     if result.get('cleanup_only'):
         public['cleanup_complete']=public['success'] and not cleanup_failed
-    # A screenshot is an artifact of the browser operation, not a diagnostic.
-    # Do not rewrite binary/data-URL image blocks with a text-secret regex.
+    # Keep the screenshot's binary/data-URL payload unchanged.
     blocks=result.get('content') if isinstance(result.get('content'),list) else []
     images=[copy.deepcopy(block) for block in blocks if
             isinstance(block,dict) and block.get('type') in {'image','image_url','input_image'}]
@@ -95,5 +98,5 @@ def model_result(result,cleanup_reports=(),scrub=lambda value:value):
                     content=[{'type':'text','text':summary}]+images)
     # Preserve a standalone screenshot artifact until a caller supplies the
     # native image envelope. No filesystem reads/path discovery happen here.
-    if isinstance(result.get('screenshot_path'),str):public['screenshot_path']=scrub(result['screenshot_path'])
+    if isinstance(result.get('screenshot_path'),str):public['screenshot_path']=result['screenshot_path']
     return public

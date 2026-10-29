@@ -9,13 +9,11 @@ This is a personal build: production use is restricted to the account allowlist 
 - macOS with a logged-in Aqua desktop and Google Chrome at `/Applications/Google Chrome.app`.
 - Chrome 144 or newer with remote debugging enabled by the operator at `chrome://inspect/#remote-debugging`. Chrome asks permission for new debugging connections.
 - Accessibility permission for the process that actually runs Hermes. A successful check in Terminal does not establish permission for a gateway, or vice versa.
-- The plugin enabled in the intended Hermes profile, with the `tools.override` capability granted through Hermes.
+- The plugin and its `original_chrome` toolset enabled in the intended Hermes profile. Version 0.3.0 registers `browser_original_chrome_exec` and `browser_original_chrome_vault`; it does not replace native tools or request `tools.override`.
 - Browser provider `original-chrome-default` and the expected account configured below. Current Hermes selects the provider through `browser.cloud_provider`; a legacy `browser.backend: browser-use` is accepted, but is not required.
-- Both the `browser` and `terminal` toolsets enabled in the agent session. Installed Hermes gates `browser_exec` on terminal availability even though this plugin's browser script cannot execute shell commands.
+- Both `browser` and `browser-use` listed in `agent.disabled_toolsets`. The plugin refuses browser work if either entry is missing. Its own toolset does not require the `terminal` toolset.
 
-The installed Hermes build is the compatibility reference. Browser and lifecycle integration use registered tools, the browser-provider API, and plugin hooks. Forced output redaction still calls Hermes's internal `agent.redact` utility because the installed public API has no equivalent. Compatibility with arbitrary Hermes versions, catalog approval, and other operating systems are not claimed.
-
-Hermes documents [granted built-in tool overrides](https://hermes-agent.nousresearch.com/docs/developer-guide/plugins/#overriding-a-built-in-tool), which this plugin needs for `browser_exec` and `browser_vault`. In the checked core revision `67d47601bc5f8ed322451a672c843ed0e1a7c42c`, the catalog validator still rejects those two declared names as built-in collisions, even with `tools.override` declared. This is an outstanding catalog-admission limitation. The official Git install, enable, and runtime doctor paths use separate checks; the manifest keeps the actual tool names visible.
+The installed Hermes build is the compatibility reference. Browser and lifecycle integration use registered tools, the browser-provider API, plugin hooks, and the public tool dispatcher. Tool schemas are bundled with this plugin. It does not change Hermes core or import Hermes's internal secret redactor. Compatibility with arbitrary future Hermes versions, catalog approval, and other operating systems are not claimed.
 
 ## Install and select
 
@@ -27,13 +25,17 @@ hermes plugins enable original-chrome-default
 hermes tools
 ```
 
-Accept the declared dependency and capability prompts only when you intend to enable them. In Browser Automation, select **Original headed Chrome · Default**. The row is available after the plugin has loaded with its required grant.
+In the tools picker, select **Original headed Chrome · Default** as the browser provider and enable the plugin's **original_chrome** toolset for the intended platform. Install the declared dependencies through Hermes. No tool-override capability grant is required.
 
-The resulting browser settings and the plugin's profile-local setting are:
+Provider selection alone is insufficient. In that Hermes profile's configuration, retain the following settings, preserving other disabled toolsets and unrelated entries:
 
 ```yaml
 browser:
   cloud_provider: original-chrome-default
+agent:
+  disabled_toolsets:
+    - browser
+    - browser-use
 plugins:
   entries:
     original-chrome-default:
@@ -41,7 +43,9 @@ plugins:
         expected_account: "<account approved by this build>"
 ```
 
-Hermes owns the enabled list and capability grants; use its commands and consent flow to change them. Preserve other configuration entries. After a plugin change, start a new agent session so its tool definitions reflect the loaded code.
+Hermes owns plugin activation and the platform tool selection; use its commands to change them. The two global suppression entries keep native browser tools out of model sessions, including after this plugin is disabled or removed. The tools picker can change these entries when native browser groups are re-enabled, so verify them after changing tool selection. Read-only status reports `native_browser_tools_disabled`; it must be true. Start a new agent session after changing plugin or tool configuration.
+
+For migration from 0.2.x, install the reviewed 0.3.0 revision, enable `original_chrome`, and add both suppression entries. Replace saved calls to `browser_exec` or `browser_vault` with `browser_original_chrome_exec` or `browser_original_chrome_vault`. An old `tools.override` grant is no longer used; inspect remaining grants with `hermes plugins capabilities original-chrome-default`. Existing session definitions must be refreshed with a new session.
 
 ```sh
 hermes plugins disable original-chrome-default
@@ -49,15 +53,15 @@ hermes plugins enable original-chrome-default
 hermes plugins uninstall original-chrome-default
 ```
 
-These are the official disable, re-enable, and removal paths. If switching away from this provider, select the replacement through `hermes tools` as well; browser selection is separate from the plugin's own settings.
+These are the official disable, re-enable, and removal paths. Disable/removal unregisters only this plugin's tools. The native browser and vault handlers remain unchanged, and Hermes retains `agent.disabled_toolsets` in the profile configuration after uninstall. Browser provider selection is also retained separately.
 
 Before opening a window, the plugin prepares a private snapshot of its worker code. This contains plugin source only, never a Chrome profile or cookies. While browser resources exist, a small watcher detects sustained removal of the installed source. It cancels this provider's script workers, cleans owned windows using the prepared code, releases its journal leases, and stops. Normal disable/reload also performs this cleanup through `on_unload`. Cleanup still reports uncertainty if ownership or closure cannot be proved. No browser process is killed.
 
-Disabling or uninstalling removes this plugin's enforcement and restores Hermes's native browser handler. Leaving `browser.cloud_provider: original-chrome-default` in the config does **not** enforce original Chrome once the plugin is absent: the checked Hermes version catches the missing-provider error and can route to its local browser resolver. If alternate browser execution must remain prohibited, disable browser tools through `hermes tools` before disabling or removing this plugin, then start a new agent session. The plugin leaves no hidden guard active after removal.
+Keep the native suppression entries when disabling or uninstalling if browser execution must remain unavailable. The plugin leaves no hidden guard after removal; the persistent restriction belongs to Hermes configuration. To intentionally switch to a native browser provider, select its provider and tools through Hermes, explicitly change the suppression entries, and start a new session. Provider selection alone is not a fallback-prevention mechanism. This policy applies to the configured profile and current native browser tool groups, not every future plugin or browser-like tool.
 
 ## Normal browser work
 
-Ask the Hermes agent to browse normally. `browser_exec` accepts a bounded Python-like script with named browser helpers, assignments, loops, conditions, and plain data. It does not execute arbitrary Python, imports, filesystem/process/network calls, raw JavaScript, or raw CDP supplied by the agent.
+Ask the Hermes agent to browse with `browser_original_chrome_exec`. It accepts a bounded Python-like script with named browser helpers, assignments, loops, conditions, and plain data. It does not execute arbitrary Python, imports, filesystem/process/network calls, raw JavaScript, or raw CDP supplied by the agent.
 
 For example, a tool call can use:
 
@@ -67,7 +71,7 @@ wait_for_load(timeout=10)
 print(read_page(limit=2000))
 ```
 
-Other helpers cover visible controls, click/type/scroll, screenshots, owned tabs, and explicit dialog answers. The loaded tool description lists their exact signatures. Reuse the same `session` name for related calls within a turn; ownership is also scoped by the calling task, so separate agents do not share their owned tabs.
+Other helpers cover visible controls, click/type/scroll, screenshots, owned tabs, and explicit dialog answers. The loaded tool description lists their exact signatures. Reuse the same `session` name for related calls within a turn; ownership is also scoped by the calling task, so separate agents do not share their owned tabs. They still share the original Chrome profile and its login state: a website login or logout in one owned window can affect other windows using that profile.
 
 Owned windows are short-lived. They are cleaned when the run ends successfully, fails, is interrupted, or its Hermes session is finalized. A tracked host human-input wait defers ordinary end-of-run cleanup; interruption still cancels it. The next turn can open a fresh owned session using the same original Chrome login. This policy follows the host's run outcome, not a guess about whether the conversation's overall research goal is complete. An explicit `finish_browser()` remains available for earlier cleanup, but is not required in the user's prompt.
 
@@ -93,7 +97,9 @@ In a Hermes conversation, `/original-chrome-status` runs the check in the actual
 
 ## Vault and data boundaries
 
-While this provider is selected, vault page actions such as fill, save-login, and enter-code are unavailable. `list` and `unlock` can use only the native synchronous handler already registered by Hermes. Missing native support produces a refusal; there is no private vault adapter or credential fallback.
+`browser_original_chrome_vault` exposes only `list` and `unlock`, dispatched through Hermes's public tool API to its registered native vault handler. Page actions such as fill, save-login, and enter-code are unavailable. Missing native support produces a refusal; there is no private vault adapter or credential fallback. The native `browser_vault` handler is not replaced.
+
+Page text returned by `browser_original_chrome_exec` is sent to the model as-is, without secret filtering. A secret visible on a page can therefore appear in tool output and the conversation. Screenshots are also returned without redaction. The plugin retains its public result structure and error minimization, but neither is a secret filter.
 
 The plugin reads Chrome's account/profile metadata and `DevToolsActivePort` to verify the original profile and current browser process. It reads process and Accessibility information, launches Chrome through macOS `open`, and uses loopback CDP. Requested navigation contacts the selected websites using Chrome's existing session. Workspaces, setup seed files, screenshots, and connection-coordination records are written locally. It does not upload that data to a plugin service or implement a self-updater.
 
@@ -112,6 +118,6 @@ git diff --check
 
 The regression runner uses inert browser transports, an isolated Hermes home, and network/GUI vetoes. It does not install dependencies. Live acceptance must separately cover Chrome fully exited, Chrome running without windows, existing user windows, and simultaneous agents. The operator prepares any condition that requires closing Chrome.
 
-The installation regression dispatches the official CLI against a disposable local Git source and Hermes home, including capability consent, real registration, disable/re-enable, and uninstall. It replaces PM's dependency-environment solve/publication with a fixture while retaining its manifest checks, so it does not claim to test dependency installation. `validate` currently exits with the two collision errors described above; a passing runtime `doctor` does not imply catalog acceptance.
+The installation regression dispatches the official CLI against a disposable local Git source and Hermes home, including real registration, disable/re-enable, and uninstall. It checks that native handlers remain intact, the plugin's own tools disappear after removal, and global browser suppression survives uninstall. It replaces PM's dependency-environment solve/publication with a fixture while retaining its manifest checks, so it does not claim to test dependency installation. A passing runtime `doctor` or manifest validation does not imply catalog acceptance or compatibility with every future Hermes release.
 
 Vendored browser helper code retains its [upstream license](vendor/LICENSE.browser-harness). The repository's current source and tests are the behavior reference.

@@ -2,7 +2,7 @@
 
 The trusted worker supplies named browser operations. Agent values can only be
 bounded plain data, never Python modules, functions, classes or transport objects.
-This confines browser_exec, not other Hermes tools or code installed on the host.
+This confines browser_original_chrome_exec, not other Hermes tools or code installed on the host.
 """
 import ast
 import copy

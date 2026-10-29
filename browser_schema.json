@@ -1,6 +1,6 @@
 {
-  "name": "browser_exec",
-  "description": "Run a bounded browser script using the original Chrome GUI provider.",
+  "name": "browser_original_chrome_exec",
+  "description": "Run a bounded browser script in owned windows of the original Chrome GUI and profile. Page text is returned as-is and may contain secrets visible on the page.",
   "parameters": {
     "type": "object",
     "properties": {

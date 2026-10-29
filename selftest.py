@@ -12,7 +12,7 @@ START_SOURCE="goto_url('https://example.com')\nwait_for_load(timeout=10)\nprint(
 PARALLEL_SOURCE="wait(1)\nprint(read_page(limit=1000))\nprint('SELFTEST_WAIT_COMPLETE')"
 FINISH_SOURCE='print(finish_browser())'
 KNOWN_ERRORS=('account_binding_unconfigured','account_binding_not_approved','account_binding_mismatch',
-    'plugin_capability_required','browser_provider_not_selected','browser_backend_unsupported',
+    'browser_native_tools_enabled','browser_provider_not_selected','browser_backend_unsupported',
     'browser_exec_timeout','browser_worker_failed','observer_lost','consent_accessibility',
     'consent_deadline','consent_attach_failed','consent_prompt_unavailable',
     'accessibility_permission_required','Default_seed_window_unavailable','Chrome_endpoint_unavailable',
@@ -30,7 +30,7 @@ def run(provider,handler,readiness,finalize=None):
     Join calls before cleanup. Never abandon a live thread to claim a hard global
     deadline while that thread can still create browser windows afterward.
     """
-    if provider is None or handler is None:return _refused('plugin_capability_required')
+    if provider is None or handler is None:return _refused('browser_native_tools_enabled')
     try:ready=readiness()
     except Exception:return _refused('selftest_readiness_unavailable')
     if not isinstance(ready,dict) or not ready.get('ready'):return _refused('selftest_not_ready')

@@ -17,7 +17,7 @@ class ProfileTest(unittest.TestCase):
         get_setting=Mock(return_value=APPROVED_ACCOUNT)
         with patch('plugin.verify_account',side_effect=RuntimeError('identity gate reached')) as verify:
             provider=ChromeProvider(data=PERSONAL,get_setting=get_setting,
-                read_browser_config=lambda:{'cloud_provider':NAME,'backend':'browser-use'},has_override=lambda:True)
+                read_browser_config=lambda:{'cloud_provider':NAME,'backend':'browser-use'},native_browser_disabled=lambda:True)
             result=json.loads(provider.execute({'code':'pass'},task_id='configuration-test'))
         self.assertFalse(result['success'])
         get_setting.assert_called_once_with('expected_account')
@@ -26,7 +26,7 @@ class ProfileTest(unittest.TestCase):
     def test_provider_missing_setting_never_reads_profile_or_launches(self):
         from plugin import ChromeProvider, PERSONAL
         from unittest.mock import patch
-        with patch('hermes_cli.config.read_raw_config',side_effect=AssertionError('no ambient config fallback')), patch('plugin.gui_launch',side_effect=AssertionError('must not launch')) as launch:
+        with patch('hermes_cli.config.load_config_readonly',side_effect=AssertionError('no ambient config fallback')), patch('plugin.gui_launch',side_effect=AssertionError('must not launch')) as launch:
             result=json.loads(ChromeProvider(data=PERSONAL).execute({'code':'pass'},task_id='unconfigured-test'))
         self.assertFalse(result['success'])
         self.assertIn('account_binding_unconfigured',result['error'])

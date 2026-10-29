@@ -14,11 +14,11 @@ class LifecycleTest(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory(dir=Path.home()/'.hermes/cache/scratch',prefix='chrome-lifecycle-')
         self.addCleanup(self.tmp.cleanup)
         home=Path(self.tmp.name)
-        (home/'config.yaml').write_text('plugins:\n  entries:\n    original-chrome-default:\n      granted_capabilities: [tools.override]\n')
+        (home/'config.yaml').write_text('agent:\n  disabled_toolsets: [browser, browser-use]\n')
         self.env=patch.dict(os.environ,{'HERMES_HOME':str(home)})
         self.env.start();self.addCleanup(self.env.stop)
         self.manager=PluginManager(scope_key=str(home))
-        self.ctx=PluginContext(PluginManifest(name='original-chrome-default',source='user',capabilities=['tools.override']),self.manager)
+        self.ctx=PluginContext(PluginManifest(name='original-chrome-default',source='user',capabilities=[]),self.manager)
         self.provider=ChromeProvider(data=home/'chrome-fixture')
         self.calls=[]
         self.provider.endpoint=lambda **kw:'ws://inert'
@@ -113,13 +113,13 @@ class LifecycleTest(unittest.TestCase):
         from plugin import register
         from tools.registry import registry
         from gateway.session_context import scoped_session_key
-        with scoped_session_key('actual-route'),patch('plugin.ChromeProvider',return_value=self.provider),patch('hermes_cli.config.read_raw_config',return_value={'browser':{'cloud_provider':'original-chrome-default','backend':'browser-use'}}):
+        with scoped_session_key('actual-route'),patch('plugin.ChromeProvider',return_value=self.provider),patch('hermes_cli.config.load_config_readonly',return_value={'agent':{'disabled_toolsets':['browser','browser-use']},'browser':{'cloud_provider':'original-chrome-default','backend':'browser-use'}}):
             register(self.ctx)
-            result=json.loads(registry.dispatch('browser_exec',{'code':'print(1)'},scope=str(Path(self.tmp.name)),task_id='actual-task',session_id='actual-session'))
+            result=json.loads(registry.dispatch('browser_original_chrome_exec',{'code':'print(1)'},scope=str(Path(self.tmp.name)),task_id='actual-task',session_id='actual-session'))
             self.assertTrue(result['success'])
             self.provider._worker=lambda *a,**k:{'success':False,'error':'cleanup denied'}
             self.fire('agent_loop_stopped',session_key='actual-route',reason='stop')
-            result=json.loads(registry.dispatch('browser_exec',{'code':'print(2)'},scope=str(Path(self.tmp.name)),task_id='actual-task',session_id='actual-session'))
+            result=json.loads(registry.dispatch('browser_original_chrome_exec',{'code':'print(2)'},scope=str(Path(self.tmp.name)),task_id='actual-task',session_id='actual-session'))
             self.assertFalse(result['cleanup_complete'])
             self.assertNotIn('browser_cleanup',result)
             self.assertNotIn('cleanup denied',json.dumps(result))

@@ -35,13 +35,14 @@ class RegistrationResilienceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='vault-policy-registration-') as home:
             home = str(Path(home).resolve())
             Path(home, 'config.yaml').write_text(json.dumps({
+                'agent': {'disabled_toolsets': ['browser','browser-use']},
                 'browser': {'backend': 'browser-use', 'cloud_provider': 'original-chrome-default'},
                 'plugins': {'entries': {'original-chrome-default': {
-                    'granted_capabilities': ['tools.override']}}}}))
+                    'settings': {}}}}}))
             with patch.dict(os.environ, HERMES_HOME=home):
                 manager = PluginManager(scope_key=home)
                 manifest = PluginManifest(name='original-chrome-default', source='user',
-                    path=str(ROOT), capabilities=['tools.override'])
+                    path=str(ROOT), capabilities=[])
                 try:
                     with patch('builtins.__import__', side_effect=checked_import), \
                          patch.object(registry, 'get_entry', side_effect=lambda name, **kw:
@@ -50,14 +51,18 @@ class RegistrationResilienceTests(unittest.TestCase):
                     loaded = manager._plugins['original-chrome-default']
                     self.assertTrue(loaded.enabled, loaded.error)
                     self.assertTrue(loaded.module.__name__.startswith('hermes_plugins.'))
-                    browser = registry.get_entry('browser_exec', scope=home)
+                    browser = registry.get_entry('browser_original_chrome_exec', scope=home)
                     self.assertIsNotNone(browser)
                     self.assertIn('code', browser.schema['parameters']['properties'])
                     for action in ('list', 'unlock', 'fill', 'save_login', 'enter_code'):
-                        result = json.loads(registry.dispatch('browser_vault', {'action': action}, scope=home))
-                        self.assertFalse(result['success'])
-                        expected = 'vault_handler_unavailable' if action in ('list', 'unlock') else 'vault_page_actions_unavailable'
-                        self.assertEqual(result['error_type'], expected)
+                        with patch.object(registry,'get_entry',side_effect=lambda name,**kw:
+                                None if name=='browser_vault' else original_get(name,**kw)):
+                            result=json.loads(registry.dispatch('browser_original_chrome_vault',{'action':action},scope=home))
+                        if action in ('list','unlock'):
+                            self.assertIn('Unknown tool: browser_vault',result['error'])
+                        else:
+                            self.assertFalse(result['success'])
+                            self.assertEqual(result['error_type'],'vault_page_actions_unavailable')
                 finally:
                     manager.unload()
 

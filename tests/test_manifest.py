@@ -11,35 +11,23 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 
 class ManifestTests(unittest.TestCase):
-    def test_current_catalog_collision_policy_is_not_runtime_override_admission(self):
-        # This is an explicit compatibility boundary, not a passing catalog
-        # claim. The separate installation test exercises granted overrides
-        # through the real loader and restores the native handler on disable.
+    def test_unique_names_pass_actual_catalog_builtin_collision_check(self):
         from hermes_cli.plugin_validate import ValidationReport,_check_builtin_collisions
         manifest=yaml.safe_load((ROOT/'plugin.yaml').read_text())
-        self.assertIn('tools.override',manifest['capabilities'])
+        self.assertNotIn('tools.override',manifest.get('capabilities',[]))
         report=ValidationReport()
-        with patch('hermes_cli.plugin_validate._builtin_tool_names',
-                   return_value=['browser_exec','browser_vault']):
-            _check_builtin_collisions(report,manifest,{'tools':[]})
-        self.assertFalse(report.ok)
-        self.assertEqual(report.failures,[
-            'tool name(s) collide with built-in tools: browser_exec, browser_vault'])
+        _check_builtin_collisions(report,manifest,{'tools':['browser_original_chrome_exec','browser_original_chrome_vault']})
+        self.assertTrue(report.ok,report.failures)
 
-    def test_declared_tools_cover_real_granted_and_ungranted_registration(self):
+    def test_declared_tools_exactly_cover_actual_registration(self):
         import plugin
         manifest=yaml.safe_load((ROOT/'plugin.yaml').read_text())
-        declared=set(manifest.get('provides_tools',[]))
-        registered=set()
-        for granted in (False,True):
-            ctx=Mock();ctx.has_capability.return_value=granted
-            ctx.state.data_dir=Path('/synthetic-plugin-state')
-            with patch('plugin.ChromeProvider'):
-                plugin.register(ctx)
-            actual={call.kwargs['name'] for call in ctx.register_tool.call_args_list}
-            self.assertFalse(actual-declared,'Undeclared tools in grant state '+str(granted))
-            registered.update(actual)
-        self.assertEqual(declared,registered)
+        ctx=Mock();ctx.state.data_dir=Path('/synthetic-plugin-state')
+        with patch('plugin.ChromeProvider'):plugin.register(ctx)
+        actual={call.kwargs['name'] for call in ctx.register_tool.call_args_list}
+        self.assertEqual(set(manifest.get('provides_tools',[])),actual)
+        self.assertEqual(actual,{'browser_original_chrome_exec','browser_original_chrome_vault'})
+        ctx.has_capability.assert_not_called()
 
     def test_metadata_declares_lifecycle_events_and_profile_local_account_setting(self):
         manifest=yaml.safe_load((ROOT/'plugin.yaml').read_text())

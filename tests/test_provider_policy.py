@@ -16,7 +16,7 @@ class ProductionPolicyTests(unittest.TestCase):
             get_setting=lambda key:plugin.APPROVED_ACCOUNT if account is None else account,
             read_browser_config=lambda:config if config is not None else {
                 'cloud_provider':plugin.NAME,'backend':'browser-use'},
-            has_override=lambda:granted)
+            native_browser_disabled=lambda:granted)
 
     def test_missing_production_task_identity_refuses_before_readiness_or_launch(self):
         for task_id in (None,'','   '):
@@ -37,10 +37,10 @@ class ProductionPolicyTests(unittest.TestCase):
         verify.assert_not_called();launch.assert_not_called()
         self.assertFalse(provider.states)
 
-    def test_route_and_grant_rejected_before_profile_read_or_launch(self):
+    def test_route_and_native_suppression_rejected_before_profile_read_or_launch(self):
         cases=[({'cloud_provider':'local','backend':'browser-use'},True,'browser_provider_not_selected'),
                ({'cloud_provider':plugin.NAME,'backend':'off'},True,'browser_backend_unsupported'),
-               ({'cloud_provider':plugin.NAME,'backend':'browser-use'},False,'plugin_capability_required')]
+               ({'cloud_provider':plugin.NAME,'backend':'browser-use'},False,'browser_native_tools_enabled')]
         for config,granted,error in cases:
             with self.subTest(config=config,granted=granted):
                 provider=self.provider(config=config,granted=granted)
@@ -77,7 +77,7 @@ class ProductionPolicyTests(unittest.TestCase):
         settings=Mock(side_effect=[plugin.APPROVED_ACCOUNT,'changed@example.test'])
         provider=plugin.ChromeProvider(get_setting=settings,
             read_browser_config=lambda:{'cloud_provider':plugin.NAME,'backend':'browser-use'},
-            has_override=lambda:True)
+            native_browser_disabled=lambda:True)
         with patch('plugin.verify_account') as verify,patch('plugin.gui_launch') as launch:
             provider.require_ready()
             with self.assertRaisesRegex(RuntimeError,'account_binding_not_approved'):
@@ -120,56 +120,51 @@ class RegistrationPolicyTests(unittest.TestCase):
         ctx=Mock();ctx.has_capability.return_value=granted
         temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup)
         ctx.state.data_dir=Path(temporary.name)
+        policy=patch('plugin.native_browser_tools_disabled',return_value=True)
+        policy.start();self.addCleanup(policy.stop)
         return ctx
 
     def hook(self,ctx):
         return next(call.args[1] for call in ctx.register_hook.call_args_list if call.args[0]=='pre_tool_call')
 
-    def test_loaded_without_grant_vetoes_native_browser_tools_only_when_selected(self):
+    def test_loaded_plugin_vetoes_all_native_browser_tools_only_when_selected(self):
         ctx=self.context(False)
-        plugin.register(ctx)
+        with patch('plugin.ChromeProvider'):plugin.register(ctx)
         guard=self.hook(ctx)
         with patch('plugin.browser_config',return_value={'cloud_provider':plugin.NAME,'backend':'browser-use'}):
             for name in ('browser_exec','browser_vault','browser_cdp','browser_dialog','browser_navigate'):
                 with self.subTest(name=name):
                     result=guard(name,{})
                     self.assertEqual(result['action'],'block')
-                    self.assertIn('plugin_capability_required',result['message'])
-            self.assertIsNone(guard('web_search',{}))
+                    self.assertIn('browser_original_chrome_exec',result['message'])
+            for name in ('web_search','browser_original_chrome_exec','browser_original_chrome_vault'):
+                self.assertIsNone(guard(name,{}))
         with patch('plugin.browser_config',return_value={'cloud_provider':'local'}):
             self.assertIsNone(guard('browser_exec',{}))
-        ctx.register_browser_provider.assert_not_called()
+        ctx.has_capability.assert_not_called()
+        ctx.register_browser_provider.assert_called_once()
 
-    def test_granted_routes_keep_raw_native_cdp_and_legacy_browsing_blocked(self):
+    def test_registered_provider_receives_live_policy_callbacks(self):
         ctx=self.context(True)
-        with patch('plugin.ChromeProvider') as constructor:
-            plugin.register(ctx)
+        with patch('plugin.ChromeProvider') as constructor:plugin.register(ctx)
         self.assertIs(constructor.call_args.kwargs['get_setting'],ctx.get_config)
-        guard=self.hook(ctx)
-        with patch('plugin.browser_config',return_value={'cloud_provider':plugin.NAME,'backend':'browser-use'}):
-            for name in ('browser_cdp','browser_dialog','browser_navigate','browser_click'):
-                self.assertIn('browser_route_blocked',guard(name,{})['message'])
-            self.assertIsNone(guard('browser_exec',{}))
-            self.assertIsNone(guard('browser_vault',{}))
+        self.assertIs(constructor.call_args.kwargs['native_browser_disabled'],plugin.native_browser_tools_disabled)
 
-    def test_grant_revocation_blocks_registered_browser_handler_before_execute(self):
+    def test_native_suppression_revocation_blocks_registered_handler_before_execute(self):
         ctx=self.context(True)
-        with patch('plugin.ChromeProvider') as constructor:
-            plugin.register(ctx)
-        provider=constructor.return_value
-        handler=next(c.kwargs['handler'] for c in ctx.register_tool.call_args_list if c.kwargs['name']=='browser_exec')
-        ctx.has_capability.return_value=False
-        with patch('plugin.browser_config',return_value={'cloud_provider':plugin.NAME,'backend':'browser-use'}):
-            result=json.loads(handler({'code':'print(1)'}))
-        self.assertEqual(result['error_code'],'browser_unavailable')
-        self.assertNotIn('tools.override',result['error'])
-        provider.execute.assert_not_called()
+        with patch('plugin.ChromeProvider') as constructor:plugin.register(ctx)
+        handler=next(c.kwargs['handler'] for c in ctx.register_tool.call_args_list if c.kwargs['name']=='browser_original_chrome_exec')
+        with patch('plugin.browser_config',return_value={'cloud_provider':plugin.NAME,'backend':'browser-use'}),patch('plugin.native_browser_tools_disabled',return_value=False):
+            result=json.loads(handler({'code':'print(1)'},task_id='agent',session_id='session'))
+        self.assertFalse(result['success'])
+        self.assertFalse(result['fallback_used']);self.assertFalse(result['action_replayed'])
+        constructor.return_value.execute.assert_not_called()
 
     def test_registered_handler_refuses_missing_agent_identity_before_binding(self):
         ctx=self.context(True)
         with patch('plugin.ChromeProvider') as constructor,patch('plugin.BrowserLifecycle') as lifecycle:
             plugin.register(ctx)
-        handler=next(c.kwargs['handler'] for c in ctx.register_tool.call_args_list if c.kwargs['name']=='browser_exec')
+        handler=next(c.kwargs['handler'] for c in ctx.register_tool.call_args_list if c.kwargs['name']=='browser_original_chrome_exec')
         with patch('plugin.browser_config',return_value={'cloud_provider':plugin.NAME,'backend':'browser-use'}):
             for kwargs in ({},{'task_id':'agent-a'},{'session_id':'conversation-a'},
                            {'task_id':'agent-a','session_id':'  '}):
@@ -188,15 +183,15 @@ class RegistrationPolicyTests(unittest.TestCase):
         with patch('plugin.ChromeProvider') as constructor,patch('tools.registry.registry.get_entry',
                 side_effect=lambda name:entry if name=='browser_exec' else None):
             plugin.register(ctx)
-        handler=next(c.kwargs['handler'] for c in ctx.register_tool.call_args_list if c.kwargs['name']=='browser_exec')
-        with patch('plugin.browser_config',side_effect=ValueError('private-config-payload')):
+        handler=next(c.kwargs['handler'] for c in ctx.register_tool.call_args_list if c.kwargs['name']=='browser_original_chrome_exec')
+        with patch('hermes_cli.config.load_config_readonly',side_effect=ValueError('private-config-payload')):
             result=json.loads(handler({'code':'print(1)'},task_id='agent-a',session_id='conversation-a'))
         self.assertEqual(result['error_code'],'browser_unavailable')
         self.assertNotIn('private-config-payload',result['error'])
         constructor.return_value.execute.assert_not_called();native.assert_not_called()
 
     def test_unreadable_core_config_has_fixed_failure_without_native_fallback(self):
-        with patch('hermes_cli.config.read_raw_config',side_effect=ValueError('private-config-payload')):
+        with patch('hermes_cli.config.load_config_readonly',side_effect=ValueError('private-config-payload')):
             with self.assertRaisesRegex(RuntimeError,'browser_configuration_unavailable') as caught:
                 plugin.browser_config()
         self.assertNotIn('private-config-payload',str(caught.exception))

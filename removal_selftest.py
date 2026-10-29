@@ -28,7 +28,7 @@ def run(provider,readiness):
             destination.write_bytes(origin.read_bytes());destination.chmod(0o600)
         candidate=type(provider)(data=provider.data,workspace=folder/'work',source_root=source,
             get_setting=provider._get_setting,read_browser_config=provider._read_browser_config,
-            has_override=provider._has_override)
+            native_browser_disabled=provider._native_browser_disabled)
         result=json.loads(candidate.execute({'session':'removal','timeout_s':20,
             'code':"goto_url('https://example.com')\nwait_for_load(timeout=10)\nprint(read_page(limit=500))"},
             task_id='operator-removal-fixture'))

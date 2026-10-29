@@ -1,10 +1,13 @@
-"""Original headed Chrome provider and public browser_exec override. No core mutation."""
+"""Original headed Chrome provider and plugin-owned browser tools. No core mutation."""
 import ast, copy, ctypes, json, os, re, signal, subprocess, sys, threading, time
 from contextlib import contextmanager
 from pathlib import Path
 from agent.browser_provider import BrowserProvider
 
 NAME='original-chrome-default'
+EXEC_TOOL='browser_original_chrome_exec'
+VAULT_TOOL='browser_original_chrome_vault'
+TOOLSET='original_chrome'
 ROOT=Path(__file__).resolve().parent
 CHROME=Path('/Applications/Google Chrome.app')
 PERSONAL=Path.home()/'Library/Application Support/Google/Chrome'
@@ -19,8 +22,8 @@ def expected_account(get_setting=None):
 
 def browser_config():
     # Browser selection is a core setting, separate from plugin-owned settings.
-    from hermes_cli.config import read_raw_config
-    try:config=read_raw_config()
+    from hermes_cli.config import load_config_readonly
+    try:config=load_config_readonly()
     except Exception:
         raise RuntimeError('browser_configuration_unavailable: no browser action sent') from None
     value=config.get('browser',{}) if isinstance(config,dict) else None
@@ -32,11 +35,30 @@ def selected_browser(config):
     return config.get('cloud_provider')==NAME
 
 
-def require_browser_route(config,has_override):
+def native_browser_tools_disabled():
+    """Read persistent host policy; never silently change operator configuration.
+
+    These exclusions outlive the plugin, so removing it cannot re-enable native
+    browser tools. Require both names explicitly rather than depending on a
+    particular Hermes version's aliases or composite toolsets.
+    """
+    from hermes_cli.config import load_config_readonly
+    try:
+        config=load_config_readonly()
+        disabled=config.get('agent',{}).get('disabled_toolsets',[])
+        if isinstance(disabled,str):
+            try:disabled=json.loads(disabled)
+            except ValueError:disabled=ast.literal_eval(disabled)
+        if not isinstance(disabled,list) or not all(isinstance(v,str) for v in disabled):return False
+        return {'browser','browser-use'} <= set(disabled)
+    except Exception:return False
+
+
+def require_browser_route(config,native_browser_disabled):
     if not selected_browser(config):
         raise RuntimeError('browser_provider_not_selected: no browser action sent')
-    if not has_override:
-        raise RuntimeError('plugin_capability_required: tools.override is not granted; no browser action sent')
+    if not native_browser_disabled:
+        raise RuntimeError('browser_native_tools_enabled: disable browser and browser-use in agent.disabled_toolsets; no browser action sent')
     # Current Hermes has one core browser tool and its picker no longer writes
     # backend. Retain compatibility with the older explicit browser-use value.
     if config.get('backend') not in (None,'browser-use'):
@@ -136,7 +158,7 @@ def chrome_gui_snapshot():
 
 def status_snapshot(ctx):
     checks={name:False for name in ('settings_readable','account_configured','account_approved',
-        'browser_config_readable','provider_selected','browser_backend_supported','override_granted',
+        'browser_config_readable','provider_selected','browser_backend_supported','native_browser_tools_disabled',
         'profile_identity_verified','gui_identity_ready','accessibility_trusted')}
     failures=[]
     try:
@@ -157,9 +179,9 @@ def status_snapshot(ctx):
         if not checks['browser_backend_supported']:failures.append('browser_backend_unsupported')
     except Exception:
         failures.append('browser_configuration_unavailable')
-    try:checks['override_granted']=bool(ctx.has_capability('tools.override'))
+    try:checks['native_browser_tools_disabled']=native_browser_tools_disabled()
     except Exception:pass
-    if not checks['override_granted']:failures.append('plugin_capability_required')
+    if not checks['native_browser_tools_disabled']:failures.append('browser_native_tools_enabled')
     if checks['account_approved']:
         try:
             verify_account(PERSONAL,account)
@@ -172,12 +194,12 @@ def status_snapshot(ctx):
     try:checks['accessibility_trusted']=accessibility_trusted()
     except Exception:pass
     if not checks['accessibility_trusted']:failures.append('consent_accessibility')
-    return {'plugin':NAME,'status_version':2,'loaded_policy':'bounded-browser-script-v1',
+    return {'plugin':NAME,'status_version':3,'loaded_policy':'bounded-browser-script-v1',
         'ready':all(checks.values()),'checks':checks,'failures':failures,
         'chrome_gui':chrome_gui_snapshot(),
         'process':{'pid':os.getpid(),'executable':sys.executable},
         'accessibility_scope':'current process only; other processes and launch contexts are not verified',
-        'browser_connection':'not_probed','terminal_tool_required':True}
+        'browser_connection':'not_probed','terminal_tool_required':False,'secret_output_filter':False}
 
 
 def register_status_command(ctx):
@@ -256,12 +278,12 @@ class ChromeProvider(BrowserProvider):
     name=NAME
     display_name='Original headed Chrome · Default'
     def __init__(self, data=None, workspace=None, *, get_setting=None,
-                 read_browser_config=None, has_override=None, source_root=None):
+                 read_browser_config=None, native_browser_disabled=None, source_root=None):
         self.data=Path(data or PERSONAL).resolve()
         self._get_setting=get_setting
         self._read_browser_config=read_browser_config
-        self._has_override=has_override
-        self.workspace=Path(workspace or Path(os.environ.get('HERMES_HOME') or Path.home()/'.hermes')/'cache/scratch/native-chrome-work')
+        self._native_browser_disabled=native_browser_disabled
+        self._workspace_source=workspace if workspace is not None else Path(os.environ.get('HERMES_HOME') or Path.home()/'.hermes')/'cache/scratch/native-chrome-work'
         # Source injection is for fixed operator/offline removal fixtures only;
         # registered production never takes it from configuration or agent input.
         self.source_root=Path(source_root or ROOT)
@@ -270,6 +292,19 @@ class ChromeProvider(BrowserProvider):
         self._setup_lock=threading.RLock()
         self._ownership_journal=None
         self._runtime_snapshot=None;self._resource_watch=None;self._observer_type=None
+
+    @property
+    def workspace(self):
+        # Resolving the public durable-state directory belongs to actual work,
+        # not discovery. A registration-only host need not create/read state.
+        with self.lock:
+            if callable(self._workspace_source):
+                self._workspace_source=Path(self._workspace_source())
+            return Path(self._workspace_source)
+
+    @workspace.setter
+    def workspace(self,value):
+        self._workspace_source=value
 
     def _runtime(self):
         with self.lock:
@@ -409,9 +444,9 @@ class ChromeProvider(BrowserProvider):
             raise RuntimeError('account_binding_unconfigured: configure the approved Default account; no Chrome launch')
         if account.strip().casefold()!=APPROVED_ACCOUNT:
             raise RuntimeError('account_binding_not_approved: configured account is outside this plugin scope; no Chrome launch')
-        if not callable(self._read_browser_config) or not callable(self._has_override):
+        if not callable(self._read_browser_config) or not callable(self._native_browser_disabled):
             raise RuntimeError('browser_policy_unconfigured: production provider requires explicit host policy; no Chrome launch')
-        require_browser_route(self._read_browser_config(),self._has_override())
+        require_browser_route(self._read_browser_config(),self._native_browser_disabled())
         verify_account(self.data,account)
 
     @contextmanager
@@ -760,7 +795,7 @@ class ChromeProvider(BrowserProvider):
                 'stdout':(entry or {}).get('partial_stdout',''),'uncertain':bool(entry and entry.get('uncertain')),'fallback_used':False,'action_replayed':False}
     def create_session(self,task_id):
         # This provider cannot safely hand its browser-wide endpoint to legacy target selection.
-        raise RuntimeError('Use the approved browser_exec override; legacy browser_* attachment is not safe')
+        raise RuntimeError('Use browser_original_chrome_exec; native browser_* attachment is not safe')
 
     def _recover_orphans(self):
         # Registration/import never connects to Chrome. The next real browser
@@ -957,135 +992,95 @@ def register(ctx):
     register_status_command(ctx)
     if __package__:
         from . import selftest
-    else:
-        import selftest
-    def selected():return selected_browser(browser_config())
-    def granted():return ctx.has_capability('tools.override')
-    def route_guard(tool_name,args=None,**kwargs):
-        if not isinstance(tool_name,str) or not tool_name.startswith('browser_'):return
-        try:
-            config=browser_config()
-            if not selected_browser(config):return
-            require_browser_route(config,granted())
-            if tool_name not in {'browser_exec','browser_vault'}:
-                raise RuntimeError('browser_route_blocked: selected provider requires its scoped browser_exec; no native browser fallback')
-        except Exception as exc:
-            return {'action':'block','message':str(exc)}
-    # This public veto remains active even when tool overrides are not granted.
-    # Without a loaded plugin no hook can enforce this policy.
-    ctx.register_hook('pre_tool_call',route_guard)
-    browser_schema=json.loads((ROOT/'browser_schema.json').read_text())
-    if not ctx.has_capability('tools.override'):
-        selftest.register(ctx)
-        # Doctor intentionally has no operator grants. Expose only inert,
-        # non-conflicting metadata there (and on any real no-grant host).
-        # Never register the provider or fall back to a different browser/vault.
-        def capability_required(args,**kw):
-            return json.dumps({'success':False,'error_type':'plugin_capability_required',
-                'error':'tools.override is not granted; native browser/vault integration is inactive. Enable through the official plugin consent flow.',
-                'fallback_used':False,'action_replayed':False})
-        for name,schema,toolset in (
-                ('original_chrome_default_browser_exec',browser_schema,'browser-use'),
-                ('original_chrome_default_browser_vault',json.loads((ROOT/'vault_schema.json').read_text()),'browser')):
-            schema=copy.deepcopy(schema);schema['name']=name
-            schema['description']='Inactive metadata only: tools.override consent required; no browser or credential access.'
-            ctx.register_tool(name=name,toolset=toolset,schema=schema,handler=capability_required)
-        return
-    from tools.registry import registry
-    try:
-        browser_entry=registry.get_entry('browser_exec')
-    except Exception:
-        browser_entry=None
-    native_browser=(browser_entry.handler if browser_entry and callable(browser_entry.handler)
-                    and not browser_entry.is_async else None)
-    if browser_entry:
-        browser_schema=copy.deepcopy(browser_entry.schema)
-    # Isolated compatibility boundary: installed Hermes has no public forced
-    # redaction API equivalent to this utility and its native secret registry.
-    # Preserve that boundary; never clone/rebind core functions or namespaces.
-    from agent.redact import redact_sensitive_text, REDACT_WALK_MAX_DEPTH, REDACT_WALK_DEPTH_MARKER
-    if __package__:
         from .public_result import model_result
     else:
+        import selftest
         from public_result import model_result
-    def scrub_result(value,depth=0):
-        # Scrub decoded strings before JSON escaping, including errors and cleanup.
-        # Never change held browser state or the worker's screenshot/artifact bytes.
-        if depth>=REDACT_WALK_MAX_DEPTH:return REDACT_WALK_DEPTH_MARKER
-        if isinstance(value,str):return redact_sensitive_text(value,force=True)
-        if isinstance(value,list):return [scrub_result(v,depth+1) for v in value]
-        if isinstance(value,dict):return {scrub_result(k,depth+1):scrub_result(v,depth+1) for k,v in value.items()}
-        return value
-    provider=ChromeProvider(workspace=ctx.state.data_dir/'browser-work',
-        get_setting=ctx.get_config,read_browser_config=browser_config,has_override=granted)
+
+    def route_guard(tool_name,args=None,**kwargs):
+        if not isinstance(tool_name,str) or not tool_name.startswith('browser_') or tool_name in {EXEC_TOOL,VAULT_TOOL}:return
+        try:
+            if not selected_browser(browser_config()):return
+        except Exception:
+            return {'action':'block','message':'Browser configuration unavailable; no browser action sent.'}
+        return {'action':'block','message':'Use browser_original_chrome_exec for browser actions; native browser tools are disabled.'}
+
+    # The official host exclusions remain the guard when this plugin is absent.
+    # While loaded, refuse native routes even if a session held an older schema.
+    ctx.register_hook('pre_tool_call',route_guard)
+    browser_schema=json.loads((ROOT/'browser_schema.json').read_text())
+    browser_schema['name']=EXEC_TOOL
+    provider=ChromeProvider(workspace=lambda:ctx.state.data_dir/'browser-work',
+        get_setting=ctx.get_config,read_browser_config=browser_config,
+        native_browser_disabled=native_browser_tools_disabled)
     lifecycle=BrowserLifecycle(ctx,provider);lifecycle.register()
     ctx.on_unload(provider.unload)
+
     def publish_result(result,cleanup_reports=()):
-        public=model_result(result,cleanup_reports,scrub=scrub_result)
+        # Operator explicitly chose unfiltered page text. Keep the model-result
+        # allowlist and error minimization, without importing a private redactor.
+        public=model_result(result,cleanup_reports)
         return public if public.get('_multimodal') else json.dumps(public)
+
     def handler(args,**kw):
         diagnostic_sink=kw.pop('_diagnostic_sink',None)
         def refused(result):
             _emit_diagnostic(diagnostic_sink,result)
             return publish_result(result)
-        try:config=browser_config()
-        except Exception:
-            return refused({'success':False,'error':'browser_configuration_unavailable: no browser action sent',
-                'fallback_used':False,'action_replayed':False})
-        if selected_browser(config):
-            try:
-                require_browser_route(config,granted())
-                require_call_identity(kw.get('task_id'),'task_id')
-                require_call_identity(kw.get('session_id'),'session_id')
-            except Exception as exc:
-                return refused({'success':False,'error':str(exc),'error_type':type(exc).__name__,'fallback_used':False,'action_replayed':False})
-            try:
-                from gateway.session_context import get_session_env
-                session_key=kw.get('session_key') or get_session_env('HERMES_SESSION_KEY','')
-            except Exception:
-                return refused({'success':False,'error':'browser_configuration_unavailable: session context unavailable',
-                    'fallback_used':False,'action_replayed':False})
-            lifecycle.bind(**dict(kw,session_key=session_key))
-            result=json.loads(provider.execute(args,**kw,_diagnostic_sink=diagnostic_sink))
-            return publish_result(result,lifecycle.status(kw.get('session_id')))
-        if native_browser is None:
-            return refused({'success':False,'error':'browser_provider_native_handler_unavailable',
+        try:
+            require_browser_route(browser_config(),native_browser_tools_disabled())
+            require_call_identity(kw.get('task_id'),'task_id')
+            require_call_identity(kw.get('session_id'),'session_id')
+        except Exception as exc:
+            return refused({'success':False,'error':str(exc),'error_type':type(exc).__name__,
                 'fallback_used':False,'action_replayed':False})
         try:
-            return native_browser(args,**kw)
+            from gateway.session_context import get_session_env
+            session_key=kw.get('session_key') or get_session_env('HERMES_SESSION_KEY','')
         except Exception:
-            return refused({'success':False,'error':'native_browser_action_failed',
-                'uncertain':True,'fallback_used':False,'action_replayed':False})
+            return refused({'success':False,'error':'browser_configuration_unavailable: session context unavailable',
+                'fallback_used':False,'action_replayed':False})
+        lifecycle.bind(**dict(kw,session_key=session_key))
+        result=json.loads(provider.execute(args,**kw,_diagnostic_sink=diagnostic_sink))
+        return publish_result(result,lifecycle.status(kw.get('session_id')))
+
     ctx.register_browser_provider(provider)
-    ctx.register_tool(name='browser_exec',toolset='browser-use',schema=_execution_policy().apply_browser_schema(browser_schema),handler=handler,override=True)
+    ctx.register_tool(name=EXEC_TOOL,toolset=TOOLSET,
+        schema=_execution_policy().apply_browser_schema(browser_schema),handler=handler)
     selftest.register(ctx,provider,handler,lambda:status_snapshot(ctx),
         lambda session_id:lifecycle.finalize(session_id=session_id))
-    # The installed public browser-provider API cannot bind native vault page
-    # actions to our owned targets. Refuse those actions even for direct registry
-    # dispatch, which does not pass through pre_tool_call hooks. Non-page actions
-    # use only the captured registered handler; no native module or private API.
-    try:
-        entry=registry.get_entry('browser_vault')
-    except Exception:
-        entry=None
-    original=entry.handler if entry and callable(entry.handler) and not entry.is_async else None
-    schema=copy.deepcopy(entry.schema) if entry else json.loads((ROOT/'vault_schema.json').read_text())
+
+    # Public dispatch preserves the host vault's own approvals and credentials.
+    # No native handler capture and no page action can attach to a foreign tab.
+    schema=json.loads((ROOT/'vault_schema.json').read_text())
+    schema['name']=VAULT_TOOL
     def unavailable(kind='vault_handler_unavailable'):
         return json.dumps({'success':False,'error_type':kind,
-            'error':'Vault operation unavailable for the selected browser; no fallback or replay.',
+            'error':'Vault operation unavailable for this browser; no fallback or replay.',
             'fallback_used':False,'action_replayed':False})
     def guarded(args,**kw):
         try:
-            config=browser_config()
-            if selected_browser(config):
-                require_browser_route(config,granted())
-                if args.get('action') not in ('list','unlock'):
-                    return unavailable('vault_page_actions_unavailable')
-            if original is None:
-                return unavailable()
-            return original(args,**kw)
+            require_browser_route(browser_config(),native_browser_tools_disabled())
+            if args.get('action') not in ('list','unlock'):
+                return unavailable('vault_page_actions_unavailable')
+            raw=ctx.dispatch_tool('browser_vault',args,**kw)
+            if args.get('action')=='list':
+                result=json.loads(raw)
+                if isinstance(result,dict) and result.get('success') is True:
+                    # Native help refers to tools/page actions unavailable here.
+                    # Adapt only those control fields; item metadata stays intact.
+                    if 'hint' in result:
+                        result['hint']='No saved vault items are available. Saving or filling credentials is unavailable in this browser tool.'
+                    locked=result.get('locked')
+                    if isinstance(locked,list):
+                        for item in locked:
+                            if isinstance(item,dict) and item.get('unlock')=='browser_vault action=unlock':
+                                item['unlock']=VAULT_TOOL+' action=unlock'
+                    result['page_actions_available']=False
+                    return json.dumps(result)
+            return raw
         except Exception:
-            # Handler failures may contain credential arguments; never expose
-            # exception text or attempt another native entry point.
+            # Handler errors may contain credential arguments; do not expose
+            # exception text or attempt another entry point.
             return unavailable()
-    ctx.register_tool(name='browser_vault',toolset=entry.toolset if entry else 'browser',schema=schema,handler=guarded,override=True)
+    ctx.register_tool(name=VAULT_TOOL,toolset=TOOLSET,schema=schema,handler=guarded)

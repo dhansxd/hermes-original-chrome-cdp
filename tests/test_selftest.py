@@ -150,10 +150,10 @@ class SelftestTests(unittest.TestCase):
         self.assertEqual(result['errors'][0]['code'],'selftest_arguments_not_supported')
         handler.assert_not_called();ctx.register_tool.assert_not_called()
 
-    def test_no_grant_command_is_inert(self):
+    def test_missing_native_suppression_command_is_inert(self):
         ctx=Mock();selftest.register(ctx)
         result=json.loads(ctx.register_command.call_args.kwargs['handler'](''))
-        self.assertEqual(result['errors'][0]['code'],'plugin_capability_required')
+        self.assertEqual(result['errors'][0]['code'],'browser_native_tools_enabled')
         self.assertFalse(result['browser_actions_started'])
 
 

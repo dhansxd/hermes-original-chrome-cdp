@@ -4,9 +4,9 @@ No dependency resolution, bootstrap, external network, gateway or Chrome is run.
 This verifies CLI/source/config/registry lifecycle, not PM's environment transaction.
 """
 import argparse
+import copy
 import importlib.util
 import io
-import json
 import os
 from pathlib import Path
 import shutil
@@ -88,8 +88,11 @@ class PluginInstallationTests(unittest.TestCase):
                 'commit','-qm','Synthetic release snapshot')
             revision=git('rev-parse','HEAD')
             config_path=home/'config.yaml'
+            disabled_toolsets=['browser','browser-use','web']
             config_path.write_text(yaml.safe_dump({'browser':{
-                'cloud_provider':'original-chrome-default'},'plugins':{'enabled':[],'disabled':[],
+                'cloud_provider':'original-chrome-default'},
+                'agent':{'disabled_toolsets':disabled_toolsets},
+                'plugins':{'enabled':[],'disabled':[],
                 'entries':{'original-chrome-default':{'settings':{'expected_account':'fixture@example.invalid'}}}}}))
             output=io.StringIO();console=Console(file=output,force_terminal=False)
             publications=[]
@@ -138,6 +141,35 @@ class PluginInstallationTests(unittest.TestCase):
                      patch.object(commands,'_console',return_value=console), \
                      patch.object(commands,'_is_tty',return_value=True), \
                      patch.object(commands,'_ask_yes',return_value=True):
+                    # Import the actual core registrations, without invoking a
+                    # native handler, availability check, browser or vault.
+                    from tools import browser_use_cli,browser_vault_tool
+                    native_handlers={'browser_exec':browser_use_cli._handle_browser_exec,
+                        'browser_vault':browser_vault_tool._handle_vault}
+                    native_entries={key:registry.get_entry(key,scope=str(home))
+                        for key in native_handlers}
+                    native_schemas={key:copy.deepcopy(entry.schema)
+                        for key,entry in native_entries.items()}
+                    custom_tools=('browser_original_chrome_exec','browser_original_chrome_vault')
+                    def unchanged_native_and_suppression():
+                        self.assertEqual(config()['agent']['disabled_toolsets'],disabled_toolsets)
+                        for key,handler in native_handlers.items():
+                            entry=registry.get_entry(key,scope=str(home))
+                            self.assertIs(entry,native_entries[key])
+                            self.assertIs(entry.handler,handler)
+                            self.assertEqual(entry.schema,native_schemas[key])
+                    def custom_registered(expected):
+                        for key in custom_tools:
+                            entry=registry.get_entry(key,scope=str(home))
+                            if expected:
+                                self.assertIsNotNone(entry)
+                                self.assertEqual(entry.toolset,'original_chrome')
+                                self.assertEqual(entry.schema['name'],key)
+                                self.assertTrue(entry.handler.__module__.startswith('hermes_plugins.'))
+                            else:
+                                self.assertIsNone(entry)
+                    unchanged_native_and_suppression()
+                    custom_registered(False)
                     command('install',identifier=source.as_uri(),ref=revision,no_deps=True,force=True)
                     self.assertTrue((target/'browser_schema.json').is_file())
                     self.assertFalse((target/'vault_adapter.py').exists())
@@ -149,32 +181,30 @@ class PluginInstallationTests(unittest.TestCase):
                     command('doctor',target=str(target),ci=True)
                     self.assertIn('OK: runtime discovery, manifest parsing, import, and registration passed',
                         output.getvalue())
-
-                    baseline=lambda args,**kwargs:'{"success":true,"fixture_native":true}'
-                    native_schema=json.loads((ROOT/'browser_schema.json').read_text())
-                    registry.register('browser_exec','browser-use',native_schema,baseline,override=True,scope=str(home))
+                    unchanged_native_and_suppression()
                     command('enable',name=name)
                     self.assertIn(name,config()['plugins']['enabled'])
-                    self.assertIn('tools.override',config()['plugins']['entries'][name]['granted_capabilities'])
+                    self.assertNotIn('tools.override',config()['plugins']['entries'][name].get('granted_capabilities',[]))
                     manager.discover_and_load(force=True)
                     loaded=manager._plugins[name]
                     self.assertTrue(loaded.enabled,loaded.error)
-                    installed_handler=registry.get_entry('browser_exec',scope=str(home)).handler
-                    self.assertIsNot(installed_handler,baseline)
-                    self.assertTrue(installed_handler.__module__.startswith('hermes_plugins.'))
+                    custom_registered(True)
+                    unchanged_native_and_suppression()
 
                     command('disable',name=name)
                     self.assertIn(name,config()['plugins']['disabled'])
                     self.assertEqual(config()['browser']['cloud_provider'],name)
                     manager.discover_and_load(force=True)
-                    self.assertIs(registry.get_entry('browser_exec',scope=str(home)).handler,baseline)
+                    custom_registered(False)
+                    unchanged_native_and_suppression()
                     self.assertTrue(target.exists())
                     self.assertIn(name,commands._read_install_metadata())
 
                     command('enable',name=name)
                     manager.discover_and_load(force=True)
-                    self.assertIsNot(registry.get_entry('browser_exec',scope=str(home)).handler,baseline)
-                    # Removal tests actual cleanup of grants/settings as well as
+                    custom_registered(True)
+                    unchanged_native_and_suppression()
+                    # Removal tests actual cleanup of plugin settings as well as
                     # the tracked tree and its installer-owned provenance record.
                     command('uninstall',name=name)
                     manager.discover_and_load(force=True)
@@ -184,7 +214,8 @@ class PluginInstallationTests(unittest.TestCase):
                         self.assertNotIn(name,config()['plugins'].get(key,[]))
                     self.assertNotIn(name,config()['plugins'].get('entries',{}))
                     self.assertEqual(config()['browser']['cloud_provider'],name)
-                    self.assertIs(registry.get_entry('browser_exec',scope=str(home)).handler,baseline)
+                    custom_registered(False)
+                    unchanged_native_and_suppression()
                     self.assertEqual(publications,['StagedUpdate','Selection','Selection','Selection'])
             finally:
                 with patch.dict(os.environ,env):manager.unload()

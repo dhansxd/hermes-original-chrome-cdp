@@ -28,7 +28,7 @@ def main():
     out=Path(tempfile.mkdtemp(prefix='chrome-session-isolation-',dir=Path.home()/'.hermes/cache/scratch'))
     home=out/'host';home.mkdir();data=out/'chrome';data.mkdir()
     os.environ['HERMES_HOME']=str(home)
-    (home/'config.yaml').write_text('browser:\n  backend: browser-use\n  cloud_provider: original-chrome-default\nplugins:\n  entries:\n    original-chrome-default:\n      granted_capabilities: [tools.override]\n')
+    (home/'config.yaml').write_text('browser:\n  backend: browser-use\n  cloud_provider: original-chrome-default\nagent:\n  disabled_toolsets: [browser, browser-use]\n')
     report={'level':'registered-host + bounded worker + disposable GUI; not chat-native','checks':{},'raw':{}}
     report_lock=threading.RLock()
     manager=None;provider=None;inventory_url=None
@@ -46,7 +46,7 @@ def main():
     serving=threading.Thread(target=server.serve_forever,daemon=True);serving.start()
     url=f'http://127.0.0.1:{server.server_port}/'
     def dispatch(name,code,timeout=20):
-        raw=registry.dispatch('browser_exec',{'code':code,'timeout_s':timeout},scope=str(home),task_id='fixture-'+name,session_id='chat-'+name,session_key='route-'+name)
+        raw=registry.dispatch('browser_original_chrome_exec',{'code':code,'timeout_s':timeout},scope=str(home),task_id='fixture-'+name,session_id='chat-'+name,session_key='route-'+name)
         assert isinstance(raw,str)
         result=json.loads(raw)
         with report_lock:report['raw'].setdefault(name,[]).append(result);save()
@@ -68,9 +68,9 @@ def main():
         return found
     try:
         manager=PluginManager(scope_key=str(home))
-        manager._load_plugin(PluginManifest(name='original-chrome-default',source='user',path=str(ROOT),capabilities=['tools.override']))
+        manager._load_plugin(PluginManifest(name='original-chrome-default',source='user',path=str(ROOT),capabilities=[]))
         loaded=manager._plugins['original-chrome-default'];check('namespaced_registration',loaded.enabled)
-        registered=registry.get_entry('browser_exec',scope=str(home));assert registered is not None
+        registered=registry.get_entry('browser_original_chrome_exec',scope=str(home));assert registered is not None
         handler=registered.handler
         provider=inspect.getclosurevars(handler).nonlocals['provider'];provider.data=data.resolve();provider.workspace=out/'workspaces'
         for name in ('a','b'):

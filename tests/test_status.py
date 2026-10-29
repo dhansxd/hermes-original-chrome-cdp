@@ -16,9 +16,14 @@ class StatusTests(unittest.TestCase):
     def setUp(self):
         self.gui=patch('plugin.chrome_gui_snapshot',return_value={'status':'running_no_windows','window_count':0})
         self.gui.start();self.addCleanup(self.gui.stop)
+        policy=patch('plugin.native_browser_tools_disabled',return_value=True)
+        policy.start();self.addCleanup(policy.stop)
 
     def context(self):
         ctx=Mock()
+        import tempfile
+        temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup)
+        ctx.state.data_dir=Path(temporary.name)
         ctx.get_config.return_value=plugin.APPROVED_ACCOUNT
         ctx.has_capability.return_value=True
         return ctx
@@ -31,12 +36,27 @@ class StatusTests(unittest.TestCase):
                 patch('plugin.gui_launch') as launch,patch('plugin.ChromeProvider') as provider:
             status=plugin.status_snapshot(ctx)
         self.assertTrue(status['ready'])
+        self.assertTrue(status['checks']['native_browser_tools_disabled'])
+        self.assertFalse(status['terminal_tool_required'])
+        self.assertFalse(status['secret_output_filter'])
         self.assertEqual(status['browser_connection'],'not_probed')
         self.assertEqual(status['chrome_gui'],{'status':'running_no_windows','window_count':0})
         self.assertIn('current process only',status['accessibility_scope'])
         self.assertNotIn(plugin.APPROVED_ACCOUNT,json.dumps(status))
         verify.assert_called_once_with(plugin.PERSONAL,plugin.APPROVED_ACCOUNT)
         launch.assert_not_called();provider.assert_not_called()
+
+    def test_native_browser_enabled_makes_status_unready_without_launch(self):
+        ctx=self.context()
+        with patch('plugin.browser_config',return_value={'cloud_provider':plugin.NAME}), \
+                patch('plugin.native_browser_tools_disabled',return_value=False), \
+                patch('plugin.verify_account'),patch('plugin.gui_identity'), \
+                patch('plugin.accessibility_trusted',return_value=True),patch('plugin.gui_launch') as launch:
+            status=plugin.status_snapshot(ctx)
+        self.assertFalse(status['ready'])
+        self.assertIn('browser_native_tools_enabled',status['failures'])
+        self.assertFalse(status['checks']['native_browser_tools_disabled'])
+        launch.assert_not_called()
 
     def test_failures_are_fixed_and_never_expose_config_or_profile_error_text(self):
         ctx=self.context()
@@ -63,13 +83,14 @@ class StatusTests(unittest.TestCase):
         self.assertFalse(status['checks']['profile_identity_verified'])
         verify.assert_not_called()
 
-    def test_status_command_exists_without_override_grant(self):
+    def test_status_command_exists_without_capability_grants(self):
         ctx=self.context();ctx.has_capability.return_value=False
         with patch('plugin.ChromeProvider') as provider:
             plugin.register(ctx)
         self.assertEqual(ctx.register_cli_command.call_args.kwargs['name'],'original-chrome')
         self.assertIn('original-chrome-status',{c.kwargs['name'] for c in ctx.register_command.call_args_list})
-        provider.assert_not_called()
+        provider.assert_called_once()
+        ctx.has_capability.assert_not_called()
 
     def test_slash_status_runs_same_snapshot_in_calling_process_without_tool_registration(self):
         ctx=self.context();plugin.register_status_command(ctx)

@@ -10,6 +10,16 @@ from public_result import model_result
 
 
 class PublicResultTests(unittest.TestCase):
+    def test_requested_text_and_artifact_path_are_preserved_without_secret_filter(self):
+        token='sk-'+'SYNTHETIC-ONLY-NotACredential'*3
+        value='SYNTHETIC-ONLY-quote"-slash\\-tab\t-雪\r\nend'
+        result={'success':True,'stdout':token+'\n'+value,
+                'screenshot_path':'/synthetic/'+token+'/image.png'}
+        public=model_result(result)
+        self.assertEqual(public['stdout'],result['stdout'])
+        self.assertEqual(public['screenshot_path'],result['screenshot_path'])
+        self.assertEqual(json.loads(json.dumps(public))['stdout'],result['stdout'])
+
     def test_output_keeps_stdout_and_preserves_private_input_unchanged(self):
         result={'success':True,'stdout':'Page says: Chrome /workspace/example\n雪',
             'backend':'private-backend','workspace':'/private/workspace',
@@ -34,7 +44,7 @@ class PublicResultTests(unittest.TestCase):
     def test_setup_errors_are_generic_but_operator_result_is_not_modified(self):
         for code in ('consent_press_timeout','safe_GUI_launch_unavailable',
                      'accessibility_permission_required','account_binding_mismatch',
-                     'browser_backend_unsupported','plugin_capability_required'):
+                     'browser_backend_unsupported','browser_native_tools_enabled','plugin_capability_required'):
             result={'success':False,'error':code+': private operator detail','uncertain':True}
             before=copy.deepcopy(result)
             with self.subTest(code=code):
@@ -60,16 +70,16 @@ class PublicResultTests(unittest.TestCase):
         self.assertNotIn('private',json.dumps(public))
         self.assertEqual(reports,before)
 
-    def test_image_bytes_survive_text_scrub_and_private_text_is_replaced(self):
+    def test_image_bytes_and_requested_text_survive_while_diagnostics_are_excluded(self):
         image={'type':'image_url','image_url':{'url':'data:image/png;base64,secret-image-bytes'}}
         result={'success':True,'stdout':'visible secret','_multimodal':True,
             'text_summary':'private backend details','content':[{'type':'text','text':'private path'},image],
             'meta':{'workspace':'/private'}}
         before=copy.deepcopy(result)
-        public=model_result(result,scrub=lambda text:text.replace('secret','[redacted]'))
+        public=model_result(result)
         self.assertTrue(public['_multimodal'])
         self.assertEqual(public['content'][1],image)
-        self.assertEqual(public['stdout'],'visible [redacted]')
+        self.assertEqual(public['stdout'],'visible secret')
         self.assertNotIn('private',public['text_summary'])
         self.assertNotIn('meta',public)
         self.assertEqual(result,before)

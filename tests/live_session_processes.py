@@ -27,11 +27,11 @@ def child(home,data):
     from tools.registry import registry
     home=Path(home);home.mkdir();data=Path(data)
     os.environ['HERMES_HOME']=str(home)
-    (home/'config.yaml').write_text('browser:\n  backend: browser-use\n  cloud_provider: original-chrome-default\nplugins:\n  entries:\n    original-chrome-default:\n      granted_capabilities: [tools.override]\n')
+    (home/'config.yaml').write_text('browser:\n  backend: browser-use\n  cloud_provider: original-chrome-default\nagent:\n  disabled_toolsets: [browser, browser-use]\n')
     manager=PluginManager(scope_key=str(home))
-    manager._load_plugin(PluginManifest(name='original-chrome-default',source='user',path=str(ROOT),capabilities=['tools.override']))
+    manager._load_plugin(PluginManifest(name='original-chrome-default',source='user',path=str(ROOT),capabilities=[]))
     loaded=manager._plugins['original-chrome-default'];assert loaded.enabled,loaded.error
-    registered=registry.get_entry('browser_exec',scope=str(home));assert registered is not None
+    registered=registry.get_entry('browser_original_chrome_exec',scope=str(home));assert registered is not None
     provider=inspect.getclosurevars(registered.handler).nonlocals['provider']
     provider.data=data.resolve();provider.workspace=home/'workspaces'
     # Wholly disposable root, but preserve its shared process exactly as the
@@ -43,7 +43,7 @@ def child(home,data):
         for line in sys.stdin:
             request=json.loads(line)
             if request.get('quit'):break
-            result=registry.dispatch('browser_exec',request,scope=str(home),task_id='process-'+home.name,session_id='chat-'+home.name,session_key='route-'+home.name)
+            result=registry.dispatch('browser_original_chrome_exec',request,scope=str(home),task_id='process-'+home.name,session_id='chat-'+home.name,session_key='route-'+home.name)
             assert isinstance(result,str)
             print(result,flush=True)
     finally:manager.unload()
