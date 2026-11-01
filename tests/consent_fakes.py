@@ -23,6 +23,8 @@ def exact_sheet():
     ax.text=lambda node,key:data.get(node,{}).get(key,'')
     ax.children=lambda node:{1:[2],2:[3,4,5]}.get(node,[])
     ax.attr=lambda node,key:{2:1,3:2,4:2,5:2}.get(node) if key=='AXParent' else None
+    ax.geometry_state=lambda sheet:((1000,700),(500,300))
+    ax.mouse_down=lambda:False
     sheet=ax.describe_sheet(2,42,1)
     sheet['host']={'started':1,'exe':'/fixture/chrome','kind':'main','bound':True}
     return ax,sheet,data

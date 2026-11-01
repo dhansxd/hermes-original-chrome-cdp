@@ -223,7 +223,11 @@ def register_status_command(ctx):
         description='Read-only original Chrome readiness and Accessibility in this Hermes process')
 
 
-def gui_launch(data,seed_url=None):
+def gui_launch(data,seed_url=None,*,profile_directory='Default'):
+    if (not isinstance(profile_directory,str) or not 0<len(profile_directory)<=128
+        or not profile_directory.isprintable() or profile_directory in {'.','..','Guest Profile','System Profile'}
+        or '/' in profile_directory or '\\' in profile_directory):
+        raise ValueError('invalid explicit Chrome profile directory')
     import psutil
     destination=gui_identity()
     def browsers():
@@ -241,7 +245,7 @@ def gui_launch(data,seed_url=None):
             except psutil.NoSuchProcess:continue
         return found
     browsers()
-    args=['/usr/bin/open','-n','-g','-a',str(CHROME),'--args',f'--user-data-dir={data}','--profile-directory=Default']
+    args=['/usr/bin/open','-n','-g','-a',str(CHROME),'--args',f'--user-data-dir={data}',f'--profile-directory={profile_directory}']
     if data.resolve()!=PERSONAL.resolve():args+=['--remote-debugging-port=0','--no-first-run','--no-default-browser-check']
     if seed_url:args+=['--new-window',seed_url]
     env={'HOME':str(Path.home()),'PATH':'/usr/bin:/bin','TMPDIR':str(Path.home()/'.hermes/cache/scratch')}
@@ -292,6 +296,14 @@ class ChromeProvider(BrowserProvider):
         self._setup_lock=threading.RLock()
         self._ownership_journal=None
         self._runtime_snapshot=None;self._resource_watch=None;self._observer_type=None
+
+    @property
+    def profile_path(self):
+        # Registered Hermes provider always stays Default; no setting/tool override.
+        return self.data/'Default'
+
+    def _launch_seed(self,seed_url):
+        gui_launch(self.data,seed_url)
 
     @property
     def workspace(self):
@@ -346,7 +358,7 @@ class ChromeProvider(BrowserProvider):
                     from .ownership_journal import OwnershipJournal
                 else:
                     from ownership_journal import OwnershipJournal
-                self._ownership_journal=OwnershipJournal(self.workspace/'ownership',self.data)
+                self._ownership_journal=OwnershipJournal(self.workspace/'ownership',self.data,profile_path=self.profile_path)
             return self._ownership_journal
 
     def _checkpoint(self,entry,state):
@@ -495,7 +507,7 @@ class ChromeProvider(BrowserProvider):
                 self._ownership_journal.retire(entry['journal_id'],seed_absent=True)
                 entry.pop('journal_id',None);entry['state']=None
                 raise RuntimeError('session_cleanup_in_progress: no GUI launch sent')
-        gui_launch(self.data,seed_url)
+        self._launch_seed(seed_url)
         import psutil
         deadline=time.monotonic()+20;waiting_for_seed=False
         while time.monotonic()<deadline:
@@ -569,7 +581,7 @@ class ChromeProvider(BrowserProvider):
                 entry.pop('observer') # Cleanup may reconnect; ordinary work never does.
             if not entry.get('endpoint'):raise RuntimeError('browser_endpoint_unavailable')
             self._runtime()
-            observer=self._observer_type(entry['endpoint'],str(self.data/'Default'))
+            observer=self._observer_type(entry['endpoint'],str(self.profile_path))
             entry['observer']=observer
             if hasattr(observer,'bind'):observer.bind(entry)
             return observer
@@ -760,7 +772,7 @@ class ChromeProvider(BrowserProvider):
                     self._prepare_observer(entry)
             endpoint=entry['endpoint']
             workspace=self.workspace/str(abs(hash(key)))
-            request={'endpoint':endpoint,'profile':str(self.data/'Default'),'workspace':str(workspace),'state':entry['state'],'code':args.get('code','')}
+            request={'endpoint':endpoint,'profile':str(self.profile_path),'workspace':str(workspace),'state':entry['state'],'code':args.get('code','')}
             result=self._worker(request,timeout,entry=entry)
             if result.get('state'):self._checkpoint(entry,result.pop('state'))
             current=entry.get('state') or {}
@@ -847,7 +859,7 @@ class ChromeProvider(BrowserProvider):
             if not state and not entry.get('journal_id') and not entry.get('endpoint'):
                 return {'success':True,'cleanup_complete':True,'no_window_launched':True}
             return {'success':False,'error':'ownership_lost_after_timeout: no targets adopted for cleanup'}
-        result=self._worker({'endpoint':entry['endpoint'],'state':state,'profile':str(self.data/'Default'),
+        result=self._worker({'endpoint':entry['endpoint'],'state':state,'profile':str(self.profile_path),
             'workspace':str(self.workspace),'cleanup':True},30,entry=entry)
         if result.get('seed_absent'):
             # Compatibility defense for an older worker: absence of a marker

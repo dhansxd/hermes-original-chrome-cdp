@@ -224,3 +224,43 @@ Native chat browser_exec + HTTP credits:200/5.651451detik,23complete DOM reads d
 Registered current-source + HTTP: startup200/4.497470detik dengan18complete native reads; worker SIGTERM menghasilkan expected502 dengan confirmed cleanup dan8reads; credits-followup200/4.495089detik dengan17reads. Plugin cancel tumpang tindih1.698167detik dengan HTTP read yang tetap same-document; subsequent read dan exact API-owned close200. Chrome process generation tetap sama;0generation requests. Service uji8776 ditutup.
 
 Bukti privat: `reports/cleanup-coexistence-20261028-012005/`. Tidak ada restart/delegasi/core edit. Build/compile dan staged/outgoing secret scan lulus. Checkpoint source sudah di-commit dan di-push: API `5702b9e`, plugin `62f243f`; masing-masing SHA main remote sama dengan lokal. Source tidak berubah saat merge riwayat plugin. Hasil tersimpan di report publikasi lokal; pembaruan dokumentasi dipublikasikan terpisah.
+
+
+## Additional-profile probe extension for the separate gflow candidate
+
+The registered Hermes provider remains Default-only and approved-account-only.
+The separate gflow read-only profile probe may use an explicitly selected existing
+original profile, with exact path verification and its own ownership journal.
+Add narrow launch/journal hooks, a separately constructed unregistered probe
+provider, and preserve root-scoped consent coordination. No new Hermes tool,
+configuration profile selector, cookie copy, managed fallback or generation.
+Test the existing Default provider policy and full lifecycle suite before commit;
+commit/push to the owned remote only after the extension's live acceptance.
+
+
+### Profile-probe/resize verification checkpoint
+
+- Registered browser provider remains approved Default; no new Hermes tools or
+  profile selector are registered. Narrow profile path/launch hooks support the
+  separate unregistered gflow read-only probe and its exact-profile journal.
+- Source CLI Profile 7 account/credits acceptance passed. Default -> Profile 7 ->
+  Default and retained Default-peer cleanup passed. Fresh official Hermes runtime
+  registered browser work remained usable across the additional-profile probe.
+- A real earlier Default handshake timed out after AX reported Allow dispatch;
+  that receipt remains private. User reported resizing Chrome during the prompt.
+  The old fixed initial wait failed deterministic resize/drag tests. The new wait
+  restarts before dispatch on geometry changes or held mouse, without extending
+  its deadline or repeating dispatched actions.
+- Native GUI Zoom on an owned peer while another profile's debug prompt waited
+  produced geometry_resets=1 and successful automatic approval; both owners cleaned.
+  That coordinated test used a 120s harness budget and held the first actual
+  geometry observation for the GUI action. Production remains 15s; normal source
+  probes/paired sessions passed without that harness. Earlier mouse-corner harness
+  attempts did not resize and are retained as failed test coordination, not proof.
+- Failed seeds were cleaned only through provenance. A remaining absent seed's
+  journal was kept until the operator quit Chrome normally with only the profile
+  picker left; the ended-generation path then retired it. No user browsing tabs
+  were closed. Subsequent real cold start verified Default Flow credits and cleanup.
+- No video submitted, cookie/profile copy, macOS permission change or Hermes core
+  edit occurred. Future paid multi-profile work and broader backend integration
+  are outside this read-only extension.

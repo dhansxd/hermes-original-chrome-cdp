@@ -93,10 +93,14 @@ def _state(value):
 
 class OwnershipJournal:
     """Small private per-provider journal; all browser actions stay in parent."""
-    def __init__(self,folder,data_root,*,owner=None,scope='',owner_alive=None):
+    def __init__(self,folder,data_root,*,owner=None,scope='',owner_alive=None,profile_path=None):
         self.folder=Path(folder).resolve()
         self.data_root=Path(data_root).resolve()
-        self.profile=str(self.data_root/'Default')
+        selected=Path(profile_path) if profile_path is not None else self.data_root/'Default'
+        if (not selected.is_absolute() or selected.is_symlink()
+            or selected.resolve().parent!=self.data_root or selected.name in {'.','..','Guest Profile','System Profile'}):
+            raise JournalError('ownership_journal_profile_mismatch')
+        self.profile=str(selected.resolve())
         self.scope=hashlib.sha256((str(self.folder)+'\0'+self.profile+'\0'+scope).encode()).hexdigest()
         if owner is None:
             import psutil

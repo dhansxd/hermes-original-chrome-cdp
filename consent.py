@@ -66,6 +66,7 @@ class ConsentTrace:
                      'identity_checks':0,'identity_ms':0,'ax_windows_seen':0,
                      'ax_roots_without_sheet':0,'ax_depth_cutoffs':0,'scan_errors':0,'transient_ax_reads':0,
                      'press_attempted':False,'press_dispatched':False,'press_outcome':'not_attempted',
+                     'geometry_resets':0,'drag_waits':0,
                      'first_sheet_ms':None,'press_ms':None,
                      'transport_phase':'not_started','cleanup_outcome':'not_attempted','failure_code':None}
     def add(self,key,value=1):self.values[key]+=value
@@ -98,7 +99,8 @@ def failure_code(exc):
              'consent_ax_tree_depth','consent_sheet_unbound','consent_changed_before_press',
              'consent_press_not_confirmed','consent_accessibility','consent_cancel_not_owned',
              'consent_cancel_identity_changed','consent_cancel_not_dismissed',
-             'consent_press_already_attempted','consent_attach_uncorrelated'}
+             'consent_press_already_attempted','consent_attach_uncorrelated',
+             'consent_geometry_unavailable','consent_geometry_changed_before_press'}
     message=str(exc)
     for prefix in ('consent_attach_failed: ','consent_preflight_failed: '):
         if message.startswith(prefix):message=message[len(prefix):]
@@ -250,7 +252,7 @@ def _connect_attempt(endpoint, data_root, connect, *, backend=None, timeout=15,d
             except Exception as exc:
                 # Discard invalid/busy AX snapshots; scan rebuilds host/window refs.
                 # Retry observation only within this same pending handshake.
-                if (str(exc) in {'consent_ax_read:-25202','consent_ax_read:-25204'}
+                if (str(exc) in {'consent_ax_read:-25202','consent_ax_read:-25204','consent_geometry_changed_before_press'}
                     and (not pressed or (isinstance(backend,MacConsent)
                                          and trace.values.get('press_dispatched') is False))):
                     # Native pre-action reads can become stale while a dialog
@@ -311,6 +313,11 @@ class AX:
         sig(self.ax,'AXUIElementPerformAction',c.c_int,[p,p])
         sig(self.ax,'AXUIElementGetPid',c.c_int,[p,c.POINTER(c.c_int)])
         sig(self.ax,'AXUIElementSetMessagingTimeout',c.c_int,[p,c.c_float])
+        sig(self.ax,'AXValueGetValue',c.c_bool,[p,c.c_int,p])
+        sig(self.ax,'CGEventSourceButtonState',c.c_bool,[c.c_int,c.c_uint])
+        class Pair(c.Structure):
+            _fields_=[('first',c.c_double),('second',c.c_double)]
+        self._pair_type=Pair
         sig(self.cf,'CFStringCreateWithCString',p,[p,c.c_char_p,c.c_uint])
         sig(self.cf,'CFStringGetCString',c.c_bool,[p,c.c_char_p,i,c.c_uint])
         sig(self.cf,'CFArrayGetCount',i,[p]);sig(self.cf,'CFArrayGetValueAtIndex',p,[p,i])
@@ -342,6 +349,32 @@ class AX:
     def children(self,node):
         value=self.attr(node,'AXChildren')
         return [self.cf.CFArrayGetValueAtIndex(value,i) for i in range(self.cf.CFArrayGetCount(value))] if value else []
+    def mouse_down(self):
+        return any(self.ax.CGEventSourceButtonState(0,button) for button in (0,1,2))
+    def geometry(self,node):
+        result=[]
+        for name,kind in (('AXPosition',1),('AXSize',2)):
+            value=self.attr(node,name);pair=self._pair_type()
+            if not value or not self.ax.AXValueGetValue(value,kind,self.c.byref(pair)):
+                raise ConsentError('consent_geometry_unavailable')
+            result.extend((pair.first,pair.second))
+        if not all(math.isfinite(v) for v in result) or result[2]<=0 or result[3]<=0:
+            raise ConsentError('consent_geometry_unavailable')
+        return tuple(result)
+    def geometry_state(self,sheet):
+        # Chromium resets input protection on window bounds changes. Include
+        # other windows of the same host process, not just the retained sheet.
+        start=len(self.refs)
+        try:
+            app=self.ax.AXUIElementCreateApplication(sheet['pid']);self.refs.append(app)
+            values=self.attr(app,'AXWindows')
+            windows=[self.cf.CFArrayGetValueAtIndex(values,i) for i in range(self.cf.CFArrayGetCount(values))] if values else []
+            frames=tuple(sorted((int(self.cf.CFHash(w)),self.geometry(w)) for w in windows
+                                if self.text(w,'AXSubrole')=='AXStandardWindow'))
+            return frames,self.geometry(sheet['window']),self.geometry(sheet['sheet'])
+        finally:
+            for ref in reversed(self.refs[start:]):self.cf.CFRelease(ref)
+            del self.refs[start:]
     def nodes(self,node,depth=0):
         if depth>20:raise ConsentError('consent_ax_tree_depth')
         yield node
@@ -600,16 +633,25 @@ class MacConsent:
         # Re-read host identity/sheets/socket at action time; no title-only click.
         if not pending():return
         with self.ax.pin(sheet):
-            # Chromium's macOS dialog input protection lasts 500ms after showing
-            # or a geometry change. Allow the initial dialog to settle before
-            # our sole action, then revalidate this exact retained object. This
-            # does not disable protection or retry an ignored/unknown action.
+            # Chromium resets input protection on widget bounds changes. Wait
+            # for a stationary host and released mouse, not a fixed delay from
+            # first display. No protection bypass or repeat of a dispatched action.
+            geometry=self.ax.geometry_state(sheet)
             settled_at=time.monotonic()+1
+            was_dragging=False
             if self.trace is not None:self.trace.values['phase']='settling'
             while True:
                 if not pending():
                     if self.trace is not None:self.trace.values['press_outcome']='pending_ended'
                     return
+                current=self.ax.geometry_state(sheet)
+                dragging=self.ax.mouse_down()
+                if current!=geometry or dragging or was_dragging:
+                    if self.trace is not None:
+                        if current!=geometry:self.trace.add('geometry_resets')
+                        if dragging:self.trace.add('drag_waits')
+                    geometry=current;settled_at=time.monotonic()+1
+                was_dragging=dragging
                 budget=self.budget('settling',.05)
                 pause=min(budget,settled_at-time.monotonic())
                 if pause<=0:break
@@ -620,6 +662,8 @@ class MacConsent:
                 raise ConsentError('consent_changed_before_press')
             def safe():
                 self.budget('press')
+                if self.ax.mouse_down() or self.ax.geometry_state(fresh)!=geometry:
+                    raise ConsentError('consent_geometry_changed_before_press')
                 return pending() and self.correlate()
             self.ax.press(fresh,pending=safe)
 

@@ -2,7 +2,7 @@
 
 A macOS browser provider that runs Hermes browser work in the installed Google Chrome GUI and its original `Default` profile. Existing logins stay in Chrome. The plugin creates and controls its own windows, and leaves unrelated user windows alone.
 
-This is a personal build: production use is restricted to the account allowlist in `plugin.py`. Configuring a different account does not expand that scope. It does not copy profiles, export cookies, or fall back to a headless or cloud browser.
+This is a personal build: registered Hermes browser work is restricted to the account allowlist in `plugin.py`. Configuring a different account does not expand that scope. It does not copy profiles, export cookies, or fall back to a headless or cloud browser.
 
 ## Requirements
 
@@ -148,3 +148,27 @@ Vendored browser helper code retains its [upstream license](vendor/LICENSE.brows
 GUI batches on Flow share a process-safe lease with the companion Flow service, keyed by the verified original profile. Flow URL aliases use one key. Other sites remain independent. Each script releases its leases on completion, exception, or process exit; a busy batch is not replayed automatically. Runtime source snapshots include the lease helper.
 
 This is cooperative coordination, not a separate login session. Manual activity and other programs do not honor the lease. Navigation through a redirect may reach Flow before its destination is known; subsequent GUI helpers check the actual origin before acting. The plugin continues to own and clean only its own targets.
+
+
+## Explicit profile probe contract (0.3.3)
+
+The registered Hermes provider and browser tools remain fixed to approved Default.
+A separate, unregistered `profile_probe.ProfileProbeProvider` supplies owned
+endpoint plumbing for the local gflow candidate's explicit read-only profile probe.
+It requires an existing original directory and expected account, checks local
+principal metadata without cookies, and binds its journal to that exact profile.
+The gflow caller additionally validates directory identity and the actual GUI
+profile path/Flow account. It cannot use this provider as a browser execution tool;
+video/recovery selection is not expanded.
+
+All profiles share the Chrome-root consent guard. Each probe keeps its own seed,
+socket, journal and target, with profile-scoped GUI/Flow leases. Account labels
+never choose another profile automatically. No Chrome root, cookies or profile
+contents are copied.
+
+Approval waits for stationary host-window/sheet geometry and released mouse
+buttons within the existing deadline. A resize resets the pre-action wait;
+continuous interaction may still exhaust that deadline. Only observation before
+dispatch may restart. A dispatched/unknown click or page action is never replayed.
+Chrome window geometry and button state are read through the existing GUI process;
+this does not change macOS permissions or disable Chrome input protection.
