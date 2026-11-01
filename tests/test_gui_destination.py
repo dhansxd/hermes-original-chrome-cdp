@@ -15,6 +15,7 @@ class DestinationTests(unittest.TestCase):
    if argv==['/bin/launchctl','managername']:return Mock(returncode=0,stdout='Background')
    return Mock(returncode=0,stdout=GUI.replace('gui/501','pid/42') if argv[-1]=='pid/42' else GUI)
   proc=Mock(pid=42,info={'name':'Google Chrome','exe':str(plugin.CHROME/'Contents/MacOS/Google Chrome'),'cmdline':['--user-data-dir=/fixture'],'create_time':10})
+  proc.name.return_value='Google Chrome'
   proc.as_dict.side_effect=lambda **kw:dict(proc.info)
   with patch('plugin.subprocess.run',side_effect=run),patch('plugin.ctypes.CDLL') as lib,patch('plugin.os.getuid',return_value=501),patch('plugin.os.geteuid',return_value=501),patch('plugin.os.stat',return_value=Mock(st_uid=501)):
    def info(request,sid,flags):
@@ -34,6 +35,7 @@ class DestinationTests(unittest.TestCase):
    text=GUI.replace('gui/501','pid/42').replace('100002','100024') if argv[-1]=='pid/42' else GUI
    return Mock(returncode=0,stdout=text)
   proc=Mock(pid=42,info={'name':'Google Chrome','exe':str(plugin.CHROME/'Contents/MacOS/Google Chrome'),'cmdline':['--user-data-dir=/fixture'],'create_time':10})
+  proc.name.return_value='Google Chrome'
   proc.as_dict.side_effect=lambda **kw:dict(proc.info)
   with patch('plugin.subprocess.run',side_effect=run),patch('plugin.ctypes.CDLL') as lib,patch('plugin.os.getuid',return_value=501),patch('plugin.os.geteuid',return_value=501),patch('plugin.os.stat',return_value=Mock(st_uid=501)),patch('psutil.process_iter',return_value=[proc]):
    def info(request,sid,flags):

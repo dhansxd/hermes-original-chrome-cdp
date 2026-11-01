@@ -21,6 +21,7 @@ class ProcessSnapshotTests(unittest.TestCase):
             snapshot = {'pid': 42, 'exe': str(exe), 'create_time': 10,
                         'cmdline': ['--user-data-dir=' + directory]}
             proc = Mock(pid=42, info={'exe': str(exe), 'cmdline': snapshot['cmdline']})
+            proc.name.return_value='Google Chrome'
             proc.as_dict.return_value = snapshot
             backend = consent.MacConsent(directory, 5000)
             backend.ax = Mock()
@@ -40,6 +41,7 @@ class ProcessSnapshotTests(unittest.TestCase):
 
     def test_gui_launch_uses_its_own_snapshot_not_a_peer_info_dict(self):
         proc = Mock(pid=42, info={})
+        proc.name.return_value='Google Chrome'
         proc.as_dict.return_value = {'name': 'Google Chrome', 'exe': '/fixture/Chrome',
                                      'cmdline': ['--user-data-dir=/fixture'], 'create_time': 10}
         with patch('psutil.process_iter', return_value=[proc]), \
@@ -61,6 +63,7 @@ class ProcessSnapshotTests(unittest.TestCase):
             snapshot = {'name': 'Google Chrome', 'exe': '/fixture/Chrome',
                         'cmdline': ['--user-data-dir=' + directory], 'create_time': 1}
             proc = Mock(pid=42, info={k: v for k, v in snapshot.items() if k != 'create_time'})
+            proc.name.return_value='Google Chrome'
             proc.as_dict.return_value = snapshot
             proc.create_time.return_value = 1
             proc.net_connections.return_value = [NS(status='LISTEN', laddr=NS(port=12345, ip='127.0.0.1'))]
@@ -78,6 +81,7 @@ class ProcessSnapshotTests(unittest.TestCase):
 
     def test_cleanup_process_scan_uses_local_metadata(self):
         proc = Mock(pid=42, info={})
+        proc.name.return_value='Google Chrome'
         proc.as_dict.return_value = {'name': 'Google Chrome', 'exe': '/fixture/Chrome',
                                      'cmdline': ['--user-data-dir=/fixture']}
         provider = plugin.ChromeProvider(data='/fixture')
@@ -98,6 +102,7 @@ class ProcessSnapshotTests(unittest.TestCase):
             data = Path(directory)
             (data / 'DevToolsActivePort').write_text('12345\n/devtools/browser/current\n')
             proc = Mock(pid=42, info={})
+            proc.name.return_value='Google Chrome'
             proc.as_dict.return_value = {'name': 'Google Chrome', 'cmdline': ['--user-data-dir=' + directory]}
             proc.exe.return_value = '/fixture/Chrome'
             proc.create_time.return_value = 10

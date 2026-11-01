@@ -1,3 +1,20 @@
+## Maintenance source: protected process metadata (2026-11-02)
+
+Actual gflow same-job recovery exposed a macOS psutil SystemError wrapping a
+permission-denied command-line read for an unrelated process. Chrome discovery
+now reads the process name first, skips unrelated protected processes, and never
+treats unreadable Chrome arguments as the default root. Named unreadable Chrome
+blocks GUI launch/cleanup admission; endpoint return still requires one positive
+current executable/root/listener/creation-time/publication proof. Other SystemError
+causes remain explicit. No core, browser grant, cookie or profile change.
+
+All 487 plugin unit tests pass; real namespaced registration/unload/schema/picker
+checks pass in the official Hermes runtime. The separate native GUI capability
+BDD passes both scenarios after this source fix. API/manifest 0.3.4 stays compatible
+with the installed pilot10 consumer; this is a source maintenance revision, not a
+new protocol or an assertion that the broader native gflow release is complete.
+Publication and active-gateway reload are verified separately.
+
 ## Checkpoint terbaru: pengaman akun terpasang (2026-11-01)
 
 Plugin0.3.4/code e2625e9 sudah dipublikasikan, dipasang lewat updater resmi dan

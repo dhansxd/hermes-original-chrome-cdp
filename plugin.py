@@ -14,6 +14,40 @@ PERSONAL=Path.home()/'Library/Application Support/Google/Chrome'
 APPROVED_ACCOUNT='developer@example.invalid'
 
 
+def _chrome_process_info(process,*,with_started=True,strict_named=False):
+    """Read command arguments only for a readable, positively named Chrome PID."""
+    import math,psutil
+    named=False
+    def unreadable():
+        if strict_named and named:raise RuntimeError('chrome_process_identity_unavailable')
+        return None
+    try:
+        if process.name()!='Google Chrome':return None
+        named=True
+        attrs=['name','exe','cmdline']+(['create_time'] if with_started else [])
+        info=process.as_dict(attrs=attrs)
+        # as_dict can suppress AccessDenied into None. Unreadable arguments
+        # never mean an empty/default-root Chrome command line.
+        if (info.get('name')!='Google Chrome' or not isinstance(info.get('exe'),str)
+            or not info['exe'] or not isinstance(info.get('cmdline'),list)
+            or any(not isinstance(arg,str) for arg in info['cmdline'])):return unreadable()
+        if with_started:
+            started=info.get('create_time')
+            if type(started) not in (int,float) or not math.isfinite(started) or started<=0:return unreadable()
+        return info
+    except psutil.NoSuchProcess:return None
+    except (psutil.AccessDenied,PermissionError):return unreadable()
+    except SystemError as error:
+        # macOS psutil may wrap a denied sysctl command-line read in a
+        # SystemError. Suppress only that permission chain, never other bugs.
+        cause=error.__cause__ or error.__context__
+        for _ in range(8):
+            if isinstance(cause,(PermissionError,psutil.AccessDenied)):return unreadable()
+            if cause is None:break
+            cause=cause.__cause__ or cause.__context__
+        raise
+
+
 def expected_account(get_setting=None):
     # Production receives PluginContext.get_config; direct callers have no
     # ambient settings fallback and must supply their own explicit dependency.
@@ -247,8 +281,8 @@ def gui_launch(data,seed_url=None,*,profile_directory='Default'):
         found=[]
         for p in psutil.process_iter():
             try:
-                info=p.as_dict(attrs=['name','exe','cmdline','create_time'])
-                if info['name']!='Google Chrome':continue
+                info=_chrome_process_info(p,strict_named=True)
+                if info is None:continue
                 args=info['cmdline'] or []
                 root=Path(next((a.split('=',1)[1] for a in args if a.startswith('--user-data-dir=')),str(PERSONAL))).resolve()
                 if root!=data.resolve():continue
@@ -445,8 +479,8 @@ class ChromeProvider(BrowserProvider):
         owners=[]
         for process in psutil.process_iter():
             try:
-                info=process.as_dict(attrs=['name','exe','cmdline','create_time'])
-                if info['name']!='Google Chrome':continue
+                info=_chrome_process_info(process)
+                if info is None:continue
                 args=info['cmdline'] or []
                 root=Path(next((a.split('=',1)[1] for a in args if a.startswith('--user-data-dir=')),str(PERSONAL))).resolve()
                 if root!=self.data or not chrome_executable(info['exe']):continue
@@ -554,8 +588,8 @@ class ChromeProvider(BrowserProvider):
         found=[]
         for proc in psutil.process_iter():
             try:
-                info=proc.as_dict(attrs=['name','exe','cmdline'])
-                if info['name']!='Google Chrome':continue
+                info=_chrome_process_info(proc,with_started=False,strict_named=True)
+                if info is None:continue
                 args=info['cmdline'] or []
                 root=Path(next((v.split('=',1)[1] for v in args if v.startswith('--user-data-dir=')),str(PERSONAL))).resolve()
                 if root==self.data and chrome_executable(info['exe']):found.append(proc)

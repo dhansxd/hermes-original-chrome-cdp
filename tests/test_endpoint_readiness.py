@@ -12,6 +12,7 @@ class ReadinessTests(unittest.TestCase):
    provider=ChromeProvider(data=data,workspace=data/'work');entry={}
    started=f.stat().st_mtime+1;calls=[]
    proc=Mock(pid=42,info={'name':'Google Chrome','exe':str(CHROME/'Contents/MacOS/Google Chrome'),'cmdline':['--user-data-dir='+str(data)],'create_time':started})
+   proc.name.return_value='Google Chrome'
    proc.as_dict.side_effect=lambda **kw:dict(proc.info)
    proc.create_time.return_value=started
    proc.net_connections.return_value=[Mock(status='LISTEN',laddr=Mock(port=12345,ip='127.0.0.1'))]
@@ -28,6 +29,7 @@ class ReadinessTests(unittest.TestCase):
    data=Path(d);(data/'DevToolsActivePort').write_text('12345\n/devtools/browser/current\n')
    provider=ChromeProvider(data=data,workspace=data/'work');entry={}
    proc=Mock(pid=42)
+   proc.name.return_value='Google Chrome'
    proc.as_dict.return_value={'name':'Google Chrome','exe':str(CHROME/'Contents/MacOS/Google Chrome'),
                              'cmdline':['--user-data-dir='+str(data)],'create_time':1}
    proc.create_time.return_value=1
@@ -46,6 +48,7 @@ class ReadinessTests(unittest.TestCase):
    data=Path(d);(data/'DevToolsActivePort').write_text('12345\n/devtools/browser/current\n')
    provider=ChromeProvider(data=data,workspace=data/'work');entry={}
    proc=Mock(pid=42)
+   proc.name.return_value='Google Chrome'
    proc.as_dict.return_value={'name':'Google Chrome','exe':str(CHROME/'Contents/MacOS/Google Chrome'),
                              'cmdline':['--user-data-dir='+str(data)],'create_time':1}
    proc.create_time.return_value=1
