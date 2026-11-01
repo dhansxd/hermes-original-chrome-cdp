@@ -1,4 +1,29 @@
-## Checkpoint terbaru: resize parent Default nyata (2026-11-01)
+## Tahap aktif: koordinasi akun lintas profil (2026-11-01)
+
+Kandidat terisolasi, tanpa edit core/generasi/cookie copy. Tambahkan digest GAIA
+wajib dari primary email dan GAIA Local State/Preferences yang cocok; tidak ada
+fallback email. Urutan account lock lalu profile lock lalu GUI, satu anggaran
+tunggu. Record v2 tunggal per profil memuat digest profile/account immutable;
+scan terbatas menangkap utang akun lintas profil sesudah crash. Worker/helper dan
+observer menerima digest dari provider tepercaya, bukan browser script. Beda akun
+dan browsing situs lain tetap independen. Record v1 tanpa provenance akun ditolak
+tanpa migrasi otomatis, diselesaikan dengan instalasi cocok sebelum aktivasi.
+Registry nyata saat audit kosong; periksa ulang dan drain klien lama sebelum
+update/reload resmi serta kandidat baru. Rollback tidak boleh menyembunyikan utang
+v2. Jalur akun web sekunder/manual tetap di luar jaminan kooperatif ini.
+Plan implementasi dan matriks acceptance gflow berada di addendum Stage 6 serta
+SCENARIO.md pada plan original-chrome-cdp. Jalankan RED→GREEN, regresi penuh dan
+acceptance GUI nyata tanpa kredit; hanya source teruji dipublikasikan.
+
+Checkpoint source: 481 tes plugin lulus lewat bootstrap resmi. Gflow lulus 6.085
+tes offline, 13 skip, coverage 92,29%, lint/format/tipe dan enam gate repositori.
+Review statis independen tidak menemukan blocker produksi tersisa. Loopback
+sebelum aktivasi memakai dependency source kandidat khusus tes; pin instalasi
+produksi tetap ketat. Status operator versi4 juga memverifikasi identitas GAIA
+tanpa membuka browser/menampilkan ID. Instalasi aktif/gateway belum diklaim baru
+oleh checkpoint source ini; tetap perlu quiescence dan acceptance nyata.
+
+## Checkpoint sebelumnya: resize parent Default nyata (2026-11-01)
 
 Tes baru memakai plugin terpasang 0.3.3 dan kandidat gflow terpisah. Pengguna
 melakukan resize jendela Default yang menampung izin debug. Sebelum aksi, parent

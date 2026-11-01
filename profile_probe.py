@@ -5,6 +5,7 @@ provider supplies only owned endpoint plumbing to the gflow read-only probe.
 Visible Flow account verification remains the caller's required acceptance gate.
 """
 import json
+import hashlib
 import os
 import re
 import stat
@@ -45,6 +46,47 @@ def _read(directory,name):
         if not isinstance(value,dict):raise ValueError('invalid metadata')
         return value
     finally:os.close(fd)
+
+
+def flow_account_key(profile,expected):
+    """Required primary GAIA binding; return only a stable namespaced digest.
+
+    Chrome identity metadata is not proof of a manually selected secondary Flow
+    web account. gflow must still verify its visible account before generation.
+    """
+    from pathlib import Path
+    profile=Path(profile)
+    descriptors=[]
+    try:
+        if (not isinstance(expected,str) or not expected or len(expected)>320
+            or not expected.isprintable() or expected!=expected.strip()
+            or profile.parent.resolve()!=base.PERSONAL.resolve()
+            or profile.name in {'.','..','Guest Profile','System Profile'}):
+            raise ValueError('invalid account scope')
+        profile=profile.parent.resolve()/profile.name
+        root=os.open(profile.parent,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW);descriptors.append(root)
+        child=os.open(profile.name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=root);descriptors.append(child)
+        if not _trusted(os.fstat(root),True) or not _trusted(os.fstat(child),True):raise ValueError('unsafe directory')
+        meta=_read(root,'Local State')['profile']['info_cache'][profile.name]
+        prefs=_read(child,'Preferences')
+        entries=prefs.get('account_info')
+        if not isinstance(entries,list) or len(entries)>128:raise ValueError('invalid accounts')
+        matching=[a for a in entries if isinstance(a,dict) and isinstance(a.get('email'),str)
+                  and a['email'].casefold()==expected.casefold()]
+        gaia=meta.get('gaia_id')
+        if (not isinstance(meta,dict) or meta.get('user_name','').casefold()!=expected.casefold()
+            or meta.get('is_ephemeral',False) is not False or meta.get('force_signin_profile_locked',False) is not False
+            or len(matching)!=1 or not isinstance(gaia,str) or not re.fullmatch('[0-9]{6,32}',gaia)
+            or matching[0].get('gaia')!=gaia):raise ValueError('account identity mismatch')
+        for path,fd in ((profile.parent,root),(profile,child)):
+            current=os.stat(path,follow_symlinks=False)
+            if not _trusted(current,True) or _directory_identity(current)!=_directory_identity(os.fstat(fd)):
+                raise ValueError('directory changed')
+        return hashlib.sha256(('google-gaia-flow-account-v1\0'+gaia).encode()).hexdigest()
+    except (OSError,ValueError,KeyError,TypeError,AttributeError):
+        raise RuntimeError('account_binding_identity_unavailable: verify the configured original Chrome primary account; no Flow action sent') from None
+    finally:
+        for fd in reversed(descriptors):os.close(fd)
 
 
 class ProfileProbeProvider(base.ChromeProvider):

@@ -97,6 +97,26 @@ class FlowActions(unittest.TestCase):
                         'expression':'document.title', 'returnByValue':True}, 'session':'sid'}, state)
             wire.assert_not_called()
 
+    def test_parent_revalidates_account_after_worker_wait_before_wire(self):
+        from observer import ScopedObserver
+        wire=Mock(events=[],dialogs={},event_gaps={},detached_sessions=set())
+        state={'current':'owned','context':'ctx','owned':{'owned':1},'verified':True}
+        with patch('observer.Wire',return_value=wire),patch('observer.BoundBrowser') as browser:
+            browser.return_value.info.return_value={'url':'https://flow.google.com/project/x'}
+            observer=ScopedObserver('fixture',self.profile,account_key='a'*64,account_validator=lambda:'b'*64)
+            observer.sessions={'owned':'sid'}; observer._check_detached=Mock()
+            with self.assertRaisesRegex(RuntimeError,'account_binding_changed'):
+                observer.request({'method':'Runtime.evaluate','params':{'expression':'document.title','returnByValue':True},'session':'sid'},state)
+            wire.assert_not_called()
+
+    def test_missing_production_key_refuses_protected_helper_before_navigation(self):
+        original=self.home/'Library/Application Support/Google/Chrome/Default'
+        with contextlib.ExitStack() as stack:
+            browser,trusted,_=self.helpers('https://example.com',stack)
+            actions=public_helpers(browser,trusted,self.home,profile=original,lease_stack=stack)
+            with self.assertRaises(guard.FlowRecoveryRequired):actions['goto_url']('https://flow.google.com/')
+            browser.cdp.assert_not_called()
+
     def test_site_busy_preserves_partial_findings_without_batch_retry(self):
         from recovery import recovery_plan
         from public_result import model_result

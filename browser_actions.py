@@ -5,6 +5,7 @@ import math
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 
 if __package__:
@@ -40,7 +41,7 @@ def selector_text(value):
     return value
 
 
-def public_helpers(browser, trusted, workspace, profile=None, lease_stack=None):
+def public_helpers(browser, trusted, workspace, profile=None, lease_stack=None, *, account_key=None):
     """The interpreter sees only these callables and their plain-data results."""
     workspace = Path(workspace)
     leases = {}
@@ -48,18 +49,21 @@ def public_helpers(browser, trusted, workspace, profile=None, lease_stack=None):
 
     def reserve_origin(url):
         nonlocal activity
+        deadline=time.monotonic()+15
         # Always acquire account activity BEFORE the short GUI mutex. Reversing
         # these would block the running job from restoring/downloading its clip.
         if flow_reservation.protected_url(url) and activity is None:
             if profile is None or lease_stack is None:
                 raise PolicyError('browser_profile_unverified_for_shared_gui')
-            activity = lease_stack.enter_context(flow_reservation.acquire_browser(profile, timeout=15))
+            activity = lease_stack.enter_context(flow_reservation.acquire_browser(profile, timeout=15,account_key=account_key))
+        if activity is not None:
+            activity.check_binding()
         origin = gui_lease.origin_for_url(url)
         if origin is None or origin in leases:
             return
         if profile is None or lease_stack is None:
             raise PolicyError('browser_profile_unverified_for_shared_gui')
-        leases[origin] = lease_stack.enter_context(gui_lease.acquire(profile, origin, timeout=15))
+        leases[origin] = lease_stack.enter_context(gui_lease.acquire(profile, origin, timeout=max(0,deadline-time.monotonic())))
 
     def page_guard():
         url=browser.info().get('url','')

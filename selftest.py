@@ -12,6 +12,7 @@ START_SOURCE="goto_url('https://example.com')\nwait_for_load(timeout=10)\nprint(
 PARALLEL_SOURCE="wait(1)\nprint(read_page(limit=1000))\nprint('SELFTEST_WAIT_COMPLETE')"
 FINISH_SOURCE='print(finish_browser())'
 KNOWN_ERRORS=('account_binding_unconfigured','account_binding_not_approved','account_binding_mismatch',
+    'account_binding_identity_unavailable','account_binding_changed',
     'browser_native_tools_enabled','browser_provider_not_selected','browser_backend_unsupported',
     'browser_exec_timeout','browser_worker_failed','observer_lost','consent_accessibility',
     'consent_deadline','consent_attach_failed','consent_prompt_unavailable',

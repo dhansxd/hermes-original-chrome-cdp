@@ -20,6 +20,14 @@ def expected_account(get_setting=None):
     return get_setting('expected_account') if callable(get_setting) else None
 
 
+def verified_flow_account_key(profile,account):
+    if __package__:
+        from .profile_probe import flow_account_key
+    else:
+        from profile_probe import flow_account_key
+    return flow_account_key(profile,account)
+
+
 def browser_config():
     # Browser selection is a core setting, separate from plugin-owned settings.
     from hermes_cli.config import load_config_readonly
@@ -159,7 +167,7 @@ def chrome_gui_snapshot():
 def status_snapshot(ctx):
     checks={name:False for name in ('settings_readable','account_configured','account_approved',
         'browser_config_readable','provider_selected','browser_backend_supported','native_browser_tools_disabled',
-        'profile_identity_verified','gui_identity_ready','accessibility_trusted')}
+        'profile_identity_verified','flow_account_identity_verified','gui_identity_ready','accessibility_trusted')}
     failures=[]
     try:
         account=expected_account(ctx.get_config)
@@ -187,6 +195,11 @@ def status_snapshot(ctx):
             verify_account(PERSONAL,account)
             checks['profile_identity_verified']=True
         except Exception:failures.append('account_binding_mismatch')
+        if checks['profile_identity_verified']:
+            try:
+                verified_flow_account_key(PERSONAL.resolve()/'Default',account)
+                checks['flow_account_identity_verified']=True
+            except Exception:failures.append('account_binding_identity_unavailable')
     try:
         gui_identity()
         checks['gui_identity_ready']=True
@@ -194,7 +207,7 @@ def status_snapshot(ctx):
     try:checks['accessibility_trusted']=accessibility_trusted()
     except Exception:pass
     if not checks['accessibility_trusted']:failures.append('consent_accessibility')
-    return {'plugin':NAME,'status_version':3,'loaded_policy':'bounded-browser-script-v1',
+    return {'plugin':NAME,'status_version':4,'loaded_policy':'bounded-browser-script-v1',
         'ready':all(checks.values()),'checks':checks,'failures':failures,
         'chrome_gui':chrome_gui_snapshot(),
         'process':{'pid':os.getpid(),'executable':sys.executable},
@@ -461,6 +474,11 @@ class ChromeProvider(BrowserProvider):
         require_browser_route(self._read_browser_config(),self._native_browser_disabled())
         verify_account(self.data,account)
 
+    def flow_account_key(self):
+        if self.data!=PERSONAL.resolve():return None
+        account=getattr(self,'expected_account',None) or expected_account(self._get_setting)
+        return verified_flow_account_key(self.profile_path,account)
+
     @contextmanager
     def session_guard(self,key):
         # Count waiters before acquiring: removing an entry cannot split one
@@ -491,6 +509,7 @@ class ChromeProvider(BrowserProvider):
         # GUI explicitly selects Default BEFORE CDP work; never scan other contexts.
         # Prepare cleanup code before any window can exist. Official uninstall
         # may remove the source tree before runtime unload is dispatched.
+        entry['flow_account_key']=self.flow_account_key()
         self._runtime().ensure()
         self._start_resource_watch()
         record=self._journal().begin_seed()
@@ -581,7 +600,8 @@ class ChromeProvider(BrowserProvider):
                 entry.pop('observer') # Cleanup may reconnect; ordinary work never does.
             if not entry.get('endpoint'):raise RuntimeError('browser_endpoint_unavailable')
             self._runtime()
-            observer=self._observer_type(entry['endpoint'],str(self.profile_path))
+            kwargs={'account_key':entry['flow_account_key'],'account_validator':self.flow_account_key} if entry.get('flow_account_key') is not None else {}
+            observer=self._observer_type(entry['endpoint'],str(self.profile_path),**kwargs)
             entry['observer']=observer
             if hasattr(observer,'bind'):observer.bind(entry)
             return observer
@@ -593,6 +613,10 @@ class ChromeProvider(BrowserProvider):
     def _run_worker(self,request,timeout,*,entry,worker_path):
         # Preserve completed observations even if the worker dies before its
         # final result. Protocol frames are never exposed as browser content.
+        if not request.get('cleanup') and self.data==PERSONAL.resolve():
+            if self.flow_account_key()!=entry.get('flow_account_key'):
+                raise RuntimeError('account_binding_changed: original Chrome identity changed; no action sent')
+        request=dict(request,flow_account_key=entry.get('flow_account_key'))
         frames=[];errors=[]
         entry['partial_stdout']=''
         proxied=bool(request.get('endpoint'))

@@ -21,8 +21,10 @@ else:
 
 
 class ScopedObserver:
-    def __init__(self, endpoint, profile):
+    def __init__(self, endpoint, profile, *, account_key=None, account_validator=None):
         self.profile=Path(profile).resolve()
+        self.account_key=account_key
+        self.account_validator=account_validator
         self.data_root=Path(profile).parent
         self.wire=Wire(endpoint,str(self.data_root))
         self.sessions={};self.closed=False;self.state=None;self.auto_attached=False;self.entries=[];self.watched=set();self.closing_targets=set()
@@ -204,7 +206,12 @@ class ScopedObserver:
                 if method in {'Page.navigate','Target.createTarget'}:urls.append(params.get('url',''))
                 if (sensitive and target is not None and not info.get('url')
                     or any(flow_reservation.protected_url(url) for url in urls)):
-                    flow_reservation.deny_if_reserved(self.profile)
+                    key=getattr(self,'account_key',None)
+                    if key is not None:
+                        validator=getattr(self,'account_validator',None)
+                        if not callable(validator) or validator()!=key:
+                            raise RuntimeError('account_binding_changed: original Chrome identity changed; no action sent')
+                    flow_reservation.deny_if_reserved(self.profile,account_key=key)
             if (state or {}).get('verified') and method in ('Runtime.evaluate','Page.navigate','Input.dispatchMouseEvent','Input.dispatchKeyEvent'):
                 if any(w is not None and w not in self.native.bindings for w in state.get('owned',{}).values()):
                     self._probe_native()

@@ -18,6 +18,8 @@ class StatusTests(unittest.TestCase):
         self.gui.start();self.addCleanup(self.gui.stop)
         policy=patch('plugin.native_browser_tools_disabled',return_value=True)
         policy.start();self.addCleanup(policy.stop)
+        identity=patch('plugin.verified_flow_account_key',return_value='a'*64,create=True)
+        identity.start();self.addCleanup(identity.stop)
 
     def context(self):
         ctx=Mock()
@@ -57,6 +59,18 @@ class StatusTests(unittest.TestCase):
         self.assertIn('browser_native_tools_enabled',status['failures'])
         self.assertFalse(status['checks']['native_browser_tools_disabled'])
         launch.assert_not_called()
+
+    def test_missing_gaia_makes_readiness_unready_without_identity_disclosure(self):
+        ctx=self.context()
+        with patch('plugin.browser_config',return_value={'cloud_provider':plugin.NAME}), \
+                patch('plugin.verify_account'),patch('plugin.gui_identity'), \
+                patch('plugin.accessibility_trusted',return_value=True), \
+                patch('plugin.verified_flow_account_key',side_effect=RuntimeError('synthetic-private-gaia')):
+            status=plugin.status_snapshot(ctx)
+        self.assertFalse(status['ready'])
+        self.assertFalse(status['checks']['flow_account_identity_verified'])
+        self.assertIn('account_binding_identity_unavailable',status['failures'])
+        self.assertNotIn('synthetic-private',json.dumps(status))
 
     def test_failures_are_fixed_and_never_expose_config_or_profile_error_text(self):
         ctx=self.context()

@@ -45,7 +45,7 @@ plugins:
 
 Hermes owns plugin activation and the platform tool selection; use its commands to change them. The two global suppression entries keep native browser tools out of model sessions, including after this plugin is disabled or removed. The tools picker can change these entries when native browser groups are re-enabled, so verify them after changing tool selection. Read-only status reports `native_browser_tools_disabled`; it must be true. Start a new agent session after changing plugin or tool configuration.
 
-For migration from 0.2.x, install the reviewed 0.3.0 revision, enable `original_chrome`, and add both suppression entries. Replace saved calls to `browser_exec` or `browser_vault` with `browser_original_chrome_exec` or `browser_original_chrome_vault`. An old `tools.override` grant is no longer used; inspect remaining grants with `hermes plugins capabilities original-chrome-default`. Existing session definitions must be refreshed with a new session.
+For migration from 0.2.x, install the reviewed 0.3.4 revision, enable `original_chrome`, and add both suppression entries. Replace saved calls to `browser_exec` or `browser_vault` with `browser_original_chrome_exec` or `browser_original_chrome_vault`. An old `tools.override` grant is no longer used; inspect remaining grants with `hermes plugins capabilities original-chrome-default`. Existing session definitions must be refreshed with a new session.
 
 ```sh
 hermes plugins disable original-chrome-default
@@ -61,12 +61,17 @@ Keep the native suppression entries when disabling or uninstalling if browser ex
 
 ## Coordinating Flow work
 
-Version 0.3.2 supplies a cooperative reservation contract for the separately
+Version 0.3.4 supplies a cooperative reservation contract for the separately
 installed original-Chrome gflow candidate. One participating Flow job reserves
-its original profile through render. Browser helper calls on Flow or explicit
+its verified Google account and original profile through render. Two original
+profiles with the same stable GAIA share the account lock, including email aliases.
+The configured primary email and unique GAIA must match Local State/Preferences;
+missing/contradictory identity refuses without an email-only fallback. No raw GAIA
+or email is stored in reservation metadata. Browser helper calls on Flow or explicit
 Google identity URLs wait or return site-busy; browsing other websites and
-closing this session's owned tabs remain available. Flow setup takes activity,
-then GUI, then consent locks, in that order.
+closing this session's owned tabs remain available. Flow setup takes account,
+profile, then GUI, then consent locks, in that order. The account/profile/initial
+GUI waits share their remaining acquisition budget.
 
 A dirty-settings or possibly billed job leaves private bounded metadata after a
 process exits. Timeout/PID death never discard that state. Only recovery of the
@@ -75,10 +80,16 @@ profile or prompt is stored in the reservation. Normal browser-only batches leav
 no durable job record. The gflow adapter must require this version of the contract;
 older CDP candidates fail closed rather than operate without participation.
 
-This is client cooperation, not interception of redirects/background page scripts,
-or isolation from manual actions and other tools. Separate Chrome profiles using
-the same Google account are not yet coordinated by account identity. No guarantee
-is made for nonparticipating clients. Managed gflow A-E profiles are unchanged.
+Each v2 profile record is the single authoritative state, with immutable profile
+and account digests. Account debt survives a crash or a removed/changed profile.
+Account-aware clients refuse legacy v1 records without rewriting them: settle old
+work with its matching installation before upgrading. Drain old participants and
+reload officially before activation. Rollback also requires no unresolved v2 debt.
+
+This is client cooperation over the configured Chrome identity. It does not
+intercept redirects/background scripts, manual actions, secondary web-account
+switching or other tools. gflow verifies its visible Flow account before generation.
+Managed gflow A-E profiles are unchanged.
 
 ## Normal browser work
 
@@ -150,7 +161,7 @@ GUI batches on Flow share a process-safe lease with the companion Flow service, 
 This is cooperative coordination, not a separate login session. Manual activity and other programs do not honor the lease. Navigation through a redirect may reach Flow before its destination is known; subsequent GUI helpers check the actual origin before acting. The plugin continues to own and clean only its own targets.
 
 
-## Explicit profile probe contract (0.3.3)
+## Explicit profile probe contract (0.3.4)
 
 The registered Hermes provider and browser tools remain fixed to approved Default.
 A separate, unregistered `profile_probe.ProfileProbeProvider` supplies owned
@@ -162,7 +173,8 @@ profile path/Flow account. It cannot use this provider as a browser execution to
 video/recovery selection is not expanded.
 
 All profiles share the Chrome-root consent guard. Each probe keeps its own seed,
-socket, journal and target, with profile-scoped GUI/Flow leases. Account labels
+socket, journal and target, with profile-scoped GUI leases and account/profile Flow
+reservations. Account labels
 never choose another profile automatically. No Chrome root, cookies or profile
 contents are copied.
 
