@@ -1,4 +1,25 @@
-## Checkpoint terbaru: koordinasi gflow-cli CDP (2026-11-01)
+## Checkpoint terbaru: resize parent Default nyata (2026-11-01)
+
+Tes baru memakai plugin terpasang 0.3.3 dan kandidat gflow terpisah. Pengguna
+melakukan resize jendela Default yang menampung izin debug. Sebelum aksi, parent
+AXDocument cocok dengan seed milik percobaan sendiri; lebar/tinggi parent yang sama
+berubah. Guard mencatat delapan geometry reset, satu dispatch Allow dengan
+acknowledgement sekitar 5,1 detik pada deadline produksi 15 detik. Sampel terakhir
+mencatat mouse dilepas dan geometri stabil setidaknya 1,12 detik. Binding akun,
+baca halaman dan cleanup milik sesi lulus; probe CLI berikutnya tanpa instrumentasi
+juga lulus. Kredit tetap 408 dan tidak ada generasi. Instrumentasi tes hanya
+menahan sampel geometri nyata pertama sampai parent berubah ukuran; tidak
+memperpanjang timeout, menyuntikkan frame/klik atau menonaktifkan proteksi.
+Acceptance terkontrol resize parent yang sama kini lulus; urutan waktu kejadian
+lama tanpa instrumentasi dan cabang native held-mouse tidak dibuktikan oleh tes ini.
+Penyebab tunggal timeout lama tetap tidak dapat dibuktikan secara retroaktif.
+Pergerakan terus-menerus masih bisa
+menghabiskan deadline dan harus gagal terkontrol. Tidak ada perubahan kode produksi,
+core, konfigurasi, runtime terpasang, profil/cookie atau managed A-E pada tes ini.
+Tahap selanjutnya: pengaman mutasi berbasis akun Google lintas profil sebelum
+memperluas generasi berbayar. Bukti privat tetap di luar Git.
+
+## Checkpoint sebelumnya: koordinasi gflow-cli CDP (2026-11-01)
 
 Arahan percakapan terbaru mengizinkan pengaman plugin browser dan kandidat gflow-cli
 pada Default yang sama. Kode aktual 0.3.1 menjadi baseline; catatan historis di bawah
