@@ -74,6 +74,9 @@ def recovery_plan(source,result,*,attempts=0,remaining_s=0,
     if result.get('success') is True:return plan
     raw=result.get('error')
     code=raw.partition(':')[0] if isinstance(raw,str) else ''
+    if code in {'flow_resource_busy','flow_recovery_required'}:
+        return dict(plan,action='site_in_use' if code=='flow_resource_busy' else 'site_needs_recovery',
+                    reason='site_reserved')
     if code.startswith(_SETUP_PREFIXES):
         return dict(plan,action='operator_attention',reason='browser_unavailable')
     if code=='dialog_pending':

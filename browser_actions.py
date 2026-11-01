@@ -10,11 +10,12 @@ from pathlib import Path
 if __package__:
     from .execution_policy import HELPERS, PolicyError
     from .cdp_policy import validate_navigation_url
-    from . import gui_lease
+    from . import gui_lease, flow_reservation
 else:
     from execution_policy import HELPERS, PolicyError
     from cdp_policy import validate_navigation_url
     import gui_lease
+    import flow_reservation
 
 
 def navigation_url(value):
@@ -43,8 +44,16 @@ def public_helpers(browser, trusted, workspace, profile=None, lease_stack=None):
     """The interpreter sees only these callables and their plain-data results."""
     workspace = Path(workspace)
     leases = {}
+    activity = None
 
     def reserve_origin(url):
+        nonlocal activity
+        # Always acquire account activity BEFORE the short GUI mutex. Reversing
+        # these would block the running job from restoring/downloading its clip.
+        if flow_reservation.protected_url(url) and activity is None:
+            if profile is None or lease_stack is None:
+                raise PolicyError('browser_profile_unverified_for_shared_gui')
+            activity = lease_stack.enter_context(flow_reservation.acquire_browser(profile, timeout=15))
         origin = gui_lease.origin_for_url(url)
         if origin is None or origin in leases:
             return
@@ -78,6 +87,7 @@ def public_helpers(browser, trusted, workspace, profile=None, lease_stack=None):
 
     def goto_url(url):
         url=navigation_url(url)
+        page_guard()
         reserve_origin(url)
         result=browser.cdp('Page.navigate', url=url)
         if not isinstance(result,dict):raise RuntimeError('browser_navigation_failed: invalid_response')
@@ -198,10 +208,25 @@ def public_helpers(browser, trusted, workspace, profile=None, lease_stack=None):
         # names only; trusted network-idle helpers consume their own metadata.
         return [{'method': event['method']} for event in trusted['drain_events']()]
 
+    def target_guard(target):
+        if isinstance(target,dict):target=target.get('targetId') or target.get('target_id')
+        if not isinstance(target,str) or not target or len(target)>512:
+            raise PolicyError('browser_argument_out_of_range')
+        url=browser.info(target).get('url','')
+        # A renderer swap is not evidence that the destination is unrelated.
+        navigation_url(url)
+        reserve_origin(url)
+        return target
+
     def switch_tab(target,activate=False):
         if type(activate) is not bool:raise PolicyError('browser_argument_out_of_range')
+        target=target_guard(target)
         trusted['switch_tab'](target,activate=activate)
         return {'tab_id':browser.info()['targetId']}
+
+    def activate_tab(target):
+        target=target_guard(target)
+        return trusted['activate_tab'](target)
 
     def finish_browser(retain=()):
         result=trusted['finish_browser'](retain)
@@ -221,7 +246,7 @@ def public_helpers(browser, trusted, workspace, profile=None, lease_stack=None):
                    wait_for_load=wait_for_load, wait_for_element=wait_for_element,
                    wait_for_network_idle=wait_for_network_idle, fill_input=fill_input,
                    press_key=press_key, answer_dialog=answer_dialog, drain_events=drain_events,
-                   switch_tab=switch_tab,finish_browser=finish_browser)
+                   switch_tab=switch_tab,activate_tab=activate_tab,finish_browser=finish_browser)
     for name in ('page_info', 'read_page', 'click_element', 'click_at_xy',
                  'capture_screenshot', 'type_text', 'fill_input', 'press_key',
                  'scroll', 'wait_for_load', 'wait_for_element', 'wait_for_network_idle',

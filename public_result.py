@@ -5,6 +5,8 @@ import re
 
 
 _RECOVERY_GUIDANCE={
+    'site_in_use':'This site is in use. Continue on other websites or finish this session; do not replay earlier actions.',
+    'site_needs_recovery':'A previous task on this site needs recovery. Preserve findings and continue on other websites.',
     'read_retry_succeeded':'A bounded read-only retry succeeded. Continue using this result and the preserved findings.',
     'read_retry_exhausted':'The bounded read retry reached its limit. Keep the partial findings and continue in a fresh named browser session; do not repeat uncertain actions.',
     'fresh_session_ready':'Cleanup completed. Continue research with the same session name; its next call opens a fresh session. Choose the next intended page step and do not repeat uncertain actions.',
@@ -33,6 +35,10 @@ def _recovery(value,success):
 def _error(result):
     raw=result.get('error')
     code=raw.partition(':')[0] if isinstance(raw,str) else ''
+    if code=='flow_resource_busy':
+        return 'browser_site_busy','This site is currently in use. Other websites remain available; do not replay earlier actions.'
+    if code=='flow_recovery_required':
+        return 'browser_site_unavailable','A previous task on this site needs recovery. Other websites remain available.'
     if code.startswith(('consent_','native_dialog_accessibility','safe_GUI_',
                         'accessibility_','Default_','Chrome_endpoint_',
                         'account_binding_','browser_configuration_',

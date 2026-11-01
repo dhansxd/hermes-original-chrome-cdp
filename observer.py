@@ -10,16 +10,19 @@ if __package__:
     from .transport import Wire
     from .native_dialog import NativeDialogs
     from .cdp_policy import validate_cdp
+    from . import flow_reservation
 else:
     from consent import consent_guard
     from binding import BoundBrowser
     from transport import Wire
     from native_dialog import NativeDialogs
     from cdp_policy import validate_cdp
+    import flow_reservation
 
 
 class ScopedObserver:
     def __init__(self, endpoint, profile):
+        self.profile=Path(profile).resolve()
         self.data_root=Path(profile).parent
         self.wire=Wire(endpoint,str(self.data_root))
         self.sessions={};self.closed=False;self.state=None;self.auto_attached=False;self.entries=[];self.watched=set();self.closing_targets=set()
@@ -190,7 +193,18 @@ class ScopedObserver:
             self.state=state
             self._check_detached()
             # Reject a stale/foreign context before arming watchers or probing UI.
-            if target is not None:BoundBrowser(self.wire,state).info(target)
+            info=BoundBrowser(self.wire,state).info(target) if target is not None else {}
+            if (state or {}).get('verified'):
+                # Cleanup/metadata remain possible. This is defense in depth for
+                # explicit owned commands, not interception of web redirects.
+                sensitive=method in {'Runtime.evaluate','Page.navigate','Input.dispatchMouseEvent',
+                    'Input.dispatchKeyEvent','Input.insertText','Input.synthesizeScrollGesture',
+                    'Page.handleJavaScriptDialog','Target.activateTarget'}
+                urls=[info.get('url','')] if sensitive else []
+                if method in {'Page.navigate','Target.createTarget'}:urls.append(params.get('url',''))
+                if (sensitive and target is not None and not info.get('url')
+                    or any(flow_reservation.protected_url(url) for url in urls)):
+                    flow_reservation.deny_if_reserved(self.profile)
             if (state or {}).get('verified') and method in ('Runtime.evaluate','Page.navigate','Input.dispatchMouseEvent','Input.dispatchKeyEvent'):
                 if any(w is not None and w not in self.native.bindings for w in state.get('owned',{}).values()):
                     self._probe_native()

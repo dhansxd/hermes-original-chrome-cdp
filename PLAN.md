@@ -1,3 +1,16 @@
+## Checkpoint terbaru: koordinasi gflow-cli CDP (2026-11-01)
+
+Arahan percakapan terbaru mengizinkan pengaman plugin browser dan kandidat gflow-cli
+pada Default yang sama. Kode aktual 0.3.1 menjadi baseline; catatan historis di bawah
+bukan instruksi mengulang tes, mengganti core atau menjalankan custom Flow API lama.
+Tambahkan reservasi Flow per profil sepanjang pekerjaan/render, metadata dirty/paid
+yang bertahan setelah proses mati, dan recovery hanya untuk pekerjaan yang sama.
+Browsing situs lain dan cleanup target milik sesi tetap tersedia. Tidak ada generasi
+berbayar atau penambahan akun pada tahap ini. Verifikasi offline serta native nyata,
+commit/push plugin teruji, dan kandidat gflow terpisah; A-E tetap dipertahankan.
+Batas kooperatif: klik manusia, redirect/script latar, klien lain dan identitas akun
+lintas profil belum diisolasi. Jangan mengklaim reservasi sebagai isolasi jaringan.
+
 # Plugin browser_exec — satu plan aktif
 
 ## Tujuan dan sumber

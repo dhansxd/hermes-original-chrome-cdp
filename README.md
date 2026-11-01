@@ -59,6 +59,27 @@ Before opening a window, the plugin prepares a private snapshot of its worker co
 
 Keep the native suppression entries when disabling or uninstalling if browser execution must remain unavailable. The plugin leaves no hidden guard after removal; the persistent restriction belongs to Hermes configuration. To intentionally switch to a native browser provider, select its provider and tools through Hermes, explicitly change the suppression entries, and start a new session. Provider selection alone is not a fallback-prevention mechanism. This policy applies to the configured profile and current native browser tool groups, not every future plugin or browser-like tool.
 
+## Coordinating Flow work
+
+Version 0.3.2 supplies a cooperative reservation contract for the separately
+installed original-Chrome gflow candidate. One participating Flow job reserves
+its original profile through render. Browser helper calls on Flow or explicit
+Google identity URLs wait or return site-busy; browsing other websites and
+closing this session's owned tabs remain available. Flow setup takes activity,
+then GUI, then consent locks, in that order.
+
+A dirty-settings or possibly billed job leaves private bounded metadata after a
+process exits. Timeout/PID death never discard that state. Only recovery of the
+same job can resolve it; dirty settings remain reserved for review. No cookie,
+profile or prompt is stored in the reservation. Normal browser-only batches leave
+no durable job record. The gflow adapter must require this version of the contract;
+older CDP candidates fail closed rather than operate without participation.
+
+This is client cooperation, not interception of redirects/background page scripts,
+or isolation from manual actions and other tools. Separate Chrome profiles using
+the same Google account are not yet coordinated by account identity. No guarantee
+is made for nonparticipating clients. Managed gflow A-E profiles are unchanged.
+
 ## Normal browser work
 
 Ask the Hermes agent to browse with `browser_original_chrome_exec`. It accepts a bounded Python-like script with named browser helpers, assignments, loops, conditions, and plain data. It does not execute arbitrary Python, imports, filesystem/process/network calls, raw JavaScript, or raw CDP supplied by the agent.

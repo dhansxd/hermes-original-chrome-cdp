@@ -52,7 +52,7 @@ class BrowserActionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'^browser_navigation_failed: net::ERR_NAME_NOT_RESOLVED$'):
             execute_source("goto_url('https://example.test/private-token')\nwait_for_load()\nprint(read_page())",actions,io.StringIO())
         browser.cdp.assert_called_once_with('Page.navigate',url='https://example.test/private-token')
-        browser.info.assert_not_called()
+        browser.info.assert_called_once_with() # Source-page guard precedes navigation.
         trusted['wait_for_load'].assert_not_called();trusted['js'].assert_not_called()
 
     def test_navigation_error_never_echoes_nonstandard_error_text_or_url(self):
