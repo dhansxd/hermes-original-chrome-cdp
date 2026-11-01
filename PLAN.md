@@ -1,4 +1,32 @@
-## Tahap aktif: koordinasi akun lintas profil (2026-11-01)
+## Checkpoint terbaru: pengaman akun terpasang (2026-11-01)
+
+Plugin0.3.4/code e2625e9 sudah dipublikasikan, dipasang lewat updater resmi dan
+gateway dimulai ulang/reload resmi. Satu turn WhatsApp aktif terinterupsi: CLI
+stop --yes memerlukan SIGKILL setelah exit normal tidak selesai. Gateway kembali
+running dan adapter WhatsApp/Telegram terhubung; core/config tetap sama.
+Kandidat CDP gflow pilot.7 dibangun dua kali identik dan dipasang terpisah;
+managed A-E tetap pilot.2. Tidak ada generasi baru atau pemakaian kredit.
+
+Acceptance guard lulus: fixture direktori lain dengan key akun Default menahan
+Flow di tool Hermes, CLI dan MCP, sedangkan browsing situs lain serta akun nyata
+berbeda tetap berjalan. CLI tertahan sebelum ownership directory/seed dibuat.
+Semua sesi milik tes selesai cleanup. Gateway aktif lulus tiga sesi dengan target
+dan jendela berbeda, page work paralel, serta cleanup lengkap; ini tes tool
+terdaftar, bukan tiga agent LLM. Recovery clip lama dari cache juga lulus tanpa
+submit. Kredit teramati Default408/Profile7 434. Status operator versi4 ready.
+
+Batas bukti: registry23 profil tidak mengandung GAIA primer duplikat, sehingga
+kasus akun sama lintas direktori memakai fixture reservasi, bukan dua profil
+duplikat nyata. Pada BDD nyata awal ada satu TargetClosed ketika Profile7 dibaca
+dengan peer Default; cleanup lulus, tetapi penyebab tidak tertangkap. Lima uji
+peer baru serta dua rangkaian BDD4/4 berikutnya lulus (salah satunya bypass cache
+hanya pada halaman uji); tidak ada error relay/protokol tertangkap. Kegagalan awal
+tetap disimpan dan tidak diklaim diperbaiki. Stabilitas koneksi intermiten masih
+perlu ditelusuri sebelum klaim produksi tanpa gangguan. Akun web sekunder/manual,
+klien lama/tidak ikut protokol, generasi berbayar profil tambahan dan integrasi
+normal semua fitur gflow tetap di luar acceptance ini.
+
+## Checkpoint source sebelumnya: koordinasi akun lintas profil (2026-11-01)
 
 Kandidat terisolasi, tanpa edit core/generasi/cookie copy. Tambahkan digest GAIA
 wajib dari primary email dan GAIA Local State/Preferences yang cocok; tidak ada
