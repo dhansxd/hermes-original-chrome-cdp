@@ -266,7 +266,9 @@ class ChromeSession:
             return self.wire.call(method, params)
         if not sid:
             raise RuntimeError('This command requires an owned page attachment.')
-        return self.wire.call(method, params, sid)
+        # The native client owns the operation deadline. A resource download or
+        # awaited script may legitimately exceed the transport's setup budget.
+        return self.wire.call(method, params, sid, timeout=None)
 
     def _client(self, ws):
         if ws.request.path != self.path:

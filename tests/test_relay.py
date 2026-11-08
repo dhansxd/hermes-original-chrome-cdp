@@ -62,7 +62,7 @@ class RelayTests(unittest.TestCase):
     def test_page_commands_remain_native(self):
         params = {'expression': 'document.querySelector("widget").shadowRoot.innerHTML', 'returnByValue': True}
         self.assertEqual(self.command('Runtime.evaluate', params, 'page-sid'), {'native': True})
-        self.wire.call.assert_called_with('Runtime.evaluate', params, 'page-sid')
+        self.wire.call.assert_called_with('Runtime.evaluate', params, 'page-sid', timeout=None)
         with self.assertRaisesRegex(RuntimeError, 'does not belong'):
             self.session.command(self.other, 'Runtime.evaluate', params, 'page-sid')
 

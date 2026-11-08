@@ -54,7 +54,8 @@ their tool definitions after the supported plugin reload.
 
 Use `browser_exec` and native `browser_vault`, not `browser_original_chrome_exec` or
 `browser_original_chrome_vault`. The old account-binding setting is no longer required;
-there is no hardcoded account identity. Core Hermes and its dependencies are not patched.
+there is no hardcoded account identity. Core Hermes is not patched. The separate native
+input-helper correction used by this installation is documented under `fixes/`.
 
 ## Session ownership
 
@@ -102,7 +103,14 @@ It did not recur in the subsequent native, original-profile windowless/parallel,
 empty-profile approval-mode startup tests. Its cause is not confirmed; these passing
 tests do not establish that Chrome can never reject a connection.
 
-The installed browser-harness's native `fill_input` helper has a known focus-check defect:
-a hidden/disabled target can leave typing in a previously focused field. This provider
-does not claim to fix that dependency. Native JS/CDP remains available to check visibility,
-focus and the result before proceeding. No replacement helper or vault is installed.
+Version 0.4.1 records the HTTP status and a fixed rejection category on failed handshakes;
+it never logs an arbitrary response body or retries the handshake automatically. Forwarded
+page commands use the caller's deadline rather than an extra 30-second transport deadline.
+
+The native browser-harness 0.1.13 `fill_input` helper has a focus-check defect: a hidden or
+disabled target can leave typing in a previously focused field. The minimal dependency
+patch in `fixes/` verifies editability and actual focus before dispatching keys. It is
+separate from this provider, must be applied to the active native dependency, and may be
+replaced by a Hermes environment rebuild. Run `tests/live_native.py --check-native-focus`
+with Hermes's Python to verify the actual installed helper. No replacement helper or
+vault is installed.

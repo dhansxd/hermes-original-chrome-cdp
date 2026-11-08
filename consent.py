@@ -68,7 +68,8 @@ class ConsentTrace:
                      'press_attempted':False,'press_dispatched':False,'press_outcome':'not_attempted',
                      'geometry_resets':0,'drag_waits':0,
                      'first_sheet_ms':None,'press_ms':None,
-                     'transport_phase':'not_started','cleanup_outcome':'not_attempted','failure_code':None}
+                     'transport_phase':'not_started','http_status':None,'http_rejection':None,
+                     'cleanup_outcome':'not_attempted','failure_code':None}
     def add(self,key,value=1):self.values[key]+=value
     def call(self,key,fn,*args,**kwargs):
         started=time.monotonic()
@@ -213,6 +214,15 @@ def _connect_attempt(endpoint, data_root, connect, *, backend=None, timeout=15,d
             else:result['ws']=ws
         except Exception as exc:
             trace.values['transport_phase']='failed'
+            response=getattr(exc,'response',None)
+            status=getattr(response,'status_code',None)
+            if type(status) is int:
+                trace.values['http_status']=status
+                body=getattr(response,'body',b'')
+                # Classify only fixed Chrome responses; never retain arbitrary response text.
+                trace.values['http_rejection']=('chrome_connection_rejected' if body==b'Connection rejected'
+                    else 'origin_rejected' if isinstance(body,(bytes,bytearray)) and body.startswith(b'Rejected an incoming WebSocket connection from the ')
+                    else 'other')
             result['error']=str(exc)
         finally:done.set()
     thread=threading.Thread(target=attach,daemon=True);thread.start()

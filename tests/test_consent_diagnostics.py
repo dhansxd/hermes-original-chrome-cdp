@@ -257,6 +257,24 @@ class ExactPressTests(unittest.TestCase):
 
 
 class HandshakeDiagnosticTests(unittest.TestCase):
+    def test_http_rejection_is_classified_without_recording_body_or_reconnecting(self):
+        from websockets.exceptions import InvalidStatus
+        from websockets.http11 import Response
+        from websockets.datastructures import Headers
+        for body, expected in ((b'Connection rejected','chrome_connection_rejected'),
+                               (b'Rejected an incoming WebSocket connection from the private origin.','origin_rejected'),
+                               (b'private account text','other')):
+            backend=Mock()
+            backend.prepare.return_value=[]
+            attach=Mock(side_effect=InvalidStatus(Response(403,'Forbidden',Headers(),body)))
+            with self.assertRaises(consent.ConsentError) as caught:
+                consent.connect_with_consent('ws://127.0.0.1:5000/devtools/browser/id','/fixture',attach,backend=backend)
+            diagnostic=caught.exception.diagnostics
+            self.assertEqual(diagnostic['http_status'],403)
+            self.assertEqual(diagnostic['http_rejection'],expected)
+            self.assertNotIn('private',json.dumps(diagnostic))
+            attach.assert_called_once()
+
     def test_failure_codes_are_allowlisted_without_arbitrary_error_text(self):
         for message,expected in (
             ('consent_attach_failed: consent_ax_read:-25204','consent_ax_read'),

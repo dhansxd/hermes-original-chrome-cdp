@@ -1,5 +1,5 @@
 
-import os, sys, json, tempfile, logging, time, threading, concurrent.futures
+import os, sys, json, tempfile, logging, time, threading, concurrent.futures, uuid
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 logging.basicConfig(level=logging.WARNING)
@@ -45,7 +45,7 @@ with set_hermes_home_override(home):
  def call(task,code,timeout=60):
   with set_hermes_home_override(home):
    args={'code':code,'session':'same','timeout_s':timeout}
-   blocked,modified=_dispatch_pre_tool_call_hooks('browser_exec',args,task_id=task,session_id=task+'-chat')
+   blocked,modified=_dispatch_pre_tool_call_hooks('browser_exec',args,task_id=task,session_id=task+'-chat',tool_call_id=uuid.uuid4().hex)
    assert not blocked,blocked
    result=registry.dispatch('browser_exec',modified or args,scope=str(home),task_id=task)
    result=json.loads(result) if isinstance(result,str) else result
@@ -54,7 +54,7 @@ with set_hermes_home_override(home):
    return result
  try:
   with concurrent.futures.ThreadPoolExecutor() as pool:
-   futures=[pool.submit(call,agent,f'goto_url({base!r}); print(js("document.title")); print(js("window.agentMarker="+{agent!r}.__repr__()))') for agent in ('A','B')]
+   futures=[pool.submit(call,agent,f'goto_url({base!r}); print(js("document.title")); print(js("window.agentMarker="+{agent!r}.__repr__()))') for agent in ('A','B','C','D')]
    for f in futures:f.result()
   sessions=list(provider.sessions.values())
   observer=sessions[0].wire
@@ -79,8 +79,10 @@ js("document.querySelector('#popup').click()")
   start=time.monotonic()
   with concurrent.futures.ThreadPoolExecutor() as pool:
    slow=pool.submit(call,'A','print(js("new Promise(r=>setTimeout(()=>r(window.agentMarker),3000))"))')
-   time.sleep(.3);fast=pool.submit(call,'B','print(js("window.agentMarker"))')
-   fast.result();fast_ms=round((time.monotonic()-start)*1000);slow.result()
+   time.sleep(.3)
+   fast=[pool.submit(call,agent,f'assert js("window.agentMarker")=={agent!r}') for agent in ('B','C','D')]
+   for f in fast:f.result()
+   fast_ms=round((time.monotonic()-start)*1000);slow.result()
   print('PEER_READ_MS',fast_ms,flush=True);assert fast_ms<2500,fast_ms
   from tools.browser_session import get_session_info
   a_args=_dispatch_pre_tool_call_hooks('browser_exec',{'code':'pass','session':'same'},task_id='A',session_id='A-chat')[1]
@@ -96,7 +98,20 @@ js("document.querySelector('#popup').click()")
   assert manual_before <= remaining,'pre-existing manual targets changed'
   print('EXACT_CLEANUP_AND_MANUAL_PRESERVATION','PASS',flush=True)
   call('B','print(js("window.agentMarker"))')
+  for agent in ('C','D'):call(agent,f'assert js("window.agentMarker")=={agent!r}')
   call('A','print(js("document.readyState"))')
+  if '--check-native-focus' in sys.argv:
+   call('A',"""js("document.body.innerHTML='<input id=previous value=KEEP><input id=disabled disabled><input id=hidden hidden><input id=readonly readonly><input id=visible>'")
+for target in ('disabled','hidden','readonly','visible'):
+    js("document.querySelector('#previous').value='KEEP';document.querySelector('#previous').focus()")
+    rejected=False
+    try:fill_input('#'+target,'DUMMY')
+    except RuntimeError:rejected=True
+    assert js("document.querySelector('#previous').value") == 'KEEP'
+    assert rejected == (target!='visible')
+    assert js("document.querySelector('#"+target+"').value") == ('DUMMY' if target=='visible' else '')
+    print(target, 'PASS')
+""")
   call('B',"goto_url('https://flow.google.com/projects'); assert wait_for_element('flow-projects-grid',timeout=25,visible=True); print('EXISTING_LOGIN_PASS')")
   print('NATIVE_ENTRYPOINT',registry.get_entry('browser_exec').handler.__module__,flush=True)
  finally:
