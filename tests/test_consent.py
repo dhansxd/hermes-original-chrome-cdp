@@ -317,14 +317,6 @@ class IdentityTests(unittest.TestCase):
         plist['CFBundleIdentifier']='com.attacker.app.abc'
         self.assertIsNone(consent.host_identity(exe,plist,'/data'))
 
-class WorkerTests(unittest.TestCase):
-    def test_wire_uses_profile_root_for_consent(self):
-        from unittest.mock import patch
-        import worker
-        with patch.object(worker,'connect_with_consent',return_value=object()) as attach:
-            worker.Wire('ws://127.0.0.1:5000/devtools/browser/id','/fixture')
-            attach.assert_called_once_with('ws://127.0.0.1:5000/devtools/browser/id','/fixture',worker.connect)
-
 class NativeTests(unittest.TestCase):
     def test_press_rejects_unbound_sheet_without_starting_other_process(self):
         from unittest.mock import patch

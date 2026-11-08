@@ -1,186 +1,108 @@
-# Original Chrome Default for Hermes
+# Original Chrome for Hermes
 
-A macOS browser provider that runs Hermes browser work in the installed Google Chrome GUI and its original `Default` profile. Existing logins stay in Chrome. The plugin creates and controls its own windows, and leaves unrelated user windows alone.
+A browser provider for Hermes's native `browser_exec`. Select **Original Chrome · CDP**
+in `hermes tools → Browser Automation`.
 
-This is a personal build: registered Hermes browser work is restricted to the account allowlist in `plugin.py`. Configuring a different account does not expand that scope. It does not copy profiles, export cookies, or fall back to a headless or cloud browser.
+Hermes uses the installed Google Chrome and an existing profile, including its current
+website logins. The plugin does not copy cookies or profiles, launch packaged Chromium,
+replace browser tools, implement a scripting language, or provide a separate vault.
 
 ## Requirements
 
-- macOS with a logged-in Aqua desktop and Google Chrome at `/Applications/Google Chrome.app`.
-- Chrome 144 or newer with remote debugging enabled by the operator at `chrome://inspect/#remote-debugging`. Chrome asks permission for new debugging connections.
-- Accessibility permission for the process that actually runs Hermes. A successful check in Terminal does not establish permission for a gateway, or vice versa.
-- The plugin and its `original_chrome` toolset enabled in the intended Hermes profile. Version 0.3.0 registers `browser_original_chrome_exec` and `browser_original_chrome_vault`; it does not replace native tools or request `tools.override`.
-- Browser provider `original-chrome-default` and the expected account configured below. Current Hermes selects the provider through `browser.cloud_provider`; a legacy `browser.backend: browser-use` is accepted, but is not required.
-- Both `browser` and `browser-use` listed in `agent.disabled_toolsets`. The plugin refuses browser work if either entry is missing. Its own toolset does not require the `terminal` toolset.
-
-The installed Hermes build is the compatibility reference. Browser and lifecycle integration use registered tools, the browser-provider API, plugin hooks, and the public tool dispatcher. Tool schemas are bundled with this plugin. It does not change Hermes core or import Hermes's internal secret redactor. Compatibility with arbitrary future Hermes versions, catalog approval, and other operating systems are not claimed.
+- macOS with a logged-in desktop and Google Chrome.
+- Remote debugging enabled in `chrome://inspect/#remote-debugging`.
+- Accessibility granted to the process running Hermes, for Chrome's debugging consent.
+- A Hermes build supporting browser providers and `pre_tool_call` argument modification.
+- Native Browser Automation and Terminal toolsets enabled (Hermes requires Terminal for
+  its native Python browser tool).
 
 ## Install and select
 
-Use Hermes's plugin lifecycle commands in the intended profile. Pin a reviewed full commit SHA for a reproducible installation:
-
 ```sh
-hermes plugins install https://github.com/dhansxd/hermes-original-chrome-default-plugin --ref <full-40-character-commit>
+hermes plugins install https://github.com/dhansxd/hermes-original-chrome-default-plugin
 hermes plugins enable original-chrome-default
 hermes tools
 ```
 
-In the tools picker, select **Original headed Chrome · Default** as the browser provider and enable the plugin's **original_chrome** toolset for the intended platform. Install the declared dependencies through Hermes. No tool-override capability grant is required.
+Choose **Original Chrome · CDP** in Browser Automation. The provider is registered through
+`register_browser_provider` and `get_setup_schema`, like other browser providers.
 
-Provider selection alone is insufficient. In that Hermes profile's configuration, retain the following settings, preserving other disabled toolsets and unrelated entries:
+For this local provider, use:
 
 ```yaml
 browser:
   cloud_provider: original-chrome-default
-agent:
-  disabled_toolsets:
-    - browser
-    - browser-use
-plugins:
-  entries:
-    original-chrome-default:
-      settings:
-        expected_account: "<account approved by this build>"
+  auto_local_for_private_urls: false
+  use_real_profile: false
 ```
 
-Hermes owns plugin activation and the platform tool selection; use its commands to change them. The two global suppression entries keep native browser tools out of model sessions, including after this plugin is disabled or removed. The tools picker can change these entries when native browser groups are re-enabled, so verify them after changing tool selection. Read-only status reports `native_browser_tools_disabled`; it must be true. Start a new agent session after changing plugin or tool configuration.
+Hermes currently classifies provider plugins as cloud backends. Disable its private-URL
+sidecar so it cannot send localhost work to a separate Chromium. If localhost access is
+needed, use Hermes's normal private-URL permission setting. Clear an existing
+`browser.cdp_url`, `BROWSER_CDP_URL`, or `BU_CDP_*` override before using this provider.
 
-For migration from 0.2.x, install the reviewed 0.3.4 revision, enable `original_chrome`, and add both suppression entries. Replace saved calls to `browser_exec` or `browser_vault` with `browser_original_chrome_exec` or `browser_original_chrome_vault`. An old `tools.override` grant is no longer used; inspect remaining grants with `hermes plugins capabilities original-chrome-default`. Existing session definitions must be refreshed with a new session.
+The plugin setting `profile_directory` defaults to `Default`; it may name another existing
+Chrome profile directory, such as `Profile 2`. It takes effect for newly created sessions.
+The profile is selected explicitly and verified using Chrome's profile-path page.
+
+### Migration from 0.3.x
+
+Enable the native browser toolsets again: remove `browser` and `browser-use` from
+`agent.disabled_toolsets`, and enable Browser Automation on the intended surfaces.
+Remove the old `original_chrome` toolset selection. Existing conversations must refresh
+their tool definitions after the supported plugin reload.
+
+Use `browser_exec` and native `browser_vault`, not `browser_original_chrome_exec` or
+`browser_original_chrome_vault`. The old account-binding setting is no longer required;
+there is no hardcoded account identity. Core Hermes and its dependencies are not patched.
+
+## Session ownership
+
+Chrome can be stopped, running without windows, or already in use. Each browser session
+opens its own window in the selected original profile. New targets also open in owned
+windows; opener-linked popups belong to that session. Native named sessions are namespaced
+by Hermes task identity, including when different agents use the same name.
+All production sessions use the same original Chrome application process and Dock icon.
+Chrome's own debugging-consent dialog can briefly activate Chrome during connection;
+normal page work does not require activating a window.
+
+A small local CDP endpoint presents only the session's targets to the native driver.
+DOM, Runtime, Input, screenshots and frame commands are forwarded. Cross-session target
+access, quitting the whole browser, and browser-wide operations that would change peers
+are refused. This is cooperative session ownership, not a sandbox for native Python,
+arbitrary website code, or other tools on the machine.
+
+Cookies and site storage remain shared normally within a Chrome profile. Signing out
+of a website has the same profile-wide effect as signing out manually.
+
+Hermes's normal browser lifecycle closes the provider session; the provider closes only
+its owned tabs and its CDP connection. It never quits shared Chrome. Startup errors stay
+on the selected CDP route instead of falling back to a different browser.
+If startup fails after opening its seed tab, cleanup is only confirmed after that exact
+tab is gone. An existing approved connection can remove it; an unavailable connection
+is reported as incomplete cleanup, without reopening Chrome or retrying permission.
+
+## Verification
+
+Unit tests retain the existing consent/connection tests and cover native registration,
+agent namespaces, startup identity, target ownership, parallel CDP responses and cleanup.
+Run them with the Hermes Python environment:
 
 ```sh
-hermes plugins disable original-chrome-default
-hermes plugins enable original-chrome-default
-hermes plugins uninstall original-chrome-default
+hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
 
-These are the official disable, re-enable, and removal paths. Disable/removal unregisters only this plugin's tools. The native browser and vault handlers remain unchanged, and Hermes retains `agent.disabled_toolsets` in the profile configuration after uninstall. Browser provider selection is also retained separately.
+Live acceptance is separate: actual native registry dispatch, real Chrome with an existing
+login, parallel agents, ordinary input/click, screenshot, nested DOM, popup ownership, and
+peer-preserving cleanup. Cold/windowless startup can be tested with an empty temporary
+Chrome profile without closing the user's original browser.
 
-Before opening a window, the plugin prepares a private snapshot of its worker code. This contains plugin source only, never a Chrome profile or cookies. While browser resources exist, a small watcher detects sustained removal of the installed source. It cancels this provider's script workers, cleans owned windows using the prepared code, releases its journal leases, and stops. Normal disable/reload also performs this cleanup through `on_unload`. Cleanup still reports uncertainty if ownership or closure cannot be proved. No browser process is killed.
+During the 0.4.0 acceptance run, one original-profile handshake returned HTTP 403.
+It did not recur in the subsequent native, original-profile windowless/parallel, or
+empty-profile approval-mode startup tests. Its cause is not confirmed; these passing
+tests do not establish that Chrome can never reject a connection.
 
-Keep the native suppression entries when disabling or uninstalling if browser execution must remain unavailable. The plugin leaves no hidden guard after removal; the persistent restriction belongs to Hermes configuration. To intentionally switch to a native browser provider, select its provider and tools through Hermes, explicitly change the suppression entries, and start a new session. Provider selection alone is not a fallback-prevention mechanism. This policy applies to the configured profile and current native browser tool groups, not every future plugin or browser-like tool.
-
-## Coordinating Flow work
-
-Version 0.3.4 supplies a cooperative reservation contract for the separately
-installed original-Chrome gflow candidate. One participating Flow job reserves
-its verified Google account and original profile through render. Two original
-profiles with the same stable GAIA share the account lock, including email aliases.
-The configured primary email and unique GAIA must match Local State/Preferences;
-missing/contradictory identity refuses without an email-only fallback. No raw GAIA
-or email is stored in reservation metadata. Browser helper calls on Flow or explicit
-Google identity URLs wait or return site-busy; browsing other websites and
-closing this session's owned tabs remain available. Flow setup takes account,
-profile, then GUI, then consent locks, in that order. The account/profile/initial
-GUI waits share their remaining acquisition budget.
-
-A dirty-settings or possibly billed job leaves private bounded metadata after a
-process exits. Timeout/PID death never discard that state. Only recovery of the
-same job can resolve it; dirty settings remain reserved for review. No cookie,
-profile or prompt is stored in the reservation. Normal browser-only batches leave
-no durable job record. The gflow adapter must require this version of the contract;
-older CDP candidates fail closed rather than operate without participation.
-
-Each v2 profile record is the single authoritative state, with immutable profile
-and account digests. Account debt survives a crash or a removed/changed profile.
-Account-aware clients refuse legacy v1 records without rewriting them: settle old
-work with its matching installation before upgrading. Drain old participants and
-reload officially before activation. Rollback also requires no unresolved v2 debt.
-
-This is client cooperation over the configured Chrome identity. It does not
-intercept redirects/background scripts, manual actions, secondary web-account
-switching or other tools. gflow verifies its visible Flow account before generation.
-Managed gflow A-E profiles are unchanged.
-
-## Normal browser work
-
-Ask the Hermes agent to browse with `browser_original_chrome_exec`. It accepts a bounded Python-like script with named browser helpers, assignments, loops, conditions, and plain data. It does not execute arbitrary Python, imports, filesystem/process/network calls, raw JavaScript, or raw CDP supplied by the agent.
-
-For example, a tool call can use:
-
-```python
-goto_url('https://example.com')
-wait_for_load(timeout=10)
-print(read_page(limit=2000))
-```
-
-Other helpers cover visible controls, click/type/scroll, screenshots, owned tabs, and explicit dialog answers. The loaded tool description lists their exact signatures. Reuse the same `session` name for related calls within a turn; ownership is also scoped by the calling task, so separate agents do not share their owned tabs. They still share the original Chrome profile and its login state: a website login or logout in one owned window can affect other windows using that profile.
-
-Owned windows are short-lived. They are cleaned when the run ends successfully, fails, is interrupted, or its Hermes session is finalized. A tracked host human-input wait defers ordinary end-of-run cleanup; interruption still cancels it. The next turn can open a fresh owned session using the same original Chrome login. This policy follows the host's run outcome, not a guess about whether the conversation's overall research goal is complete. An explicit `finish_browser()` remains available for earlier cleanup, but is not required in the user's prompt.
-
-Timeout recovery preserves any returned partial findings and does not replay clicks, typing, navigation, or dialog answers. Follow the tool result's recovery state. After confirmed cleanup, another call with the same session name can start fresh. If cleanup cannot be confirmed, the plugin reports that limitation instead of claiming the windows disappeared.
-
-The plugin never quits the original shared Chrome application. JavaScript dialog answers are explicit; ambiguous native dialogs and unrelated permission prompts are refused. Chrome login UI and OS permission changes remain operator-controlled.
-
-## Status and diagnostics
-
-Read-only status does not connect to Chrome or trigger a browser permission prompt:
-
-```sh
-hermes original-chrome status --json
-```
-
-In a Hermes conversation, `/original-chrome-status` runs the check in the actual gateway process. `ready` means the listed prerequisites passed; `browser_connection: not_probed` is deliberately separate from successful browser acceptance.
-
-`chrome_gui` separately reports a stopped Chrome process, a running process with no windows, a running process with windows, or an unknown state. Missing permission or an incomplete native inventory yields unknown counts rather than an assumed zero. Titles, URLs, and page contents are not included.
-
-`/original-chrome-test` is an operator diagnostic. It opens three owned sessions at `https://example.com`, starts them sequentially, performs page work concurrently, checks ownership, and cleans them up. `/original-chrome-test manual` waits for the operator's debugging-permission click. This command exercises the registered browser handler; it is not a test of three LLM agents.
-
-`/original-chrome-test removal` opens one owned example.com session using a temporary copy of plugin source, deletes that temporary copy, and verifies automatic cleanup, journal retirement, and worker-snapshot removal. It does not uninstall the installed plugin or change its grants/configuration. Package-manager installation is tested separately.
-
-## Vault and data boundaries
-
-`browser_original_chrome_vault` exposes only `list` and `unlock`, dispatched through Hermes's public tool API to its registered native vault handler. Page actions such as fill, save-login, and enter-code are unavailable. Missing native support produces a refusal; there is no private vault adapter or credential fallback. The native `browser_vault` handler is not replaced.
-
-Page text returned by `browser_original_chrome_exec` is sent to the model as-is, without secret filtering. A secret visible on a page can therefore appear in tool output and the conversation. Screenshots are also returned without redaction. The plugin retains its public result structure and error minimization, but neither is a secret filter.
-
-The plugin reads Chrome's account/profile metadata and `DevToolsActivePort` to verify the original profile and current browser process. It reads process and Accessibility information, launches Chrome through macOS `open`, and uses loopback CDP. Requested navigation contacts the selected websites using Chrome's existing session. Workspaces, setup seed files, screenshots, and connection-coordination records are written locally. It does not upload that data to a plugin service or implement a self-updater.
-
-These browser-script restrictions do not sandbox other Hermes tools or arbitrary code installed on the host.
-
-## Development and verification
-
-Use the existing Hermes interpreter with its dependencies already available:
-
-```sh
-HERMES_DISABLE_LAZY_INSTALLS=1 PYTHONDONTWRITEBYTECODE=1 <Hermes-python> tests/run_policy_suite.py
-hermes plugins doctor /absolute/path/to/this/plugin --ci
-hermes plugins validate /absolute/path/to/this/plugin --json
-git diff --check
-```
-
-The regression runner uses inert browser transports, an isolated Hermes home, and network/GUI vetoes. It does not install dependencies. Live acceptance must separately cover Chrome fully exited, Chrome running without windows, existing user windows, and simultaneous agents. The operator prepares any condition that requires closing Chrome.
-
-The installation regression dispatches the official CLI against a disposable local Git source and Hermes home, including real registration, disable/re-enable, and uninstall. It checks that native handlers remain intact, the plugin's own tools disappear after removal, and global browser suppression survives uninstall. It replaces PM's dependency-environment solve/publication with a fixture while retaining its manifest checks, so it does not claim to test dependency installation. A passing runtime `doctor` or manifest validation does not imply catalog acceptance or compatibility with every future Hermes release.
-
-Vendored browser helper code retains its [upstream license](vendor/LICENSE.browser-harness). The repository's current source and tests are the behavior reference.
-
-## Cooperation with Flow
-
-GUI batches on Flow share a process-safe lease with the companion Flow service, keyed by the verified original profile. Flow URL aliases use one key. Other sites remain independent. Each script releases its leases on completion, exception, or process exit; a busy batch is not replayed automatically. Runtime source snapshots include the lease helper.
-
-This is cooperative coordination, not a separate login session. Manual activity and other programs do not honor the lease. Navigation through a redirect may reach Flow before its destination is known; subsequent GUI helpers check the actual origin before acting. The plugin continues to own and clean only its own targets.
-
-
-## Explicit profile probe contract (0.3.4)
-
-The registered Hermes provider and browser tools remain fixed to approved Default.
-A separate, unregistered `profile_probe.ProfileProbeProvider` supplies owned
-endpoint plumbing for the local gflow candidate's explicit read-only profile probe.
-It requires an existing original directory and expected account, checks local
-principal metadata without cookies, and binds its journal to that exact profile.
-The gflow caller additionally validates directory identity and the actual GUI
-profile path/Flow account. It cannot use this provider as a browser execution tool;
-video/recovery selection is not expanded.
-
-All profiles share the Chrome-root consent guard. Each probe keeps its own seed,
-socket, journal and target, with profile-scoped GUI leases and account/profile Flow
-reservations. Account labels
-never choose another profile automatically. No Chrome root, cookies or profile
-contents are copied.
-
-Approval waits for stationary host-window/sheet geometry and released mouse
-buttons within the existing deadline. A resize resets the pre-action wait;
-continuous interaction may still exhaust that deadline. Only observation before
-dispatch may restart. A dispatched/unknown click or page action is never replayed.
-Chrome window geometry and button state are read through the existing GUI process;
-this does not change macOS permissions or disable Chrome input protection.
+The installed browser-harness's native `fill_input` helper has a known focus-check defect:
+a hidden/disabled target can leave typing in a previously focused field. This provider
+does not claim to fix that dependency. Native JS/CDP remains available to check visibility,
+focus and the result before proceeding. No replacement helper or vault is installed.
