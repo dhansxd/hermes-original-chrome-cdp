@@ -95,3 +95,20 @@ acceptance must additionally verify the stock package against its RECORD hashes,
 run native input/parallel/cleanup checks after the official updater creates its new
 environment, and confirm the active gateway has loaded 0.4.2. Retire only the two
 known manual helper edits from 0.4.1. Keep the historical HTTP 403 limitation open.
+
+## Deployment and real-agent acceptance, 2026-11-09
+
+The official update installed 0.4.2 into a fresh Python environment. All 14 native
+browser-harness source hashes match the package RECORD after live tests, and both
+earlier manual helper edits were restored. The active gateway loads 0.4.2.
+
+Two actual Hermes model conversations completed through the active gateway, using
+only native browser_exec: one read the signed-in Flow projects dashboard; the
+other read the signed-in Gemini editor and held its page until the first agent's
+cleanup completed. All five tool calls succeeded. Independent CDP observations
+confirmed distinct windows in the same original profile, the surviving peer
+document, and unchanged pre-existing pages and an operator-created manual fixture.
+Both agent sessions and the observer/manual fixtures cleaned up successfully.
+One Chrome application process and one Dock icon remain. No content was generated.
+The manual fixture does not claim a human typing test. The earlier HTTP 403 did not
+recur in this run; its original cause remains unconfirmed.
