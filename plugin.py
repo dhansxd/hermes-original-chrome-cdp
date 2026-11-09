@@ -12,9 +12,11 @@ from pathlib import Path
 from agent.browser_provider import BrowserProvider
 
 if __package__:
+    from .input_guard import prepare_code
     from .relay import ChromeSession
     from .startup import CHROME, PERSONAL
 else:
+    from input_guard import prepare_code
     from relay import ChromeSession
     from startup import CHROME, PERSONAL
 
@@ -146,7 +148,7 @@ def stop_native_daemon(cache_key):
 
 
 def prepare_call(tool_name, args, task_id, *, session_id='', config=None, **kwargs):
-    """Keep native browser_exec, adding the missing per-agent session namespace."""
+    """Keep native browser_exec, with per-agent names and a plugin-owned focus check."""
     if config is None:
         from hermes_cli.config import load_config_readonly
         config = load_config_readonly()
@@ -165,7 +167,10 @@ def prepare_call(tool_name, args, task_id, *, session_id='', config=None, **kwar
         return {'action': 'block', 'message': 'Invalid browser session name.'}
     prefix = 'hc-' + hashlib.sha256(f'{session_id}\0{task_id}'.encode()).hexdigest()[:20] + '-'
     name = alias if alias.startswith(prefix) else prefix + hashlib.sha256(alias.encode()).hexdigest()[:20]
-    return {'action': 'modify', 'args': {'session': name}}
+    changes = {'session': name}
+    if 'code' in args:
+        changes['code'] = prepare_code(args['code'])
+    return {'action': 'modify', 'args': changes}
 
 
 def register(ctx):

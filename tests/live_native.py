@@ -5,6 +5,18 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 logging.basicConfig(level=logging.WARNING)
 sys.path.insert(0,str(Path.home()/'.hermes/hermes-agent'))
 import hermes_bootstrap
+if '--require-unmodified-harness' in sys.argv:
+ import base64, hashlib, importlib.metadata
+ distribution=importlib.metadata.distribution('browser-harness')
+ checked=0
+ for file in distribution.files:
+  if str(file).startswith('browser_harness/') and str(file).endswith('.py'):
+   assert file.hash and file.hash.mode=='sha256',file
+   actual=base64.urlsafe_b64encode(hashlib.sha256(file.locate().read_bytes()).digest()).rstrip(b'=').decode()
+   assert actual==file.hash.value,('Native package modified',str(file))
+   checked+=1
+ assert checked>0
+ print('UNMODIFIED_NATIVE_PACKAGE_PASS',checked,flush=True)
 sys._hermes_pin_default_home=False
 from hermes_constants import set_hermes_home_override
 box=tempfile.TemporaryDirectory(prefix='hermes-native-acceptance-');home=Path(box.name)
@@ -101,7 +113,8 @@ js("document.querySelector('#popup').click()")
   for agent in ('C','D'):call(agent,f'assert js("window.agentMarker")=={agent!r}')
   call('A','print(js("document.readyState"))')
   if '--check-native-focus' in sys.argv:
-   call('A',"""js("document.body.innerHTML='<input id=previous value=KEEP><input id=disabled disabled><input id=hidden hidden><input id=readonly readonly><input id=visible>'")
+   call('A',"""assert getattr(fill_input, '_original_chrome_focus_guard', False) is True
+js("document.body.innerHTML='<input id=previous value=KEEP><input id=disabled disabled><input id=hidden hidden><input id=readonly readonly><input id=visible>'")
 for target in ('disabled','hidden','readonly','visible'):
     js("document.querySelector('#previous').value='KEEP';document.querySelector('#previous').focus()")
     rejected=False

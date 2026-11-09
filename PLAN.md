@@ -29,9 +29,10 @@ Do not edit Hermes core or implement a new browsing language, vault or site-spec
 - Review/test/secret scan; commit/push and verify remote SHA.
 - Official install/reload and verification of native tools.
 
-The native fill_input helper also has the focus bug found in the old vendored
-helper. The separate 0.1.13 dependency patch is tracked under fixes/; backend
-replacement alone does not fix it, and a dependency rebuild can overwrite it.
+The native fill_input helper has a focus bug. The 0.4.2 correction belongs to the
+plugin: its existing pre_tool_call hook loads a per-call focus check before calling
+the unchanged native helper. No site-packages edits or agent workspace files are
+required. Validate with an unmodified native package and again after official update.
 
 ## Candidate verification
 
@@ -81,3 +82,16 @@ replacement alone does not fix it, and a dependency rebuild can overwrite it.
 - Gemini's complete offline suite passes: 587 passed, 40 opt-in tests skipped.
   Its companion compatibility commit is preserved as a patch under fixes/,
   because the local Gemini checkout has no Git remote.
+
+## Plugin-owned input correction, 0.4.2
+
+Remove the manual dependency patch. The existing official pre-tool hook loads the
+plugin's focus check for each native call; successful input uses the original helper.
+Leading Python docstrings/future imports remain valid, and repeated hooks do not stack
+checks. Other providers are unaffected and no agent workspace file is written.
+
+97 unit tests and native four-agent acceptance pass for the candidate. Deployment
+acceptance must additionally verify the stock package against its RECORD hashes,
+run native input/parallel/cleanup checks after the official updater creates its new
+environment, and confirm the active gateway has loaded 0.4.2. Retire only the two
+known manual helper edits from 0.4.1. Keep the historical HTTP 403 limitation open.

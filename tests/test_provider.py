@@ -30,6 +30,16 @@ class ProviderTests(unittest.TestCase):
         self.assertIsNone(plugin.prepare_call('browser_exec', {}, 'a', config={'browser': {'cloud_provider': 'local'}}))
         self.assertIsNone(plugin.prepare_call('terminal', {}, 'a', config=self.config()))
 
+    def test_focus_check_is_loaded_from_plugin_through_native_hook(self):
+        code = "fill_input('#hidden', 'fixture')"
+        result = self.call('agent-a', code=code)
+        native = Mock()
+        namespace = {'fill_input': native, 'js': Mock(return_value=False), 'wait_for_element': Mock()}
+        with self.assertRaisesRegex(RuntimeError, 'not focused'):
+            exec(result['args']['code'], namespace)
+        native.assert_not_called()
+        self.assertTrue(result['args']['code'].endswith(code))
+
     def test_no_profile_copy_or_endpoint_override(self):
         self.assertEqual(self.call('a', local=True)['action'], 'block')
         self.assertEqual(self.call('')['action'], 'block')

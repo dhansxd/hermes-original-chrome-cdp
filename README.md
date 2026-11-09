@@ -54,8 +54,8 @@ their tool definitions after the supported plugin reload.
 
 Use `browser_exec` and native `browser_vault`, not `browser_original_chrome_exec` or
 `browser_original_chrome_vault`. The old account-binding setting is no longer required;
-there is no hardcoded account identity. Core Hermes is not patched. The separate native
-input-helper correction used by this installation is documented under `fixes/`.
+there is no hardcoded account identity. Core Hermes and its installed Python packages
+are not patched. The input focus check is owned and loaded by this plugin.
 
 ## Session ownership
 
@@ -108,9 +108,14 @@ it never logs an arbitrary response body or retries the handshake automatically.
 page commands use the caller's deadline rather than an extra 30-second transport deadline.
 
 The native browser-harness 0.1.13 `fill_input` helper has a focus-check defect: a hidden or
-disabled target can leave typing in a previously focused field. The minimal dependency
-patch in `fixes/` verifies editability and actual focus before dispatching keys. It is
-separate from this provider, must be applied to the active native dependency, and may be
-replaced by a Hermes environment rebuild. Run `tests/live_native.py --check-native-focus`
-with Hermes's Python to verify the actual installed helper. No replacement helper or
-vault is installed.
+disabled target can leave typing in a previously focused field. Version 0.4.2 uses the
+plugin's existing `pre_tool_call` hook to load `input_guard.py` into each native
+`browser_exec` call. It verifies editability and actual focus, then calls the original
+native helper for typing. The runner, tools and vault remain native. The check does not
+edit Hermes packages or the agent's workspace helpers, and applies only when this
+provider is selected. Reinstalling dependencies needs no manual input patch.
+
+Run `tests/live_native.py --check-native-focus --require-unmodified-harness` with Hermes's
+Python to verify both the input behavior and the installed package's recorded file hashes.
+This replaces the temporary site-packages correction used in 0.4.1. Ordinary plugin/API
+compatibility still needs verification when upgrading Hermes.
