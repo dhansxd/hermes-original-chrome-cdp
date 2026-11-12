@@ -114,6 +114,17 @@ class RelayTests(unittest.TestCase):
         self.assertTrue(session.close(cleanup_wire=self.wire))
         self.assertEqual({t['targetId'] for t in self.targets}, {'manual', 'owned'})
 
+    def test_failed_start_without_cdp_closes_only_its_exact_seed_tab(self):
+        session=relay.ChromeSession(Path('/fixture'),'Default')
+        self.addCleanup(session.close)
+        session.identity={'pid':42,'started':1}
+        session.seed_url='file:///fixture/owned-start.html'
+        session.seed_title='Hermes browser session fixture'
+        with patch('relay.startup.process_alive',return_value=True), \
+                patch('relay.startup.close_seed_tab',return_value=True) as close:
+            self.assertTrue(session.close())
+        close.assert_called_once_with(session.data,session.identity,session.seed_url,session.seed_title)
+
     def test_disconnected_browser_cleanup_requires_process_exit_proof(self):
         self.session.identity = {'pid': 42, 'started': 1}
         self.wire.closed = True

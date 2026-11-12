@@ -1,4 +1,4 @@
-"""Resize/drag resets the pre-action wait; no second click or extra deadline."""
+"""Dialog geometry controls the pre-action wait independently of global mouse input."""
 import sys
 import unittest
 from pathlib import Path
@@ -26,15 +26,28 @@ class StationarityTests(unittest.TestCase):
         self.assertEqual(len(times),1)
         self.assertGreaterEqual(times[0],11.8)
 
-    def test_mouse_drag_holds_approval_until_release_plus_stable_interval(self):
-        backend,ax,sheet=self.backend()
+    def test_global_mouse_hold_does_not_exhaust_pending_handshake(self):
+        backend,ax,sheet=self.backend();backend.deadline=12
         with fake_clock() as now:
             ax.geometry_state=lambda _:(1000,700)
-            ax.mouse_down=lambda:now[0]<11.2
+            ax.mouse_down=Mock(return_value=True)
             times=[];ax.ax.AXUIElementPerformAction.side_effect=lambda *args:times.append(now[0]) or 0
-            backend.press(sheet,pending=lambda:True)
+            backend.press(sheet,pending=lambda:now[0]<backend.deadline)
         self.assertEqual(len(times),1)
-        self.assertGreaterEqual(times[0],12.2)
+        self.assertAlmostEqual(times[0],11)
+        ax.mouse_down.assert_not_called()
+
+    def test_global_mouse_change_before_action_does_not_cancel_exact_button(self):
+        backend,ax,sheet=self.backend()
+        held=[False]
+        ax.mouse_down=Mock(side_effect=lambda:held[0])
+        def rescan():
+            held[0]=True
+            return [sheet]
+        backend.scan=Mock(side_effect=rescan)
+        with fake_clock():backend.press(sheet,pending=lambda:True)
+        ax.ax.AXUIElementPerformAction.assert_called_once()
+        ax.mouse_down.assert_not_called()
 
     def test_continuous_resize_never_clicks_or_extends_handshake_budget(self):
         backend,ax,sheet=self.backend();backend.deadline=11.5

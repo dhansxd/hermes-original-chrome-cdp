@@ -196,3 +196,73 @@ def seed_window_ready(pid,seed_url):
         if str(exc) in {'consent_ax_read:-25202','consent_ax_read:-25204'}:return False
         raise
     finally:ax.clear()
+
+
+def close_seed_tab(data,identity,seed_url,title):
+    """Close the exact startup tab when CDP attach failed before ownership discovery."""
+    if not identity or not seed_url or not title:
+        return False
+    if __package__:
+        from .consent import AX
+    else:
+        from consent import AX
+    ax=AX()
+    ax.deadline=time.monotonic()+3
+    def matches():
+        app=ax.ax.AXUIElementCreateApplication(identity['pid']);ax.refs.append(app)
+        values=ax.attr(app,'AXWindows')
+        windows=[ax.cf.CFArrayGetValueAtIndex(values,i) for i in range(ax.cf.CFArrayGetCount(values))] if values else []
+        found=[];groups=[]
+        def visit(node,window,depth=0):
+            role=ax.text(node,'AXRole')
+            if role in {'AXWebArea','AXScrollArea'}:
+                return
+            if role=='AXTabGroup':
+                groups.append(node)
+            if ax.text(node,'AXSubrole')=='AXTabButton':
+                if ax.text(node,'AXTitle')==title:
+                    found.append((window,node))
+                return
+            if depth>12:
+                raise RuntimeError('Startup tab tree is incomplete.')
+            for child in ax.children(node):
+                visit(child,window,depth+1)
+        for window in windows:
+            if ax.text(window,'AXSubrole')=='AXStandardWindow':
+                before=len(groups)
+                visit(window,window)
+                if len(groups)==before:
+                    raise RuntimeError('Startup tab group is unavailable.')
+        return found
+    try:
+        if not ax.trusted() or endpoint_identity(data)!=identity:
+            return False
+        found=matches()
+        if len(found)!=1:
+            return not found
+        window,tab=found[0]
+        buttons=[node for node in ax.children(tab) if ax.text(node,'AXRole')=='AXButton']
+        if len(buttons)!=1 or ax.text(window,'AXDocument')!=seed_url:
+            return False
+        button=buttons[0]
+        for node in (window,tab,button):
+            pid=ax.c.c_int()
+            if ax.ax.AXUIElementGetPid(node,ax.c.byref(pid)) or pid.value!=identity['pid']:
+                return False
+        if (endpoint_identity(data)!=identity or ax.text(tab,'AXTitle')!=title
+                or not ax.within(button,tab) or not ax.within(tab,window)
+                or ax.text(window,'AXDocument')!=seed_url):
+            return False
+        ax.limit(button,1)
+        ax.ax.AXUIElementPerformAction(button,ax.string('AXPress'))
+        while time.monotonic()<ax.deadline:
+            if endpoint_identity(data)!=identity:
+                return False
+            if not matches():
+                return True
+            time.sleep(.05)
+        return False
+    except Exception:
+        return False
+    finally:
+        ax.clear()

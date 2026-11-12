@@ -324,7 +324,6 @@ class AX:
         sig(self.ax,'AXUIElementGetPid',c.c_int,[p,c.POINTER(c.c_int)])
         sig(self.ax,'AXUIElementSetMessagingTimeout',c.c_int,[p,c.c_float])
         sig(self.ax,'AXValueGetValue',c.c_bool,[p,c.c_int,p])
-        sig(self.ax,'CGEventSourceButtonState',c.c_bool,[c.c_int,c.c_uint])
         class Pair(c.Structure):
             _fields_=[('first',c.c_double),('second',c.c_double)]
         self._pair_type=Pair
@@ -359,8 +358,6 @@ class AX:
     def children(self,node):
         value=self.attr(node,'AXChildren')
         return [self.cf.CFArrayGetValueAtIndex(value,i) for i in range(self.cf.CFArrayGetCount(value))] if value else []
-    def mouse_down(self):
-        return any(self.ax.CGEventSourceButtonState(0,button) for button in (0,1,2))
     def geometry(self,node):
         result=[]
         for name,kind in (('AXPosition',1),('AXSize',2)):
@@ -643,25 +640,21 @@ class MacConsent:
         # Re-read host identity/sheets/socket at action time; no title-only click.
         if not pending():return
         with self.ax.pin(sheet):
-            # Chromium resets input protection on widget bounds changes. Wait
-            # for a stationary host and released mouse, not a fixed delay from
-            # first display. No protection bypass or repeat of a dispatched action.
+            # Wait for stable Chrome geometry before the exact AX action.
+            # Global mouse state also includes input in unrelated applications
+            # and cannot establish whether this retained dialog is ready.
             geometry=self.ax.geometry_state(sheet)
             settled_at=time.monotonic()+1
-            was_dragging=False
             if self.trace is not None:self.trace.values['phase']='settling'
             while True:
                 if not pending():
                     if self.trace is not None:self.trace.values['press_outcome']='pending_ended'
                     return
                 current=self.ax.geometry_state(sheet)
-                dragging=self.ax.mouse_down()
-                if current!=geometry or dragging or was_dragging:
+                if current!=geometry:
                     if self.trace is not None:
-                        if current!=geometry:self.trace.add('geometry_resets')
-                        if dragging:self.trace.add('drag_waits')
+                        self.trace.add('geometry_resets')
                     geometry=current;settled_at=time.monotonic()+1
-                was_dragging=dragging
                 budget=self.budget('settling',.05)
                 pause=min(budget,settled_at-time.monotonic())
                 if pause<=0:break
@@ -672,7 +665,7 @@ class MacConsent:
                 raise ConsentError('consent_changed_before_press')
             def safe():
                 self.budget('press')
-                if self.ax.mouse_down() or self.ax.geometry_state(fresh)!=geometry:
+                if self.ax.geometry_state(fresh)!=geometry:
                     raise ConsentError('consent_geometry_changed_before_press')
                 return pending() and self.correlate()
             self.ax.press(fresh,pending=safe)

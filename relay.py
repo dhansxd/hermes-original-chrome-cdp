@@ -102,6 +102,7 @@ class ChromeSession:
         self.context = None
         self.seed_dir = None
         self.seed_url = None
+        self.seed_title = None
         self.identity = None
         self.cleanup_complete = False
         self.clients = {}
@@ -125,7 +126,8 @@ class ChromeSession:
                 return
             self.seed_dir = tempfile.TemporaryDirectory(prefix='hermes-chrome-window-')
             seed_file = Path(self.seed_dir.name) / 'start.html'
-            seed_file.write_text('<!doctype html><title>Hermes browser session</title>')
+            self.seed_title = 'Hermes browser session ' + secrets.token_hex(12)
+            seed_file.write_text('<!doctype html><title>' + self.seed_title + '</title>')
             seed = self.seed_url = seed_file.as_uri()
             try:
                 with consent_guard(self.data, timeout=60):
@@ -332,6 +334,9 @@ class ChromeSession:
                     success = False
             elif self.owned or self.seed_url:
                 success = bool(self.identity and not startup.process_alive(self.identity))
+                if not success and not self.owned:
+                    with consent_guard(self.data):
+                        success = startup.close_seed_tab(self.data,self.identity,self.seed_url,self.seed_title)
             with self.lock:
                 clients = list(self.clients)
             for client in clients:

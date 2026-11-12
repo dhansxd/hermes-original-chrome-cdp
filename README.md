@@ -80,8 +80,14 @@ Hermes's normal browser lifecycle closes the provider session; the provider clos
 its owned tabs and its CDP connection. It never quits shared Chrome. Startup errors stay
 on the selected CDP route instead of falling back to a different browser.
 If startup fails after opening its seed tab, cleanup is only confirmed after that exact
-tab is gone. An existing approved connection can remove it; an unavailable connection
-is reported as incomplete cleanup, without reopening Chrome or retrying permission.
+tab is gone. An existing approved connection can remove it. Before CDP ownership is
+available, cleanup can use the exact native tab close button after verifying its unique
+startup title, document URL and Chrome process identity. Other tabs in the same window
+remain open. Ambiguous or unreadable ownership is reported as incomplete cleanup.
+
+Debug consent uses an exact Accessibility `AXPress` after Chrome geometry settles.
+Global mouse-button state does not delay consent. The existing handshake deadline and
+dialog/connection identity checks still apply.
 
 ## Verification
 

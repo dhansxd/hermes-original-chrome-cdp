@@ -1,3 +1,4 @@
+import ctypes
 import sys
 import tempfile
 import unittest
@@ -6,6 +7,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import startup
+from test_consent_diagnostics import fake_clock
 
 
 class StartupTests(unittest.TestCase):
@@ -53,6 +55,96 @@ class StartupTests(unittest.TestCase):
                 patch('startup.seed_window_ready', side_effect=[False, True]), patch('startup.time.sleep'):
             self.assertEqual(startup.launch('/fixture', 'Profile 2', 'file:///fixture.html'), identity['endpoint'])
             launch.assert_called_once_with(Path('/fixture'), 'file:///fixture.html', profile_directory='Profile 2')
+
+
+class SeedCleanupTests(unittest.TestCase):
+    def setUp(self):
+        self.identity={'pid':42,'started':1,'endpoint':'ws://fixture'}
+        self.seed='file:///fixture/seed.html'
+        self.title='Hermes browser session fixture'
+        self.data={
+            1:{'AXRole':'AXWindow','AXSubrole':'AXStandardWindow','AXDocument':self.seed},
+            2:{'AXRole':'AXTabGroup'},
+            3:{'AXRole':'AXRadioButton','AXSubrole':'AXTabButton','AXTitle':self.title},
+            4:{'AXRole':'AXButton'},
+            6:{'AXRole':'AXRadioButton','AXSubrole':'AXTabButton','AXTitle':'Manual tab'},
+            7:{'AXRole':'AXButton'},
+        }
+        self.children={1:[2],2:[3,6],3:[4],6:[7]}
+        parents={2:1,3:2,4:3,6:2,7:6}
+        def within(node,ancestor):
+            while node in parents:
+                node=parents[node]
+                if node==ancestor:return True
+            return False
+        ax=self.ax=Mock()
+        ax.refs=[];ax.c=ctypes;ax.trusted.return_value=True
+        def pid(node,out):
+            out._obj.value=42
+            return 0
+        ax.ax.AXUIElementGetPid.side_effect=pid
+        ax.ax.AXUIElementCreateApplication.return_value=0
+        ax.attr.side_effect=lambda node,key:[1] if node==0 and key=='AXWindows' else None
+        ax.cf.CFArrayGetCount.side_effect=len
+        ax.cf.CFArrayGetValueAtIndex.side_effect=lambda values,index:values[index]
+        ax.text.side_effect=lambda node,key:self.data.get(node,{}).get(key,'')
+        ax.children.side_effect=lambda node:list(self.children.get(node,[]))
+        ax.within.side_effect=within
+        ax.string.side_effect=lambda value:value
+        def press(node,action):
+            self.children[2].remove(3)
+            return 0
+        ax.ax.AXUIElementPerformAction.side_effect=press
+        self.ax_patch=patch('consent.AX',return_value=ax)
+        self.ax_patch.start();self.addCleanup(self.ax_patch.stop)
+        self.identity_patch=patch('startup.endpoint_identity',return_value=self.identity)
+        self.endpoint=self.identity_patch.start();self.addCleanup(self.identity_patch.stop)
+
+    def close(self):
+        return startup.close_seed_tab(Path('/fixture'),self.identity,self.seed,self.title)
+
+    def test_failed_attach_closes_exact_seed_tab_and_preserves_manual_tab(self):
+        self.assertTrue(self.close())
+        self.ax.ax.AXUIElementPerformAction.assert_called_once_with(4,'AXPress')
+        self.assertEqual(self.children[2],[6])
+        self.ax.clear.assert_called_once()
+
+    def test_absent_seed_is_confirmed_without_an_action(self):
+        self.children[2]=[6]
+        self.assertTrue(self.close())
+        self.ax.ax.AXUIElementPerformAction.assert_not_called()
+
+    def test_unavailable_tab_tree_is_unconfirmed(self):
+        self.children[1]=[]
+        self.assertFalse(self.close())
+        self.ax.ax.AXUIElementPerformAction.assert_not_called()
+
+    def test_background_seed_does_not_close_the_active_manual_tab(self):
+        self.data[1]['AXDocument']='https://fixture.invalid/manual'
+        self.assertFalse(self.close())
+        self.ax.ax.AXUIElementPerformAction.assert_not_called()
+
+    def test_ambiguous_seed_title_is_unconfirmed(self):
+        self.data[6]['AXTitle']=self.title
+        self.assertFalse(self.close())
+        self.ax.ax.AXUIElementPerformAction.assert_not_called()
+
+    def test_replaced_chrome_before_action_is_unconfirmed(self):
+        self.endpoint.side_effect=[self.identity,dict(self.identity,started=2)]
+        self.assertFalse(self.close())
+        self.ax.ax.AXUIElementPerformAction.assert_not_called()
+
+    def test_foreign_accessibility_process_is_unconfirmed(self):
+        self.ax.ax.AXUIElementGetPid.side_effect=lambda node,out:0
+        self.assertFalse(self.close())
+        self.ax.ax.AXUIElementPerformAction.assert_not_called()
+
+    def test_unknown_press_is_observed_without_repeating_the_action(self):
+        self.ax.ax.AXUIElementPerformAction.side_effect=None
+        self.ax.ax.AXUIElementPerformAction.return_value=-25202
+        with fake_clock():
+            self.assertFalse(self.close())
+        self.ax.ax.AXUIElementPerformAction.assert_called_once_with(4,'AXPress')
 
 
 if __name__ == '__main__':

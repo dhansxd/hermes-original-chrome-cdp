@@ -96,6 +96,30 @@ run native input/parallel/cleanup checks after the official updater creates its 
 environment, and confirm the active gateway has loaded 0.4.2. Retire only the two
 known manual helper edits from 0.4.1. Keep the historical HTTP 403 limitation open.
 
+## CDP consent correction, 0.4.3
+
+Scope is CDP consent and failed-start cleanup. Two regression cases reproduced the
+global mouse-state dependency before correction. Consent now waits for stable Chrome
+geometry and validates the exact dialog/socket before AXPress, independently of global
+mouse-button state. Existing handshake deadlines remain bounded.
+
+A unique startup-tab title allows failed-start cleanup through its retained native tab
+close button when no CDP ownership has been discovered. Process identity, document URL,
+tab ancestry and final absence are checked. The close is scoped to the startup tab,
+including when another tab shares its window. Unknown closure remains unconfirmed.
+
+Candidate evidence includes 107 provider unit tests, native four-agent browser_exec
+acceptance with input/click/screenshot/iframe/popup/login and independent cleanup,
+587 Gemini tests with 40 opt-in skips, and 906 Flow tests. A real Chrome connection
+completed in approximately 2.3 seconds with the legacy mouse-state reader simulated
+as continuously held; the corrected path did not consult that reader. Physical
+held-mouse interaction is not established by this simulation. Failed-start native
+tab cleanup was exercised while an independently created tab remained open.
+
+Publication, official update/reload and installed coexistence checks follow candidate
+verification. Gemini reuses this plugin's CDP session module. Flow retains its own
+consent module and requires its own HTTP verification.
+
 ## Deployment and real-agent acceptance, 2026-11-09
 
 The official update installed 0.4.2 into a fresh Python environment. All 14 native
