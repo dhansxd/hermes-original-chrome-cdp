@@ -116,9 +116,30 @@ as continuously held; the corrected path did not consult that reader. Physical
 held-mouse interaction is not established by this simulation. Failed-start native
 tab cleanup was exercised while an independently created tab remained open.
 
-Publication, official update/reload and installed coexistence checks follow candidate
-verification. Gemini reuses this plugin's CDP session module. Flow retains its own
-consent module and requires its own HTTP verification.
+Code commit `6792e96` was published and installed through the official plugin updater.
+The running gateway accepted the supported plugin reload. Installed native browser
+agents, the Gemini Chrome adapter and the Flow HTTP browser-startup route passed shared
+Default-profile coexistence. Finishing one agent preserved the Flow document token,
+Gemini page, other agent and an independently created manual fixture. Each test-owned
+target was subsequently closed and verified absent.
+
+Original-profile cold startup, windowless startup and another existing profile passed.
+The cold test first proved no other pages, native windows or CDP connections existed.
+Windowless and other-profile startup preserved the same Chrome process. Final cleanup
+left one Chrome application process and no unconfirmed test sessions.
+
+The updater's CAUTION findings were reviewed before accepting its trust prompt. They
+covered historical untracked evidence HTML and existing system-program invocations.
+Two coexistence-harness invocation errors were corrected: a stale provider reference
+after discovery and inherited Python environment variables in the Gemini subprocess.
+The failed harness's Flow startup and blank fixture were cleaned up before the passing
+run. These were test-harness corrections, separate from the production CDP patch.
+
+The tracked Hermes core digest matched its pre-test baseline. Flow and Gemini source
+trees stayed clean at their original commits. Gemini loaded the installed plugin's
+new consent hash. Flow passed 906 tests and its actual HTTP startup/read/close route.
+No generation requests were submitted during these CDP checks. The historical HTTP
+403 remains unexplained by this correction.
 
 ## Deployment and real-agent acceptance, 2026-11-09
 
