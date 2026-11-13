@@ -36,6 +36,18 @@ with browser-harness 0.1.13. Recheck compatibility when upgrading Hermes.
 
 ## Distribution preparation
 
+Version 0.4.5 adds distribution documentation, licensing, and macOS dependency
+markers. A fresh-install test reproduced a universal resolver conflict with
+Hermes's Android psutil dependency. Qualifying this macOS plugin's requirements
+keeps those constraints local to its supported platform. A manifest regression
+test raises the unit-suite total to 115. Runtime implementation files retain the
+tested 0.4.4 behavior.
+
+Fresh-home native installation and enablement pass with the qualified requirements.
+The newly built dependency environment passes all 115 unit tests and the native
+four-agent local-fixture acceptance, including exact cleanup and stock harness
+RECORD validation. All test-owned provider sessions close successfully.
+
 - Document installation, permissions, configuration, operation, and lifecycle.
 - Include the MIT license and a step-by-step tutorial.
 - Keep examples and fixtures independent of personal accounts and local paths.

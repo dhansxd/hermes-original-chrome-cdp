@@ -1,5 +1,5 @@
 name: original-chrome-default
-version: 0.4.4
+version: 0.4.5
 manifest_version: 2
 api_version: 1
 homepage: https://github.com/dhansxd/hermes-original-chrome-default-plugin
@@ -23,5 +23,5 @@ config_schema:
     default: Default
     description: Existing directory in original Chrome user data, such as Default or Profile 2. No profile is copied.
 python_dependencies:
-  - psutil>=5.9,<8
-  - websockets>=15,<17
+  - psutil>=5.9,<8; sys_platform == 'darwin'
+  - websockets>=15,<17; sys_platform == 'darwin'

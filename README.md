@@ -21,10 +21,13 @@ browsing in the same Chrome application.
 | Hermes | BrowserProvider support, the Browser Automation picker, and `pre_tool_call` argument modification |
 | Toolsets | Native Browser Automation and Terminal enabled for the intended Hermes surface |
 
-The plugin declares `psutil>=5.9,<8` and `websockets>=15,<17`. Hermes manages these
-Python dependencies during installation and enablement.
+The plugin declares `psutil>=5.9,<8` and `websockets>=15,<17` for macOS. Hermes
+manages these Python dependencies during installation and enablement. The platform
+markers keep its universal dependency resolver from applying this plugin's package
+ranges to Hermes's Android or other operating-system environments.
 
-Version 0.4.4 was tested against Hermes commit
+Version 0.4.5 uses the tested 0.4.4 browser implementation, with distribution and
+macOS dependency-marker updates. The compatibility baseline is Hermes commit
 `b200f5bc60e31588ba2cb60e288029c4a54ba5fa` and `browser-harness` 0.1.13 on macOS.
 It also uses Hermes's session-cleanup and harness-directory helpers. Compatibility
 with another Hermes revision should be checked with the tests below. Its startup
@@ -133,6 +136,10 @@ Startup covers Chrome stopped, running without windows, and running with existin
 windows. Production sessions use the original Chrome application and its Dock entry.
 The explicit profile-directory launch selects the requested profile directly.
 
+Authentication comes from each user's local Chrome profile. The installation
+configuration consists of the browser backend and an existing profile-directory
+name. Profile paths are resolved from the macOS user's home directory at runtime.
+
 Shared-profile cookies and website storage follow Chrome's normal behavior. Signing
 out, changing account settings, or modifying shared website data can affect every
 user of that same profile. Tab ownership governs the plugin's target routing. Native
@@ -212,9 +219,9 @@ hermes plugins validate .
 hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
 
-The 0.4.4 regression suite contains 114 unit tests. It covers registration, task
+The 0.4.5 regression suite contains 115 unit tests. It covers registration, task
 namespaces, startup and consent identity, input focus, target ownership, transport
-responses, concurrent unload, and retryable cleanup.
+responses, concurrent unload, retryable cleanup, and dependency platform markers.
 
 For real Chrome acceptance, run this command with the Python environment used by Hermes.
 
