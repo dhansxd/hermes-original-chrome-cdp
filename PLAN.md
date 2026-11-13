@@ -1,198 +1,54 @@
-# Original Chrome provider
+# Project scope and verification
 
-## Agreed scope, 2026-11-09
+## Scope
 
-Replace the browser backend, keeping Hermes's native browser_exec and browser helpers.
-Register Original Chrome in the official Browser Automation picker. Use the original
-Chrome profile via CDP, without copying cookies, credentials or profile directories.
-Support stopped Chrome, running Chrome without windows, and already-open Chrome.
-Parallel agents own their windows/tabs; cleanup preserves other agents and manual work.
-Production must retain one original Chrome application process and one Dock icon.
-Do not edit Hermes core or implement a new browsing language, vault or site-specific rules.
+Provide Original Chrome through Hermes's native BrowserProvider interface and
+Browser Automation picker. Use the current macOS user's existing Chrome profiles
+through CDP, including their saved website sign-ins.
 
-## Implementation
+Each session owns its windows, tabs, and opener-linked popups. Support Chrome
+stopped, running without windows, and already in use. Agents and manual browsing
+share the original Chrome application while retaining independent tab ownership.
 
-1. Retain tested macOS GUI launch and CDP consent.
-2. Replace custom tools/interpreter with a standard BrowserProvider.
-3. Expose per-session CDP: filter target discovery, create owned windows, forward page commands.
-4. Namespace native named sessions by agent identity through the supported pre-tool hook.
-5. Remove obsolete custom execution, recovery, vault and Flow-specific components/tests.
+Implementation work belongs in this plugin repository. Keep Hermes core and its
+installed native browser helpers under Hermes's own management.
 
-## Acceptance
+## Current implementation
 
-- Official plugin loading, provider picker and native browser_exec dispatch.
-- Existing login through the original profile, without copying profile/cookies.
-- Same-alias independent sessions, overlapping page work, isolated cleanup.
-- Native DOM, keyboard, click, screenshot, iframe/shadow DOM, popups.
-- Three startup states, separating real-profile from disposable-fixture evidence.
-- Failure does not switch to packaged Chromium or close the shared browser.
-- Review/test/secret scan; commit/push and verify remote SHA.
-- Official install/reload and verification of native tools.
+- Native provider registration, configuration picker, and browser_exec dispatch.
+- Explicit existing-profile startup and verified Chrome process/profile identity.
+- Exact Accessibility consent and a loopback per-session CDP relay.
+- Namespaced native sessions and owned-target routing.
+- Plugin-owned input focus verification.
+- Finalization, unload admission control, and retryable in-process cleanup.
 
-The native fill_input helper has a focus bug. The 0.4.2 correction belongs to the
-plugin: its existing pre_tool_call hook loads a per-call focus check before calling
-the unchanged native helper. No site-packages edits or agent workspace files are
-required. Validate with an unmodified native package and again after official update.
+## Verification baseline
 
-## Candidate verification
+The 0.4.4 baseline passes 114 unit tests and native four-agent Chrome acceptance.
+Coverage includes input/click, screenshots, iframe/shadow DOM, popups, existing
+sign-in observations, overlapping operations, and peer-preserving cleanup.
+Lifecycle transition tests use an isolated Hermes home. Simulated dependency
+publication and gateway notifications in those tests are distinct from actual
+plugin installation and reload checks.
 
-- 89 unit tests pass, including failed-start cleanup and disconnected-process evidence.
-- Native Hermes browser_exec: DOM/input/click, screenshot, shadow DOM, cross-origin
-  iframe, popup, login, same-alias parallel work and exact agent cleanup pass.
-- A 3-second page operation overlaps a peer response in 396 ms.
-- Original profile: windowless parallel startup preserves the same Chrome PID;
-  one Chrome application process remains after cleanup.
-- Empty-profile approval mode: stopped, windowless, existing-window and background
-  startup pass. The original personal browser was not quit for these fixtures.
-- One HTTP 403 from Chrome during earlier acceptance remains unexplained. Later
-  passes do not prove it fixed. Failed cleanup is now reported accurately and an
-  existing approved peer can close the exact failed-start seed.
+The tested Hermes source revision is b200f5bc60e31588ba2cb60e288029c4a54ba5fa,
+with browser-harness 0.1.13. Recheck compatibility when upgrading Hermes.
 
-## Stabilization follow-up
+## Distribution preparation
 
-- Reproduce the Chrome rejection with consent diagnostics; do not retry unknown outcomes.
-- Reproduce native fill_input focus failure and use a supported native correction.
-- Test four parallel native calls with distinct real tool_call_id values.
-- Restore Gemini compatibility with the current provider: its old adapter imports
-  private 0.3.4 modules removed in 0.4.0. Keep generation/parsing behavior unchanged.
-- Verify original-profile startup, shared use and one Dock icon; close Chrome only
-  when there are no user/peer tabs or other active browser connections.
-- Commit/push, official update/reload, and verify active Hermes tools after changes.
+- Document installation, permissions, configuration, operation, and lifecycle.
+- Include the MIT license and a step-by-step tutorial.
+- Keep examples and fixtures independent of personal accounts and local paths.
+- Scan the release tree and reachable Git history for secrets and private identity.
+- Validate a clean checkout through the native Hermes loader and regression tests.
+- Verify the published Git revision against the reviewed revision.
 
-## Stabilization evidence, 0.4.1
+## Known lifecycle behavior
 
-- 90 provider unit tests pass. HTTP rejection diagnostics record only the status
-  and a fixed category. The historical 403 was not reproduced; its cause remains
-  unconfirmed. No retry or broader Chrome permission flag was added.
-- Native Hermes browser_exec passes with four independent same-alias agents.
-  Three peer reads finish while one agent awaits a 3-second page operation;
-  cleanup of one agent preserves the others. DOM, input/click, screenshot,
-  iframe/shadow DOM, popup ownership and existing login pass.
-- The actual patched native fill_input passes visible, hidden, disabled and
-  read-only input cases without overwriting a previously focused field.
-- Original personal Chrome passes fully stopped, running with no windows,
-  explicit other-profile startup, and return to the default profile. The cold
-  test first verified zero other pages and zero other CDP connections.
-- Browser agents, the actual Flow API and Gemini adapter coexist on the same
-  original profile with an independently controlled simulated manual tab.
-  Closing one browser agent preserves Flow's document, Gemini and the manual
-  fixture. Owned cleanup succeeds. No content generation was performed.
-- A real CDP resource operation taking 32 seconds succeeds through the relay,
-  including Gemini's existing late-response handling. Cleanup is confirmed.
-- Gemini's complete offline suite passes: 587 passed, 40 opt-in tests skipped.
-  Its companion compatibility commit is preserved as a patch under fixes/,
-  because the local Gemini checkout has no Git remote.
+Hermes manages plugin activation and browser selection separately. Select Local
+in its browser picker before disabling or removing this provider. Apply the
+supported plugin reload when the active Hermes surface requires it.
 
-## Plugin-owned input correction, 0.4.2
-
-Remove the manual dependency patch. The existing official pre-tool hook loads the
-plugin's focus check for each native call; successful input uses the original helper.
-Leading Python docstrings/future imports remain valid, and repeated hooks do not stack
-checks. Other providers are unaffected and no agent workspace file is written.
-
-97 unit tests and native four-agent acceptance pass for the candidate. Deployment
-acceptance must additionally verify the stock package against its RECORD hashes,
-run native input/parallel/cleanup checks after the official updater creates its new
-environment, and confirm the active gateway has loaded 0.4.2. Retire only the two
-known manual helper edits from 0.4.1. Keep the historical HTTP 403 limitation open.
-
-## CDP consent correction, 0.4.3
-
-Scope is CDP consent and failed-start cleanup. Two regression cases reproduced the
-global mouse-state dependency before correction. Consent now waits for stable Chrome
-geometry and validates the exact dialog/socket before AXPress, independently of global
-mouse-button state. Existing handshake deadlines remain bounded.
-
-A unique startup-tab title allows failed-start cleanup through its retained native tab
-close button when no CDP ownership has been discovered. Process identity, document URL,
-tab ancestry and final absence are checked. The close is scoped to the startup tab,
-including when another tab shares its window. Unknown closure remains unconfirmed.
-
-Candidate evidence includes 107 provider unit tests, native four-agent browser_exec
-acceptance with input/click/screenshot/iframe/popup/login and independent cleanup,
-587 Gemini tests with 40 opt-in skips, and 906 Flow tests. A real Chrome connection
-completed in approximately 2.3 seconds with the legacy mouse-state reader simulated
-as continuously held; the corrected path did not consult that reader. Physical
-held-mouse interaction is not established by this simulation. Failed-start native
-tab cleanup was exercised while an independently created tab remained open.
-
-Code commit `6792e96` was published and installed through the official plugin updater.
-The running gateway accepted the supported plugin reload. Installed native browser
-agents, the Gemini Chrome adapter and the Flow HTTP browser-startup route passed shared
-Default-profile coexistence. Finishing one agent preserved the Flow document token,
-Gemini page, other agent and an independently created manual fixture. Each test-owned
-target was subsequently closed and verified absent.
-
-Original-profile cold startup, windowless startup and another existing profile passed.
-The cold test first proved no other pages, native windows or CDP connections existed.
-Windowless and other-profile startup preserved the same Chrome process. Final cleanup
-left one Chrome application process and no unconfirmed test sessions.
-
-The updater's CAUTION findings were reviewed before accepting its trust prompt. They
-covered historical untracked evidence HTML and existing system-program invocations.
-Two coexistence-harness invocation errors were corrected: a stale provider reference
-after discovery and inherited Python environment variables in the Gemini subprocess.
-The failed harness's Flow startup and blank fixture were cleaned up before the passing
-run. These were test-harness corrections, separate from the production CDP patch.
-
-The tracked Hermes core digest matched its pre-test baseline. Flow and Gemini source
-trees stayed clean at their original commits. Gemini loaded the installed plugin's
-new consent hash. Flow passed 906 tests and its actual HTTP startup/read/close route.
-No generation requests were submitted during these CDP checks. The historical HTTP
-403 remains unexplained by this correction.
-
-## Plugin lifecycle correction, 0.4.4
-
-Scope is the audited create/unload race and cleanup bookkeeping. Serialize endpoint
-creation with closing admission, reject stale hooks after unload starts, retain owner
-records until cleanup succeeds, and retry retained provider sessions when the native
-cache has already forgotten them. Retain an exit callback only while unload has pending
-cleanup. Close local listeners despite failures in native seed-tab or client teardown.
-
-Use native BrowserProvider registration and Hermes plugin lifecycle. Backend selection
-remains in the official browser picker. The installed host preserves an explicit browser
-selection after disable/remove, so selecting Local is a separate operation. Dashboard
-disable and remove require applying the host's supported plugin reload. Do not change
-Hermes core or add a replacement plugin manager.
-
-Verify regression tests, isolated native command transitions, real Chrome peer/manual
-preservation, official plugin update/reload, loaded version, and remote SHA.
-
-Candidate verification passes 114 unit tests, including controlled supervisor, native
-seed-tab and client-close failures, and concurrent creation during unload. Six isolated
-native command transitions pass; dependency publication and gateway notifications in
-that matrix are simulated. Native browser_exec with four real Chrome agents passes
-input/click, screenshot, iframe/shadow DOM, popup, existing login and exact cleanup.
-Three peer reads complete in 431 ms during a 3-second operation. All 14 native harness
-Python files match their installed RECORD hashes.
-
-Real loaded-provider unload and re-registration preserve an independent CDP peer,
-pre-existing pages, a test-created manual tab with its document marker, and Chrome's
-PID/start-time identity. All test-owned targets and endpoints close. The first unload
-harness invocation read GUI session identity as a PID and failed before loading the
-provider. The harness was corrected to verify endpoint process identity and rerun.
-
-Native fallback review found that raising from create_session after unload would
-activate Hermes's Chromium fallback. A retired provider instead returns a CDP endpoint
-under the reserved .invalid domain, with no listener or Chrome resources created. The
-normal pre-tool hook reports unloading; an already-dispatched late call fails at CDP.
-A regression test exercises the native session selector and forbids local launch.
-The actual native browser_exec path also returns a CDP error for that late call,
-with zero local-launch calls and zero provider sessions created.
-
-## Deployment and real-agent acceptance, 2026-11-09
-
-The official update installed 0.4.2 into a fresh Python environment. All 14 native
-browser-harness source hashes match the package RECORD after live tests, and both
-earlier manual helper edits were restored. The active gateway loads 0.4.2.
-
-Two actual Hermes model conversations completed through the active gateway, using
-only native browser_exec: one read the signed-in Flow projects dashboard; the
-other read the signed-in Gemini editor and held its page until the first agent's
-cleanup completed. All five tool calls succeeded. Independent CDP observations
-confirmed distinct windows in the same original profile, the surviving peer
-document, and unchanged pre-existing pages and an operator-created manual fixture.
-Both agent sessions and the observer/manual fixtures cleaned up successfully.
-One Chrome application process and one Dock icon remain. No content was generated.
-The manual fixture does not claim a human typing test. The earlier HTTP 403 did not
-recur in this run; its original cause remains unconfirmed.
+Cleanup recovery records live in process memory. A process that ends before
+cleanup succeeds can leave an owned tab behind. Shared-profile website storage
+follows Chrome's normal profile-wide behavior.

@@ -4,7 +4,8 @@ manifest_version: 2
 api_version: 1
 homepage: https://github.com/dhansxd/hermes-original-chrome-default-plugin
 description: Use original, signed-in Chrome through native Hermes browser tools, with separate agent windows via CDP.
-author: Dyra
+author: dhansxd
+license: MIT
 kind: backend
 capabilities: []
 provides_browser_providers:

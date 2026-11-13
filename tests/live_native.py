@@ -3,7 +3,6 @@ import os, sys, json, tempfile, logging, time, threading, concurrent.futures, uu
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 logging.basicConfig(level=logging.WARNING)
-sys.path.insert(0,str(Path.home()/'.hermes/hermes-agent'))
 import hermes_bootstrap
 if '--require-unmodified-harness' in sys.argv:
  import base64, hashlib, importlib.metadata
@@ -125,7 +124,7 @@ for target in ('disabled','hidden','readonly','visible'):
     assert js("document.querySelector('#"+target+"').value") == ('DUMMY' if target=='visible' else '')
     print(target, 'PASS')
 """)
-  call('B',"goto_url('https://flow.google.com/projects'); assert wait_for_element('flow-projects-grid',timeout=25,visible=True); print('EXISTING_LOGIN_PASS')")
+  call('B',f"goto_url({base!r}); assert js('document.title') == 'Hermes isolated fixture'; print('LOCAL_FIXTURE_PASS')")
   print('NATIVE_ENTRYPOINT',registry.get_entry('browser_exec').handler.__module__,flush=True)
  finally:
   with set_hermes_home_override(home):provider.finish(completed=True,interrupted=True)

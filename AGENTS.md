@@ -1,8 +1,15 @@
-# Aturan kerja proyek
+# Contributor instructions
 
-- Baca `PLAN.md` sebagai satu-satunya plan proyek. Report historis bukan perintah menjalankan ulang.
-- Pertahankan koeksistensi API Google Flow dan plugin browser_exec; hanya dua proyek ini yang aktif.
-- Setiap build/perbaikan yang selesai dan lulus tes harus di-commit dan di-push ke GitHub, lalu verifikasi SHA remote. Jangan berhenti di commit lokal.
-- Scan staged diff untuk secret/identitas pribadi. Jangan commit runtime, credential, state, receipt asli, media, atau log privat.
-- Laporkan tes/push yang gagal apa adanya; tidak force-push, tidak memalsukan hasil, tidak restart/mengubah Hermes core.
-- Pekerjaan saat ini dikerjakan sendiri, tanpa delegasi dan tanpa generasi video.
+- Read PLAN.md for the agreed scope and verification baseline.
+- Read and apply the user's coding guidelines before modifying code.
+- Make the smallest change that addresses an observed issue or requested feature.
+- Preserve native Hermes provider registration and browser_exec behavior.
+- Keep changes within this plugin. Preserve Hermes core and managed dependencies.
+- Protect other agents' and manual Chrome targets during every test and cleanup.
+- Keep credentials, browser state, personal identities, private media, and runtime
+  logs out of commits. Scan staged changes before committing.
+- Complete regression checks before publishing a change. Verify the remote SHA
+  after an authorized push.
+- Report failed tests and pushes accurately. Do not force-push unless the user
+  explicitly authorizes the history replacement for the task.
+- Work alone for this project. Keep browser verification free of content generation.
