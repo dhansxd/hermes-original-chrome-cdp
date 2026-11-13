@@ -123,7 +123,8 @@ class RelayTests(unittest.TestCase):
         with patch('relay.startup.process_alive',return_value=True), \
                 patch('relay.startup.close_seed_tab',return_value=True) as close:
             self.assertTrue(session.close())
-        close.assert_called_once_with(session.data,session.identity,session.seed_url,session.seed_title)
+        close.assert_called_once_with(session.data,session.identity,
+                                      'file:///fixture/owned-start.html',session.seed_title)
 
     def test_disconnected_browser_cleanup_requires_process_exit_proof(self):
         self.session.identity = {'pid': 42, 'started': 1}
@@ -132,6 +133,28 @@ class RelayTests(unittest.TestCase):
             self.assertFalse(self.session.close())
         with patch('relay.startup.process_alive', return_value=False):
             self.assertTrue(self.session.close())
+
+    def test_native_seed_cleanup_failure_still_stops_local_endpoint(self):
+        session = relay.ChromeSession(Path('/fixture'), 'Default')
+        self.addCleanup(session.close)
+        session.identity = {'pid': 42, 'started': 1}
+        session.seed_url = 'file:///fixture/owned-start.html'
+        with patch('relay.startup.process_alive', return_value=True), \
+                patch('relay.startup.close_seed_tab', side_effect=RuntimeError('fixture failure')):
+            self.assertFalse(session.close())
+        self.assertFalse(session.thread.is_alive())
+        self.assertEqual(session.seed_url, 'file:///fixture/owned-start.html')
+        with patch('relay.startup.process_alive', return_value=False):
+            self.assertTrue(session.close())
+
+    def test_client_close_failure_does_not_leave_endpoint_running(self):
+        self.client.close.side_effect = RuntimeError('fixture failure')
+        self.assertFalse(self.session.close())
+        self.assertFalse(self.session.thread.is_alive())
+        self.other.close.assert_called_once()
+        self.wire.close.assert_called_once()
+        self.client.close.side_effect = None
+        self.assertTrue(self.session.close())
 
 
 class TransportTests(unittest.TestCase):

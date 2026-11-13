@@ -306,7 +306,6 @@ class ChromeSession:
         with self.start_lock:
             if self.cleanup_complete:
                 return True
-            was_closed = self.closed
             self.closed = True
             success = True
             wire = self.wire if self.wire and not self.wire.closed else cleanup_wire
@@ -333,20 +332,39 @@ class ChromeSession:
                 except Exception:
                     success = False
             elif self.owned or self.seed_url:
-                success = bool(self.identity and not startup.process_alive(self.identity))
-                if not success and not self.owned:
-                    with consent_guard(self.data):
-                        success = startup.close_seed_tab(self.data,self.identity,self.seed_url,self.seed_title)
+                try:
+                    success = bool(self.identity and not startup.process_alive(self.identity))
+                    if not success and not self.owned:
+                        with consent_guard(self.data):
+                            success = startup.close_seed_tab(self.data,self.identity,self.seed_url,self.seed_title)
+                except Exception:
+                    success = False
+            if success:
+                # The seed is gone even if a later local transport close needs another attempt.
+                self.owned.clear()
+                self.seed_url = None
             with self.lock:
                 clients = list(self.clients)
             for client in clients:
-                client.close()
+                try:
+                    client.close()
+                except Exception:
+                    success = False
             if self.wire and not self.wire.closed:
-                self.wire.close()
-            if not was_closed:
+                try:
+                    self.wire.close()
+                except Exception:
+                    success = False
+            try:
                 self.server.shutdown()
                 self.thread.join(2)
+                success = success and not self.thread.is_alive()
+            except Exception:
+                success = False
             if success and self.seed_dir:
-                self.seed_dir.cleanup()
+                try:
+                    self.seed_dir.cleanup()
+                except Exception:
+                    success = False
             self.cleanup_complete = success
             return success

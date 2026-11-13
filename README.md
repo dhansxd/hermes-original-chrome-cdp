@@ -45,6 +45,35 @@ The plugin setting `profile_directory` defaults to `Default`; it may name anothe
 Chrome profile directory, such as `Profile 2`. It takes effect for newly created sessions.
 The profile is selected explicitly and verified using Chrome's profile-path page.
 
+### Disable, enable and remove
+
+Use Hermes's native plugin commands:
+
+```sh
+hermes plugins disable original-chrome-default
+hermes plugins enable original-chrome-default
+hermes plugins remove original-chrome-default
+```
+
+Browser selection is a separate Hermes setting. To use the built-in browser after
+disabling or removing this provider, select **Local** in `hermes tools → Browser
+Automation` first. Enabling the plugin registers **Original Chrome · CDP** again;
+select it in the same picker to use it.
+
+In the tested Hermes build, CLI disable requests a gateway plugin reload. Dashboard
+disable reports that a reload is required, and remove deletes the installation
+without reloading the running process. Apply Hermes's supported plugin reload to
+release the loaded provider in those cases. Ordinary reload preserves browser selection.
+Hermes-managed plugin data can survive removal.
+
+Version 0.4.4 closes admission before unload so a concurrent call cannot create a
+session after the cleanup snapshot. Cleanup retains failed session ownership and
+can be repeated. Pending cleanup also retains an in-process exit callback after
+Hermes unregisters the provider. Successful unload removes that callback. Local CDP
+listeners shut down even if tab or client cleanup fails; incomplete tab cleanup is
+reported and retains the exact ownership needed for another attempt. This recovery
+state lasts for the current process and does not survive a forced process kill.
+
 ### Migration from 0.3.x
 
 Enable the native browser toolsets again: remove `browser` and `browser-use` from

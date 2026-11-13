@@ -1,4 +1,5 @@
 """Original Chrome as a native Hermes browser provider, without tool replacements."""
+import atexit
 import hashlib
 import logging
 import os
@@ -41,6 +42,9 @@ class ChromeProvider(BrowserProvider):
         self.owners = {}
         self.waiting = {}
         self.lock = threading.RLock()
+        self.unloading = False
+        # Retain failed cleanup across host unload, until it succeeds or the process exits.
+        atexit.register(self.unload)
 
     def is_available(self):
         return sys.platform == 'darwin' and CHROME.exists()
@@ -52,10 +56,12 @@ class ChromeProvider(BrowserProvider):
     def create_session(self, task_id):
         # Return a local endpoint before starting Chrome. Startup failures become CDP
         # errors instead of triggering Hermes's fallback to packaged Chromium.
-        session = ChromeSession(self.data, profile_directory(self.get_setting('profile_directory')))
-        session.cache_key = task_id
-        identifier = uuid.uuid4().hex
         with self.lock:
+            if self.unloading:
+                raise RuntimeError('Original Chrome provider is unloading.')
+            session = ChromeSession(self.data, profile_directory(self.get_setting('profile_directory')))
+            session.cache_key = task_id
+            identifier = uuid.uuid4().hex
             self.sessions[identifier] = session
         return {'session_name': 'original-chrome-' + identifier, 'bb_session_id': identifier,
                 'cdp_url': session.url, 'features': {'original_chrome': True}}
@@ -89,14 +95,31 @@ class ChromeProvider(BrowserProvider):
 
     def unload(self):
         with self.lock:
+            self.unloading = True
+        self.finish(completed=True, interrupted=True)
+        with self.lock:
             identifiers = list(self.sessions)
         for identifier in identifiers:
             self.close_session(identifier)
+        with self.lock:
+            complete = not self.sessions and not self.owners
+            if complete:
+                self.waiting.clear()
+                atexit.unregister(self.unload)
+            else:
+                logging.getLogger(__name__).warning(
+                    'Original Chrome unload has pending cleanup (%d sessions, %d agents).',
+                    len(self.sessions), len(self.owners))
+        return complete
 
     def prepare_call(self, tool_name, args, task_id, session_id='', **kwargs):
-        result = prepare_call(tool_name, args, task_id, session_id=session_id, **kwargs)
-        if result and result.get('action') == 'modify':
-            with self.lock:
+        with self.lock:
+            if self.unloading:
+                if tool_name == 'browser_exec':
+                    return {'action': 'block', 'message': 'Original Chrome provider is unloading.'}
+                return None
+            result = prepare_call(tool_name, args, task_id, session_id=session_id, **kwargs)
+            if result and result.get('action') == 'modify':
                 self.owners[result['args']['session']] = (task_id, session_id)
         return result
 
@@ -106,14 +129,27 @@ class ChromeProvider(BrowserProvider):
                 return
             names = [name for name, owner in self.owners.items()
                      if (task_id is None or owner[0] == task_id) and (session_id is None or owner[1] == session_id)]
+        if not names:
+            return
         from tools.browser_session_lifecycle import cleanup_browser
         from tools.browser_session_cdp import stop_cdp_supervisor
         for name in names:
             with self.lock:
-                owner = self.owners.pop(name, None)
-            if owner:
-                stop_cdp_supervisor(owner[0])
-                cleanup_browser('bu-named-' + name)
+                owner = self.owners.get(name)
+                if owner:
+                    cache_key = 'bu-named-' + name
+                    try:
+                        stop_cdp_supervisor(owner[0])
+                        cleanup_browser(cache_key)
+                        # Native cleanup can forget a session even when close_session returns False.
+                        identifiers = [identifier for identifier, session in self.sessions.items()
+                                       if session.cache_key.split('@', 1)[0] == cache_key]
+                        closed = [self.close_session(identifier) for identifier in identifiers]
+                    except Exception:
+                        logging.getLogger(__name__).warning('Original Chrome agent cleanup is not confirmed.')
+                        continue
+                    if all(closed):
+                        self.owners.pop(name, None)
 
     def finalize(self, session_id=None, **kwargs):
         if session_id:

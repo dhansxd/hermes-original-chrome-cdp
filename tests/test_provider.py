@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -78,6 +79,89 @@ class ProviderTests(unittest.TestCase):
             launch.assert_not_called()
             self.assertTrue(provider.close_session(info['bb_session_id']))
             self.assertFalse(provider.sessions)
+
+    def test_unload_rejects_new_sessions_and_stale_tool_hooks(self):
+        provider = plugin.ChromeProvider()
+        provider.create_session('agent-a')
+        entered, release = threading.Event(), threading.Event()
+        original_close = provider.close_session
+
+        def delayed_close(identifier):
+            entered.set()
+            self.assertTrue(release.wait(3))
+            return original_close(identifier)
+
+        try:
+            with patch.object(provider, 'close_session', side_effect=delayed_close), \
+                    patch('plugin.ChromeSession', wraps=plugin.ChromeSession) as create:
+                worker = threading.Thread(target=provider.unload)
+                worker.start()
+                self.assertTrue(entered.wait(3))
+                with self.assertRaisesRegex(RuntimeError, 'unloading'):
+                    provider.create_session('agent-b')
+                create.assert_not_called()
+                result = provider.prepare_call('browser_exec', {}, 'agent-b', config=self.config())
+                self.assertEqual(result['action'], 'block')
+                release.set()
+                worker.join(3)
+                self.assertFalse(worker.is_alive())
+            self.assertFalse(provider.sessions)
+        finally:
+            release.set()
+            for identifier in list(provider.sessions):
+                original_close(identifier)
+
+    def test_finish_retains_owner_after_supervisor_failure_and_retries(self):
+        provider = plugin.ChromeProvider()
+        provider.owners['fixture-a'] = ('agent-a', 'chat')
+        with patch('tools.browser_session_cdp.stop_cdp_supervisor',
+                   side_effect=[RuntimeError('fixture failure'), None]) as stop, \
+                patch('tools.browser_session_lifecycle.cleanup_browser') as cleanup:
+            provider.finish(task_id='agent-a', session_id='chat', completed=True)
+            self.assertIn('fixture-a', provider.owners)
+            cleanup.assert_not_called()
+            provider.finish(task_id='agent-a', session_id='chat', completed=True)
+            self.assertFalse(provider.owners)
+            self.assertEqual(stop.call_count, 2)
+            cleanup.assert_called_once_with('bu-named-fixture-a')
+
+    def test_finish_retries_provider_sessions_even_after_native_cache_forgets_them(self):
+        provider = plugin.ChromeProvider()
+        provider.owners['fixture-a'] = ('agent-a', 'chat')
+        info = provider.create_session('bu-named-fixture-a@fixture-home')
+        identifier = info['bb_session_id']
+        original_close = provider.close_session
+        try:
+            with patch('tools.browser_session_cdp.stop_cdp_supervisor'), \
+                    patch('tools.browser_session_lifecycle.cleanup_browser'), \
+                    patch.object(provider, 'close_session', return_value=False):
+                provider.finish(task_id='agent-a', session_id='chat', completed=True)
+                self.assertIn('fixture-a', provider.owners)
+                self.assertIn(identifier, provider.sessions)
+            with patch('tools.browser_session_cdp.stop_cdp_supervisor'), \
+                    patch('tools.browser_session_lifecycle.cleanup_browser'):
+                provider.finish(task_id='agent-a', session_id='chat', completed=True)
+            self.assertFalse(provider.owners)
+            self.assertFalse(provider.sessions)
+        finally:
+            original_close(identifier)
+
+    def test_unload_keeps_failed_cleanup_registered_for_process_exit(self):
+        with patch('plugin.atexit.register') as register, patch('plugin.atexit.unregister') as unregister:
+            provider = plugin.ChromeProvider()
+            info = provider.create_session('agent-a')
+            identifier = info['bb_session_id']
+            try:
+                with patch.object(provider, 'close_session', return_value=False):
+                    self.assertFalse(provider.unload())
+                self.assertIn(identifier, provider.sessions)
+                unregister.assert_not_called()
+                callback = register.call_args.args[0]
+                self.assertTrue(callback())
+                self.assertFalse(provider.sessions)
+                unregister.assert_called_once_with(provider.unload)
+            finally:
+                provider.close_session(identifier)
 
     def test_profile_directory_validation(self):
         for invalid in ('../Default', '/tmp/profile', 'a\\b', 'Guest Profile', 'System Profile'):

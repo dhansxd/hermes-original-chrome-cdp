@@ -141,6 +141,37 @@ new consent hash. Flow passed 906 tests and its actual HTTP startup/read/close r
 No generation requests were submitted during these CDP checks. The historical HTTP
 403 remains unexplained by this correction.
 
+## Plugin lifecycle correction, 0.4.4
+
+Scope is the audited create/unload race and cleanup bookkeeping. Serialize endpoint
+creation with closing admission, reject stale hooks after unload starts, retain owner
+records until cleanup succeeds, and retry retained provider sessions when the native
+cache has already forgotten them. Retain an exit callback only while unload has pending
+cleanup. Close local listeners despite failures in native seed-tab or client teardown.
+
+Use native BrowserProvider registration and Hermes plugin lifecycle. Backend selection
+remains in the official browser picker. The installed host preserves an explicit browser
+selection after disable/remove, so selecting Local is a separate operation. Dashboard
+disable and remove require applying the host's supported plugin reload. Do not change
+Hermes core or add a replacement plugin manager.
+
+Verify regression tests, isolated native command transitions, real Chrome peer/manual
+preservation, official plugin update/reload, loaded version, and remote SHA.
+
+Candidate verification passes 113 unit tests, including controlled supervisor, native
+seed-tab and client-close failures, and concurrent creation during unload. Six isolated
+native command transitions pass; dependency publication and gateway notifications in
+that matrix are simulated. Native browser_exec with four real Chrome agents passes
+input/click, screenshot, iframe/shadow DOM, popup, existing login and exact cleanup.
+Three peer reads complete in 431 ms during a 3-second operation. All 14 native harness
+Python files match their installed RECORD hashes.
+
+Real loaded-provider unload and re-registration preserve an independent CDP peer,
+pre-existing pages, a test-created manual tab with its document marker, and Chrome's
+PID/start-time identity. All test-owned targets and endpoints close. The first unload
+harness invocation read GUI session identity as a PID and failed before loading the
+provider. The harness was corrected to verify endpoint process identity and rerun.
+
 ## Deployment and real-agent acceptance, 2026-11-09
 
 The official update installed 0.4.2 into a fresh Python environment. All 14 native
