@@ -52,7 +52,7 @@ Prepare Chrome once using the profile you want Hermes to use.
 Install and enable the plugin through Hermes.
 
 ```sh
-hermes plugins install https://github.com/dhansxd/hermes-original-chrome-default-plugin
+hermes plugins install https://github.com/dhansxd/hermes-original-chrome-cdp
 hermes plugins enable original-chrome-default
 hermes tools
 ```

@@ -21,7 +21,7 @@ Hermes session and an IDE-launched session can have different permission identit
 Run the following commands in the environment where you use Hermes.
 
 ```sh
-hermes plugins install https://github.com/dhansxd/hermes-original-chrome-default-plugin
+hermes plugins install https://github.com/dhansxd/hermes-original-chrome-cdp
 hermes plugins enable original-chrome-default
 hermes plugins list
 ```
