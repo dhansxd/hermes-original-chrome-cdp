@@ -97,8 +97,8 @@ class ProviderTests(unittest.TestCase):
                 worker = threading.Thread(target=provider.unload)
                 worker.start()
                 self.assertTrue(entered.wait(3))
-                with self.assertRaisesRegex(RuntimeError, 'unloading'):
-                    provider.create_session('agent-b')
+                result = provider.create_session('agent-b')
+                self.assertEqual(result['bb_session_id'], 'unloaded')
                 create.assert_not_called()
                 result = provider.prepare_call('browser_exec', {}, 'agent-b', config=self.config())
                 self.assertEqual(result['action'], 'block')
@@ -110,6 +110,21 @@ class ProviderTests(unittest.TestCase):
             release.set()
             for identifier in list(provider.sessions):
                 original_close(identifier)
+
+    def test_late_native_session_creation_cannot_fall_back_to_chromium(self):
+        from tools import browser_session
+        provider = plugin.ChromeProvider()
+        self.assertTrue(provider.unload())
+        with patch.object(browser_session, '_create_local_session') as local, \
+                patch('plugin.ChromeSession') as create:
+            info = browser_session._create_cloud_session_or_fallback('agent-a', provider)
+        local.assert_not_called()
+        create.assert_not_called()
+        self.assertEqual(info['cdp_url'],
+                         'ws://original-chrome-provider-unloaded.invalid/devtools/browser/unloaded')
+        self.assertNotIn('fallback_from_cloud', info)
+        self.assertTrue(provider.close_session(info['bb_session_id']))
+        self.assertFalse(provider.sessions)
 
     def test_finish_retains_owner_after_supervisor_failure_and_retries(self):
         provider = plugin.ChromeProvider()

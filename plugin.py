@@ -58,7 +58,11 @@ class ChromeProvider(BrowserProvider):
         # errors instead of triggering Hermes's fallback to packaged Chromium.
         with self.lock:
             if self.unloading:
-                raise RuntimeError('Original Chrome provider is unloading.')
+                # Native Hermes falls back to Chromium on create_session exceptions.
+                # A retired provider must fail at CDP connection without opening a listener.
+                return {'session_name': NAME + '-unloaded', 'bb_session_id': 'unloaded',
+                        'cdp_url': 'ws://original-chrome-provider-unloaded.invalid/devtools/browser/unloaded',
+                        'features': {'original_chrome': True}}
             session = ChromeSession(self.data, profile_directory(self.get_setting('profile_directory')))
             session.cache_key = task_id
             identifier = uuid.uuid4().hex

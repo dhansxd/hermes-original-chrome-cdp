@@ -158,7 +158,7 @@ Hermes core or add a replacement plugin manager.
 Verify regression tests, isolated native command transitions, real Chrome peer/manual
 preservation, official plugin update/reload, loaded version, and remote SHA.
 
-Candidate verification passes 113 unit tests, including controlled supervisor, native
+Candidate verification passes 114 unit tests, including controlled supervisor, native
 seed-tab and client-close failures, and concurrent creation during unload. Six isolated
 native command transitions pass; dependency publication and gateway notifications in
 that matrix are simulated. Native browser_exec with four real Chrome agents passes
@@ -171,6 +171,14 @@ pre-existing pages, a test-created manual tab with its document marker, and Chro
 PID/start-time identity. All test-owned targets and endpoints close. The first unload
 harness invocation read GUI session identity as a PID and failed before loading the
 provider. The harness was corrected to verify endpoint process identity and rerun.
+
+Native fallback review found that raising from create_session after unload would
+activate Hermes's Chromium fallback. A retired provider instead returns a CDP endpoint
+under the reserved .invalid domain, with no listener or Chrome resources created. The
+normal pre-tool hook reports unloading; an already-dispatched late call fails at CDP.
+A regression test exercises the native session selector and forbids local launch.
+The actual native browser_exec path also returns a CDP error for that late call,
+with zero local-launch calls and zero provider sessions created.
 
 ## Deployment and real-agent acceptance, 2026-11-09
 
