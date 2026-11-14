@@ -154,8 +154,9 @@ Hermes-managed plugin data can remain after removal.
 
 ## Understand cleanup limits
 
-Normal finalization closes the agent-owned targets, relay, and native session
-daemon. Unload first closes admission, so concurrent calls cannot leave a new
+Normal finalization closes the agent-owned targets, relay, and CDP supervisor.
+Hermes manages its native driver processes and session cache through its own
+lifecycle. Unload first closes admission, so concurrent calls cannot leave a new
 active relay after its cleanup snapshot. A late call fails through the CDP path.
 
 An unconfirmed cleanup retains session ownership in memory for another attempt

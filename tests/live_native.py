@@ -18,6 +18,7 @@ if '--require-unmodified-harness' in sys.argv:
  print('UNMODIFIED_NATIVE_PACKAGE_PASS',checked,flush=True)
 sys._hermes_pin_default_home=False
 from hermes_constants import set_hermes_home_override
+from gateway.session_context import scoped_session_key
 box=tempfile.TemporaryDirectory(prefix='hermes-native-acceptance-');home=Path(box.name)
 (home/'config.yaml').write_text("""browser:
   cloud_provider: original-chrome-default
@@ -28,8 +29,11 @@ plugins:
   enabled: [original-chrome-default]
 """)
 os.environ['HERMES_HOME']=str(home)
+pending=threading.Event()
 class Handler(BaseHTTPRequestHandler):
  def do_GET(self):
+  if self.path=='/pending':
+   pending.set()
   body="""<!doctype html><title>Hermes isolated fixture</title>
 <input id="user"><input id="password" type="password"><button id="go" onclick="document.querySelector('#result').textContent='clicked'">Click</button><p id="result"></p>
 <div id="shadow"></div><iframe src="/frame"></iframe><iframe src="http://localhost:CROSS_PORT/frame"></iframe><a id="popup" target="_blank" href="/child">Popup</a>
@@ -45,29 +49,25 @@ threading.Thread(target=server.serve_forever,daemon=True).start()
 base=f'http://127.0.0.1:{server.server_port}'
 from hermes_cli.plugins import get_plugin_manager,_dispatch_pre_tool_call_hooks
 from hermes_cli.plugins_manifest import parse_manifest_file
-from tools.approval_context import set_current_session_key,reset_current_session_key
 from tools.registry import registry
 import tools.browser_use_cli as native
-from tools.browser_session_lifecycle import cleanup_browser,cleanup_profile_browsers
+from tools.browser_session_lifecycle import cleanup_profile_browsers
 source=Path(__file__).resolve().parents[1];results=[]
 turns={task:uuid.uuid4().hex for task in ('A','B','C','D')}
 with set_hermes_home_override(home):
  manager=get_plugin_manager();manager._load_plugin(parse_manifest_file(source/'plugin.yaml',source,'user',''))
  from agent.browser_registry import get_provider
  provider=get_provider('original-chrome-default')
- def call(task,code,timeout=60):
-  with set_hermes_home_override(home):
-   token=set_current_session_key('fixture-route-'+task)
-   try:
-    args={'code':code,'session':'same','timeout_s':timeout}
-    blocked,modified=_dispatch_pre_tool_call_hooks('browser_exec',args,task_id=task,session_id=task+'-chat',turn_id=turns[task],tool_call_id=uuid.uuid4().hex)
-    assert not blocked,blocked
-    result=registry.dispatch('browser_exec',modified or args,scope=str(home),task_id=task)
-    result=json.loads(result) if isinstance(result,str) else result
-    results.append({'task':task,'result':result});print(json.dumps(results[-1]),flush=True)
-    assert result.get('success'),result
-    return result
-   finally:reset_current_session_key(token)
+ def call(task,code,timeout=60,success=True):
+  with set_hermes_home_override(home), scoped_session_key('fixture-route-'+task):
+   args={'code':code,'session':'same','timeout_s':timeout}
+   blocked,modified=_dispatch_pre_tool_call_hooks('browser_exec',args,task_id=task,session_id=task+'-chat',turn_id=turns[task],tool_call_id=uuid.uuid4().hex)
+   assert not blocked,blocked
+   result=registry.dispatch('browser_exec',modified or args,scope=str(home),task_id=task)
+   result=json.loads(result) if isinstance(result,str) else result
+   results.append({'task':task,'result':result});print(json.dumps(results[-1]),flush=True)
+   assert bool(result.get('success'))==success,result
+   return result
  try:
   with concurrent.futures.ThreadPoolExecutor() as pool:
    futures=[pool.submit(call,agent,f'goto_url({base!r}); print(js("document.title")); print(js("window.agentMarker="+{agent!r}.__repr__()))') for agent in ('A','B','C','D')]
@@ -117,7 +117,17 @@ js("document.querySelector('#popup').click()")
   a_session=provider.sessions[a_info['bb_session_id']]
   owned_a={t['targetId'] for t in a_session._inventory()}
   from hermes_cli.plugins import invoke_hook
-  with set_hermes_home_override(home):invoke_hook('agent_loop_stopped',session_key='fixture-route-A',platform='tui',reason='user_stop',invalidation_reason='session_interrupt')
+  with concurrent.futures.ThreadPoolExecutor() as pool:
+   expression=f'fetch({(base+"/pending")!r}); new Promise(r=>setTimeout(()=>r(true),15000))'
+   slow=pool.submit(call,'A',f'print(js({expression!r}))',success=False)
+   assert pending.wait(5),'Native request did not enter the page'
+   started=time.monotonic()
+   with set_hermes_home_override(home):
+    invoke_hook('agent_loop_stopped',session_key='fixture-route-A',platform='tui',
+                reason='user_stop',invalidation_reason='session_interrupt')
+   slow.result(timeout=8)
+   assert time.monotonic()-started<8,'Stop did not release the in-flight request'
+  print('NATIVE_IN_FLIGHT_STOP_PASS',flush=True)
   assert a_info['bb_session_id'] not in provider.sessions,'A cleanup not confirmed'
   peer=next(iter(provider.sessions.values()))
   remaining={t['targetId'] for t in peer.wire.call('Target.getTargets')['targetInfos']}
@@ -145,6 +155,11 @@ for target in ('disabled','hidden','readonly','visible'):
     print(target, 'PASS')
 """)
   call('B',f"goto_url({base!r}); assert js('document.title') == 'Hermes isolated fixture'; print('LOCAL_FIXTURE_PASS')")
+  manager.unload('original-chrome-default')
+  manager._load_plugin(parse_manifest_file(source/'plugin.yaml',source,'user',''))
+  provider=get_provider('original-chrome-default')
+  call('B',f"goto_url({base!r}); assert js('document.title') == 'Hermes isolated fixture'")
+  print('NATIVE_PLUGIN_RELOAD_PASS',flush=True)
   print('NATIVE_ENTRYPOINT',registry.get_entry('browser_exec').handler.__module__,flush=True)
  finally:
   with set_hermes_home_override(home):provider.finish(completed=True,interrupted=True)

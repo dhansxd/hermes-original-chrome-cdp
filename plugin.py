@@ -7,8 +7,6 @@ import re
 import sys
 import threading
 import uuid
-import subprocess
-from pathlib import Path
 
 from agent.browser_provider import BrowserProvider
 
@@ -38,6 +36,7 @@ class ChromeProvider(BrowserProvider):
 
     def __init__(self, get_setting=lambda key: None, *, data=PERSONAL):
         self.get_setting, self.data = get_setting, data
+        self.instance_id = uuid.uuid4().hex
         self.sessions = {}
         self.owners = {}
         self.waiting = {}
@@ -80,15 +79,16 @@ class ChromeProvider(BrowserProvider):
             peers = list(self.sessions.values())
         if session is None:
             return True
-        daemon_stopped = True
+        supervisor_stopped = True
         try:
-            stop_native_daemon(session.cache_key)
+            from tools.browser_supervisor import SUPERVISOR_REGISTRY
+            SUPERVISOR_REGISTRY.stop(session.cache_key)
         except Exception:
-            daemon_stopped = False
+            supervisor_stopped = False
         try:
             peer_wire = next((p.wire for p in peers if p is not session and p.wire and not p.wire.closed
                               and (not session.owned or p.identity == session.identity)), None)
-            success = session.close(cleanup_wire=peer_wire) and daemon_stopped
+            success = session.close(cleanup_wire=peer_wire) and supervisor_stopped
         except Exception:
             success = False
         if success:
@@ -126,13 +126,14 @@ class ChromeProvider(BrowserProvider):
                 if tool_name == 'browser_exec':
                     return {'action': 'block', 'message': 'Original Chrome provider is unloading.'}
                 return None
-            result = prepare_call(tool_name, args, task_id, session_id=session_id, **kwargs)
+            result = prepare_call(tool_name, args, task_id, session_id=session_id,
+                                  provider_id=self.instance_id, **kwargs)
             if result and result.get('action') == 'modify':
                 name = result['args']['session']
                 if name in self.finishing:
                     return {'action': 'block', 'message': 'Original Chrome session is closing.'}
-                from tools.approval_context import get_current_session_key
-                route = session_key or get_current_session_key(default='') or session_id
+                from gateway.session_context import get_session_env
+                route = session_key or get_session_env('HERMES_SESSION_KEY', '') or session_id
                 self.owners[name] = (task_id, session_id, route)
         return result
 
@@ -146,23 +147,16 @@ class ChromeProvider(BrowserProvider):
                      and (session_name is None or name == session_name)]
         if not names:
             return
-        from tools.browser_session_lifecycle import cleanup_browser
-        from tools.browser_session_cdp import stop_cdp_supervisor
         for name in names:
             with self.lock:
                 owner = self.owners.get(name)
                 if owner is None or name in self.finishing:
                     continue
                 self.finishing.add(name)
-            cache_key = 'bu-named-' + name
+                identifiers = [identifier for identifier, session in self.sessions.items()
+                               if session.cache_key.split('@', 1)[0] == 'bu-named-' + name]
             try:
-                # Native teardown can wait on I/O. Keep other agents' admission available.
-                stop_cdp_supervisor(owner[0])
-                cleanup_browser(cache_key)
-                with self.lock:
-                    # Native cleanup can forget a session even when close_session returns False.
-                    identifiers = [identifier for identifier, session in self.sessions.items()
-                                   if session.cache_key.split('@', 1)[0] == cache_key]
+                # Release this provider's resources. Hermes owns its driver and session cache.
                 closed = [self.close_session(identifier) for identifier in identifiers]
                 with self.lock:
                     if all(closed) and self.owners.get(name) == owner:
@@ -195,26 +189,7 @@ class ChromeProvider(BrowserProvider):
             self.waiting.get(session_id, set()).discard(request_id)
 
 
-def stop_native_daemon(cache_key):
-    """Use the harness's own identity-checked reload for this session only."""
-    match = re.match(r'^bu-named-(hc-[a-f0-9-]+)(?:@|$)', cache_key)
-    if not match:
-        return
-    import browser_harness
-    from hermes_constants import get_hermes_home_override, hermes_home_key
-    from tools.browser_session import build_browser_env
-    from tools.browser_harness_dirs import namespace_harness_dirs, fit_default_socket_dir
-    env = build_browser_env()
-    env.pop('PYTHONHOME', None)
-    env['PYTHONPATH'] = str(Path(browser_harness.__file__).parent.parent)
-    namespace_harness_dirs(env, hermes_home_key() if get_hermes_home_override() is not None else '')
-    env['BU_NAME'] = match[1]
-    fit_default_socket_dir(env)
-    subprocess.run([sys.executable, '-m', 'browser_harness.run', '--reload'], env=env,
-                   capture_output=True, text=True, timeout=15, check=True)
-
-
-def prepare_call(tool_name, args, task_id, *, session_id='', turn_id='', config=None, **kwargs):
+def prepare_call(tool_name, args, task_id, *, session_id='', turn_id='', provider_id='', config=None, **kwargs):
     """Keep native browser_exec, with per-agent names and a plugin-owned focus check."""
     if config is None:
         from hermes_cli.config import load_config_readonly
@@ -232,8 +207,8 @@ def prepare_call(tool_name, args, task_id, *, session_id='', turn_id='', config=
     alias = args.get('session') or 'default'
     if not isinstance(alias, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', alias):
         return {'action': 'block', 'message': 'Invalid browser session name.'}
-    # A replacement turn must keep a different native cache key from a stopped turn.
-    identity = f'{session_id}\0{task_id}\0{turn_id}'
+    # Replacements and reloaded providers must stay separate from retired driver sessions.
+    identity = f'{provider_id}\0{session_id}\0{task_id}\0{turn_id}'
     prefix = 'hc-' + hashlib.sha256(identity.encode()).hexdigest()[:20] + '-'
     name = alias if alias.startswith(prefix) else prefix + hashlib.sha256(alias.encode()).hexdigest()[:20]
     changes = {'session': name}

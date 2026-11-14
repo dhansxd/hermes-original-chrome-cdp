@@ -81,6 +81,28 @@ All 126 unit tests pass. The native four-agent test now sends the actual Stop
 payload, verifies exact cleanup and peer/manual preservation, rejects late native
 creation, and confirms a replacement turn can browse with an independent name.
 
+Version 0.4.8 removes all six private Hermes helper imports introduced by
+`d33aa03` and `ea4754b`. Runtime integration uses the documented BrowserProvider,
+configuration, task-local session context, and CDP supervisor APIs. The plugin
+cleans its own Chrome targets and relay. Hermes manages its native driver
+processes and session cache through its own lifecycle.
+
+All 128 unit tests pass, including a public-runtime-import regression check.
+Native four-agent acceptance verifies separate windows in one profile, Stop
+during an in-flight request, late-session rejection, replacement turns, and exact
+target cleanup. An independent simulated manual window retains its page and input.
+All 14 native harness Python files match their package RECORD hashes.
+
+Removing private cache cleanup exposed same-turn provider reload reusing a retired
+endpoint. A native test reproduced the failure. Including provider-instance
+identity in native session names keeps reload independent of Hermes's private
+cache management. Unit and native tests cover browsing again after reload.
+
+The user also completed a cold-start browse successfully on 14 November 2026.
+Hermes's successful browser_exec result and the new original Chrome process start
+corroborate that manual run. Automated runs for this patch began with Chrome
+running without windows and added independent fixture windows.
+
 Hermes manages plugin activation and browser selection separately. Select Local
 in its browser picker before disabling or removing this provider. Apply the
 supported plugin reload when the active Hermes surface requires it.
