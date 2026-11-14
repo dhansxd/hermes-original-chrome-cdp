@@ -71,6 +71,16 @@ with set_hermes_home_override(home):
   observer=sessions[0].wire
   all_owned=set().union(*({t['targetId'] for t in s._inventory()} for s in sessions))
   manual_before={t['targetId'] for t in observer.call('Target.getTargets')['targetInfos'] if t.get('type')=='page'}-all_owned
+  agent_windows=[]
+  for session in sessions:
+   windows={observer.call('Browser.getWindowForTarget',{'targetId':target['targetId']})['windowId']
+            for target in session._inventory() if target.get('type')=='page'}
+   assert windows,'Agent has no Chrome window'
+   assert all(windows.isdisjoint(peer) for peer in agent_windows),'Agents share a Chrome window'
+   agent_windows.append(windows)
+  manual_windows={observer.call('Browser.getWindowForTarget',{'targetId':target})['windowId'] for target in manual_before}
+  assert all(windows.isdisjoint(manual_windows) for windows in agent_windows),'Agent shares a manual Chrome window'
+  print('DISTINCT_AGENT_WINDOWS_PASS',len(agent_windows),flush=True)
   call('A',"""fill_input('#user','fixture-user')
 fill_input('#password','FIXTURE_ONLY')
 assert js("document.querySelector('#user').value==='fixture-user' && document.querySelector('#password').value==='FIXTURE_ONLY'")

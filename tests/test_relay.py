@@ -1,4 +1,5 @@
 import concurrent.futures
+from contextlib import contextmanager
 import json
 import sys
 import threading
@@ -67,10 +68,96 @@ class RelayTests(unittest.TestCase):
             self.session.command(self.other, 'Runtime.evaluate', params, 'page-sid')
 
     def test_new_tabs_use_original_context_and_owned_windows(self):
-        self.command('Target.createTarget', {'url': 'about:blank'})
+        self.command('Target.createTarget', {'url': 'about:blank', 'newWindow': False, 'background': False})
         self.wire.call.assert_called_with('Target.createTarget', {
             'url': 'about:blank', 'newWindow': True, 'background': True, 'browserContextId': 'original-profile'})
         self.assertIn('new', self.session.owned)
+
+    def test_owned_window_activation_preserves_manual_focus(self):
+        self.assertEqual(self.command('Target.activateTarget', {'targetId': 'owned'}), {})
+        self.assertEqual(self.command('Page.bringToFront', sid='page-sid'), {})
+        forwarded = [call.args[0] for call in self.wire.call.call_args_list]
+        self.assertNotIn('Target.activateTarget', forwarded)
+        self.assertNotIn('Page.bringToFront', forwarded)
+
+    def test_create_queued_before_cleanup_cannot_leave_a_late_window(self):
+        entered, release = threading.Event(), threading.Event()
+        original_guard = relay.consent_guard
+
+        @contextmanager
+        def delayed_guard(*args, **kwargs):
+            if threading.current_thread() is creator:
+                entered.set()
+                self.assertTrue(release.wait(3))
+            with original_guard(*args, **kwargs):
+                yield
+
+        errors = []
+
+        def create():
+            try:
+                self.command('Target.createTarget', {'url': 'about:blank'})
+            except RuntimeError as error:
+                errors.append(str(error))
+
+        creator = threading.Thread(target=create)
+        try:
+            with patch('relay.consent_guard', side_effect=delayed_guard):
+                creator.start()
+                self.assertTrue(entered.wait(3))
+                self.assertTrue(self.session.close())
+                release.set()
+                creator.join(3)
+                self.assertFalse(creator.is_alive())
+            self.assertEqual(errors, ['Browser session is closed.'])
+            self.assertEqual([target['targetId'] for target in self.targets], ['manual'])
+            self.assertFalse(self.session.owned)
+        finally:
+            release.set()
+            creator.join(3)
+
+    def test_cleanup_includes_window_creation_already_in_flight(self):
+        entered, release = threading.Event(), threading.Event()
+        original_call = self.wire.call.side_effect
+        results = {}
+
+        def call(method, *args, **kwargs):
+            if method == 'Target.createTarget':
+                entered.set()
+                self.assertTrue(release.wait(3))
+            return original_call(method, *args, **kwargs)
+
+        creator = threading.Thread(target=lambda: results.update(created=self.command('Target.createTarget')))
+        closer = threading.Thread(target=lambda: results.update(closed=self.session.close()))
+        try:
+            self.wire.call.side_effect = call
+            creator.start()
+            self.assertTrue(entered.wait(3))
+            closer.start()
+            deadline = time.monotonic() + 2
+            while not self.session.closed and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue(self.session.closed)
+            release.set()
+            creator.join(3)
+            closer.join(3)
+            self.assertFalse(creator.is_alive() or closer.is_alive())
+            self.assertEqual(results, {'created': {'targetId': 'new'}, 'closed': True})
+            self.assertEqual([target['targetId'] for target in self.targets], ['manual'])
+            self.assertFalse(self.session.owned)
+        finally:
+            release.set()
+            creator.join(3)
+            if closer.ident is not None:
+                closer.join(3)
+
+    def test_closed_endpoint_refuses_late_client_registration(self):
+        self.assertTrue(self.session.close())
+        late = Mock()
+        late.request.path = self.session.path
+        self.session._client(late)
+        late.close.assert_called_once_with(1001, 'Browser session is closed.')
+        self.assertNotIn(late, self.session.clients)
 
     def test_browser_wide_shutdown_and_foreign_windows_are_refused(self):
         for method in ('Browser.close', 'Browser.setDownloadBehavior', 'Network.clearBrowserCookies'):

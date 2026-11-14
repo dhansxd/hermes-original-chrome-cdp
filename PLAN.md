@@ -57,6 +57,20 @@ RECORD validation. All test-owned provider sessions close successfully.
 
 ## Known lifecycle behavior
 
+Version 0.4.6 preserves the foreground window when native provider helpers request
+CDP activation. Target routing and actions continue through owned attachments.
+Cleanup marks each finishing agent while releasing the provider lock around native
+I/O. Queued window creation rechecks closure under the shared consent guard, and
+closed endpoints reject new clients. New targets retain `newWindow=True` and the
+selected original profile.
+
+All 121 unit tests pass. Native four-agent acceptance verifies disjoint Chrome
+window IDs in one profile, input/click, screenshots, popups, and exact cleanup.
+Real testing covers running Chrome without windows and with an independent manual
+fixture window. The foreground fixture stays selected during a native new-window,
+typing, screenshot, and bring-to-front sequence. Cold startup received code review.
+These live runs began with the user's original Chrome already running.
+
 Hermes manages plugin activation and browser selection separately. Select Local
 in its browser picker before disabling or removing this provider. Apply the
 supported plugin reload when the active Hermes surface requires it.

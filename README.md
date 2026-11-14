@@ -26,8 +26,8 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.4.5 uses the tested 0.4.4 browser implementation, with distribution and
-macOS dependency-marker updates. The compatibility baseline is Hermes commit
+Version 0.4.6 preserves foreground-window focus and fixes concurrent session
+cleanup. The compatibility baseline is Hermes commit
 `b200f5bc60e31588ba2cb60e288029c4a54ba5fa` and `browser-harness` 0.1.13 on macOS.
 It also uses Hermes's session-cleanup and harness-directory helpers. Compatibility
 with another Hermes revision should be checked with the tests below. Its startup
@@ -149,6 +149,10 @@ should receive the same trust you would give an operator of that signed-in brows
 The relay refuses browser-wide shutdown, browser-wide cookie/cache clearing, and
 operations targeting another session's windows. It forwards native DOM, JavaScript,
 input, screenshots, iframe, and shadow-DOM operations for owned targets.
+CDP window-activation requests are acknowledged while Chrome keeps its current
+foreground window. Native helpers select and operate on their owned CDP targets
+in the background. New targets use separate agent-owned windows in the selected
+profile.
 
 ## Update and lifecycle
 
@@ -219,9 +223,11 @@ hermes plugins validate .
 hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
 
-The 0.4.5 regression suite contains 115 unit tests. It covers registration, task
+The 0.4.6 regression suite contains 121 unit tests. It covers registration, task
 namespaces, startup and consent identity, input focus, target ownership, transport
 responses, concurrent unload, retryable cleanup, and dependency platform markers.
+Regression cases also cover foreground preservation, late window creation during
+cleanup, late client admission, and independent agent hooks during slow cleanup.
 
 For real Chrome acceptance, run this command with the Python environment used by Hermes.
 
@@ -229,9 +235,9 @@ For real Chrome acceptance, run this command with the Python environment used by
 python tests/live_native.py --check-native-focus --require-unmodified-harness
 ```
 
-This test opens local fixture pages through four native agents, checks parallel
-responses, input/click, screenshots, iframe/shadow DOM, popups, and peer-preserving
-cleanup. It creates and closes its own test targets. Saved-login verification uses
+This test opens local fixture pages through four native agents, checks distinct
+Chrome window IDs, parallel responses, input/click, screenshots, iframe/shadow DOM,
+popups, and peer-preserving cleanup. It creates and closes its own test targets. Saved-login verification uses
 the separate first-use check above. Native package hash checking verifies the
 installed harness against its package RECORD.
 

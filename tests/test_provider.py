@@ -80,6 +80,55 @@ class ProviderTests(unittest.TestCase):
             self.assertTrue(provider.close_session(info['bb_session_id']))
             self.assertFalse(provider.sessions)
 
+    def test_slow_cleanup_leaves_other_agents_hooks_available(self):
+        provider = plugin.ChromeProvider()
+        self.addCleanup(provider.unload)
+        config = self.config()
+        with patch.dict(os.environ, {}, clear=True):
+            name = provider.prepare_call('browser_exec', {}, 'A', session_id='chat', config=config)['args']['session']
+            entered, release, prepared = threading.Event(), threading.Event(), threading.Event()
+            results = {}
+
+            def stop(task):
+                entered.set()
+                self.assertTrue(release.wait(3))
+
+            def prepare():
+                results['peer'] = provider.prepare_call('browser_exec', {}, 'B', session_id='chat', config=config)
+                results['closing'] = provider.prepare_call('browser_exec', {}, 'A', session_id='chat', config=config)
+                prepared.set()
+
+            closer = threading.Thread(target=lambda: provider.finish(task_id='A', completed=True))
+            peer = threading.Thread(target=prepare)
+            try:
+                with patch('tools.browser_session_cdp.stop_cdp_supervisor', side_effect=stop), \
+                        patch('tools.browser_session_lifecycle.cleanup_browser'):
+                    closer.start()
+                    self.assertTrue(entered.wait(3))
+                    peer.start()
+                    self.assertTrue(prepared.wait(1), 'A cleanup blocked B pre_tool_call')
+                    self.assertEqual(results['peer']['action'], 'modify')
+                    self.assertEqual(results['closing']['action'], 'block')
+                    release.set()
+                    closer.join(3)
+                    peer.join(3)
+                self.assertFalse(closer.is_alive() or peer.is_alive())
+                self.assertNotIn(name, provider.owners)
+            finally:
+                release.set()
+                closer.join(3)
+                if peer.ident is not None:
+                    peer.join(3)
+
+    def test_closing_agent_refuses_late_native_session_without_fallback(self):
+        provider = plugin.ChromeProvider()
+        self.addCleanup(provider.unload)
+        provider.finishing.add('fixture-a')
+        with patch('plugin.ChromeSession') as create:
+            info = provider.create_session('bu-named-fixture-a@fixture-home')
+        create.assert_not_called()
+        self.assertEqual(info['bb_session_id'], 'unloaded')
+
     def test_unload_rejects_new_sessions_and_stale_tool_hooks(self):
         provider = plugin.ChromeProvider()
         provider.create_session('agent-a')

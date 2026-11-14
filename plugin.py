@@ -41,6 +41,7 @@ class ChromeProvider(BrowserProvider):
         self.sessions = {}
         self.owners = {}
         self.waiting = {}
+        self.finishing = set()
         self.lock = threading.RLock()
         self.unloading = False
         # Retain failed cleanup across host unload, until it succeeds or the process exits.
@@ -57,9 +58,10 @@ class ChromeProvider(BrowserProvider):
         # Return a local endpoint before starting Chrome. Startup failures become CDP
         # errors instead of triggering Hermes's fallback to packaged Chromium.
         with self.lock:
-            if self.unloading:
+            name = task_id.removeprefix('bu-named-').split('@', 1)[0]
+            if self.unloading or name in self.finishing:
                 # Native Hermes falls back to Chromium on create_session exceptions.
-                # A retired provider must fail at CDP connection without opening a listener.
+                # Retired providers and closing sessions fail at CDP without a new listener.
                 return {'session_name': NAME + '-unloaded', 'bb_session_id': 'unloaded',
                         'cdp_url': 'ws://original-chrome-provider-unloaded.invalid/devtools/browser/unloaded',
                         'features': {'original_chrome': True}}
@@ -124,7 +126,10 @@ class ChromeProvider(BrowserProvider):
                 return None
             result = prepare_call(tool_name, args, task_id, session_id=session_id, **kwargs)
             if result and result.get('action') == 'modify':
-                self.owners[result['args']['session']] = (task_id, session_id)
+                name = result['args']['session']
+                if name in self.finishing:
+                    return {'action': 'block', 'message': 'Original Chrome session is closing.'}
+                self.owners[name] = (task_id, session_id)
         return result
 
     def finish(self, task_id=None, session_id=None, completed=False, failed=False, interrupted=False, **kwargs):
@@ -140,20 +145,27 @@ class ChromeProvider(BrowserProvider):
         for name in names:
             with self.lock:
                 owner = self.owners.get(name)
-                if owner:
-                    cache_key = 'bu-named-' + name
-                    try:
-                        stop_cdp_supervisor(owner[0])
-                        cleanup_browser(cache_key)
-                        # Native cleanup can forget a session even when close_session returns False.
-                        identifiers = [identifier for identifier, session in self.sessions.items()
-                                       if session.cache_key.split('@', 1)[0] == cache_key]
-                        closed = [self.close_session(identifier) for identifier in identifiers]
-                    except Exception:
-                        logging.getLogger(__name__).warning('Original Chrome agent cleanup is not confirmed.')
-                        continue
-                    if all(closed):
+                if owner is None or name in self.finishing:
+                    continue
+                self.finishing.add(name)
+            cache_key = 'bu-named-' + name
+            try:
+                # Native teardown can wait on I/O. Keep other agents' admission available.
+                stop_cdp_supervisor(owner[0])
+                cleanup_browser(cache_key)
+                with self.lock:
+                    # Native cleanup can forget a session even when close_session returns False.
+                    identifiers = [identifier for identifier, session in self.sessions.items()
+                                   if session.cache_key.split('@', 1)[0] == cache_key]
+                closed = [self.close_session(identifier) for identifier in identifiers]
+                with self.lock:
+                    if all(closed) and self.owners.get(name) == owner:
                         self.owners.pop(name, None)
+            except Exception:
+                logging.getLogger(__name__).warning('Original Chrome agent cleanup is not confirmed.')
+            finally:
+                with self.lock:
+                    self.finishing.discard(name)
 
     def finalize(self, session_id=None, **kwargs):
         if session_id:

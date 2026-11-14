@@ -1,7 +1,8 @@
 """A session's CDP endpoint. Hermes keeps its native browser driver and helpers.
 
 Only target discovery, target creation and browser-wide commands need mediation.
-Page CDP (DOM, Runtime, Input, screenshots, frames, etc.) passes through unchanged.
+Page CDP (DOM, Runtime, Input, screenshots, frames, etc.) passes through unchanged,
+except window activation requests, which preserve the user's foreground window.
 This separates cooperative browser sessions; it is not a Python or web security sandbox.
 """
 import concurrent.futures
@@ -201,6 +202,8 @@ class ChromeSession:
     def command(self, client, method, params, sid=None):
         self._start()
         with self.lock:
+            if self.closed:
+                raise RuntimeError('Browser session is closed.')
             sessions = self.clients[client]
             if sid and sid not in sessions:
                 raise RuntimeError('CDP session does not belong to this connection.')
@@ -218,6 +221,10 @@ class ChromeSession:
             if params.get('browserContextId', self.context) != self.context:
                 raise RuntimeError('Cannot create a target in another Chrome profile.')
             with consent_guard(self.data):
+                # Cleanup uses this same guard. A queued create must recheck admission
+                # after acquiring it so no window can appear after the final inventory.
+                if self.closed:
+                    raise RuntimeError('Browser session is closed.')
                 creation = dict(params, newWindow=True, background=True)
                 if self.context:
                     creation['browserContextId'] = self.context
@@ -235,7 +242,11 @@ class ChromeSession:
             params = dict(params, targetId=target)
             if method == 'Target.attachToTarget':
                 params['flatten'] = True
-            if method in {'Target.closeTarget', 'Target.activateTarget'}:
+            if method == 'Target.activateTarget':
+                # Native provider helpers also serve cloud browsers and activate tabs.
+                # Owned CDP attachments work while real Chrome stays in the background.
+                return {}
+            if method == 'Target.closeTarget':
                 with consent_guard(self.data):
                     result = self.wire.call(method, params)
             else:
@@ -268,6 +279,8 @@ class ChromeSession:
             return self.wire.call(method, params)
         if not sid:
             raise RuntimeError('This command requires an owned page attachment.')
+        if method == 'Page.bringToFront':
+            return {}
         # The native client owns the operation deadline. A resource download or
         # awaited script may legitimately exceed the transport's setup budget.
         return self.wire.call(method, params, sid, timeout=None)
@@ -277,7 +290,12 @@ class ChromeSession:
             ws.close(1008, 'Unknown browser session')
             return
         with self.lock:
-            self.clients[ws] = {}
+            closed = self.closed
+            if not closed:
+                self.clients[ws] = {}
+        if closed:
+            ws.close(1001, 'Browser session is closed.')
+            return
         try:
             for raw in ws:
                 request = json.loads(raw)
@@ -306,7 +324,8 @@ class ChromeSession:
         with self.start_lock:
             if self.cleanup_complete:
                 return True
-            self.closed = True
+            with self.lock:
+                self.closed = True
             success = True
             wire = self.wire if self.wire and not self.wire.closed else cleanup_wire
             if wire:
