@@ -9,6 +9,10 @@ its own Chrome window and owned tabs in the selected existing profile. Saved web
 sign-ins come from that Chrome profile. Separate agents can work alongside manual
 browsing in the same Chrome application.
 
+Use `chrome_profiles` to list current profiles, choose a profile for an agent's
+named browser session, or change the default for new sessions. Several agents can
+choose the same profile or different profiles, each with their own windows.
+
 ## Requirements
 
 | Component | Requirement |
@@ -26,7 +30,7 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.4.8 uses documented public Hermes plugin APIs for BrowserProvider,
+Version 0.5.0 uses documented public Hermes plugin APIs for BrowserProvider,
 configuration, session-route context, and CDP supervisor teardown. A regression
 check rejects private Hermes runtime imports. The plugin owns its Chrome startup,
 consent, CDP relay, targets, and cleanup. Hermes manages its native browser driver
@@ -81,18 +85,18 @@ plugins:
         profile_directory: Default
 ```
 
-The enable command manages `plugins.enabled`. The provider reads `profile_directory`
-from its own plugin settings. `Default`, `Profile 1`, and `Profile 2` are examples of
-Chrome directory names. Find the actual name in `chrome://version` under **Profile
-Path**, then use the final directory component. Chrome's display name for a person
-can differ from this directory name.
+The enable command manages `plugins.enabled`. The provider reads the default
+`profile_directory` from its own plugin settings. `Default`, `Profile 1`, and
+`Profile 2` are examples of Chrome directory IDs. `chrome_profiles` reads their
+current IDs and display names from Chrome metadata. The final component of
+**Profile Path** in `chrome://version` also identifies the directory.
 
 | Setting | Purpose |
 | --- | --- |
 | `browser.cloud_provider` | Selects this registered browser provider |
 | `browser.auto_local_for_private_urls: false` | Keeps Hermes's private-URL sidecar from choosing another browser backend |
 | `browser.use_real_profile: false` | Leaves profile attachment to this provider |
-| `plugins.entries.original-chrome-default.settings.profile_directory` | Selects an existing Chrome profile for new sessions |
+| `plugins.entries.original-chrome-default.settings.profile_directory` | Default existing Chrome profile for new sessions |
 
 Clear competing `browser.cdp_url`, `BROWSER_CDP_URL`, `BU_CDP_URL`, and `BU_CDP_WS`
 overrides when selecting this provider. Hermes's normal private-URL permissions
@@ -100,6 +104,51 @@ continue to govern localhost and private-network navigation.
 
 After changing settings, apply Hermes's reload or restart action for the affected
 process if it reports one. The selected profile takes effect for new browser sessions.
+
+## Select profiles per agent
+
+The plugin provides `chrome_profiles` alongside native `browser_exec`. These are
+example tool arguments.
+
+```json
+{"action": "list"}
+```
+
+Choose a directory ID from the returned list and select it for a named session.
+
+```json
+{"action": "select", "profile": "Profile 2", "session": "research"}
+```
+
+Use the same session alias in `browser_exec`.
+
+```json
+{"session": "research", "code": "# Opening a page in the selected profile\nnew_tab('https://example.com')\nprint(page_info())"}
+```
+
+Each agent has its own session namespace and windows, including when agents use
+the same alias and the same profile. An agent can use several named sessions with
+different profiles. Selection uses the original Chrome profile directly.
+
+To switch an existing named session, call `select` again with the destination
+profile. The plugin closes that session's previous owned browser resources and
+assigns a fresh native connection name. Its next `browser_exec` opens the selected
+profile. Repeating the current selection reuses its connection. The calling task's
+normal finalization releases the selection together with its browser resources.
+
+To persist a default for future sessions, use the following arguments.
+
+```json
+{"action": "set_default", "profile": "Default"}
+```
+
+Each active session uses its own selected profile. A fresh named session uses the
+current default when it first browses. Explicit selection takes precedence for
+that session. Default changes use Hermes's public plugin settings writer.
+
+Inventory is refreshed for each list and selection. Display-name changes are
+reflected on subsequent reads. A removed or replaced profile produces a selection
+diagnostic so the caller can choose an available profile from the fresh inventory.
 
 ## First use
 
@@ -230,7 +279,7 @@ hermes plugins validate .
 hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
 
-The 0.4.8 regression suite contains 128 unit tests. It covers registration, task
+The 0.5.0 regression suite contains 151 unit tests. It covers registration, task
 namespaces, startup and consent identity, input focus, target ownership, transport
 responses, concurrent unload, retryable cleanup, and dependency platform markers.
 Regression cases also cover foreground preservation, late window creation during
@@ -240,11 +289,20 @@ session rejection, replacement turns admitted during cleanup, and provider reloa
 The runtime import check restricts Hermes imports to the documented public APIs
 used here.
 
+Profile regressions also cover fresh discovery, additions/removals/renames,
+directory replacement, default changes with active agents, independent named
+sessions, repeated selection, round-trip switches, native JSON results and
+Stop arriving during a profile switch.
+
 For real Chrome acceptance, run this command with the Python environment used by Hermes.
 
 ```sh
 python tests/live_native.py --check-native-focus --require-unmodified-harness
+python tests/live_profiles.py
 ```
+
+The multi-profile native test requires two existing Chrome profiles. It uses local
+fixture pages and an isolated Hermes home for its temporary default settings.
 
 This test opens local fixture pages through four native agents, checks distinct
 Chrome window IDs, parallel responses, input/click, screenshots, iframe/shadow DOM,

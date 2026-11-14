@@ -85,22 +85,42 @@ Review any screenshots or page excerpts locally before sharing them.
 
 ## Use another Chrome profile
 
-Create or open the other profile through Chrome first. Read its actual directory
-from `chrome://version`, then update the plugin setting.
+Ask Hermes to list the current Chrome profiles with `chrome_profiles`. The result
+contains each directory ID and display name. Profile additions, removals and name
+changes are reflected on the next read.
 
-```yaml
-plugins:
-  entries:
-    original-chrome-default:
-      settings:
-        profile_directory: Profile 2
+Use this tool with the following arguments to select a profile for a named session.
+
+```json
+{"action": "select", "profile": "Profile 2", "session": "research"}
 ```
 
-Apply the configuration reload reported by Hermes and start a new browser session.
-Existing browser sessions retain the profile selected when they were created.
-Profile selection is a provider setting for that Hermes configuration. Changing it
-affects subsequent sessions, so coordinate the change with agents sharing that
-configuration. Separate Hermes profile homes can each choose their own setting.
+Run the browsing work through `browser_exec` with `session` set to `research`.
+Several agents can use the same alias and profile with separate owned windows.
+The same agent can also choose another profile for another named session.
+
+Call `select` with a different profile and the same alias to switch that session.
+The previous owned connection is cleaned up and the next browser call opens the
+destination profile directly. Returning to an earlier profile gets a fresh
+connection. Repeating the current choice preserves the active connection.
+
+For example, ask Hermes the following.
+
+> List my Chrome profiles, select Profile 2 for the research browser session, then
+> open example.com in that session and report its title.
+
+To change the saved default for future sessions, use `chrome_profiles` with the
+following arguments, choosing a directory ID from your actual inventory.
+
+```json
+{"action": "set_default", "profile": "Profile 2"}
+```
+
+The default is stored in `plugins.entries.original-chrome-default.settings.profile_directory`.
+Each active session keeps its own choice. A new named session uses the current
+default when it first browses. Separate Hermes profile homes have their own plugin
+settings. A profile removed from Chrome can be replaced by selecting an available
+profile from the refreshed inventory.
 
 ## Check parallel browsing
 
@@ -109,6 +129,9 @@ configuration. Separate Hermes profile homes can each choose their own setting.
    `browser_exec`. Both agents may use the same native session alias.
 3. Confirm each task has its own window and page.
 4. Finish one task and verify that the other task and the manual tab remain usable.
+
+Repeat with agents assigned to different Chrome profiles. Change the default while
+they are active, then create a new named session and check its chosen profile.
 
 Hermes task and conversation identities separate the native session names. The
 relay routes each session to its owned tabs and opener-linked popups. Within the

@@ -21,9 +21,11 @@ from websockets.exceptions import ConnectionClosed
 if __package__:
     from .consent import connect_with_consent, consent_guard
     from . import startup
+    from .profiles import get_profile
 else:
     from consent import connect_with_consent, consent_guard
     import startup
+    from profiles import get_profile
 
 
 class CDPError(RuntimeError):
@@ -92,8 +94,9 @@ class Connection:
 
 
 class ChromeSession:
-    def __init__(self, data, profile):
+    def __init__(self, data, profile, *, profile_identity=None):
         self.data, self.profile = Path(data).resolve(), profile
+        self.profile_identity = profile_identity
         self.lock = threading.RLock()
         self.start_lock = threading.Lock()
         self.wire = None
@@ -125,13 +128,16 @@ class ChromeSession:
                 raise RuntimeError(self.error)
             if self.wire:
                 return
-            self.seed_dir = tempfile.TemporaryDirectory(prefix='hermes-chrome-window-')
-            seed_file = Path(self.seed_dir.name) / 'start.html'
-            self.seed_title = 'Hermes browser session ' + secrets.token_hex(12)
-            seed_file.write_text('<!doctype html><title>' + self.seed_title + '</title>')
-            seed = self.seed_url = seed_file.as_uri()
             try:
                 with consent_guard(self.data, timeout=60):
+                    if (self.profile_identity is not None
+                            and get_profile(self.profile, self.data).identity != self.profile_identity):
+                        raise RuntimeError('The selected Chrome profile was replaced before startup.')
+                    self.seed_dir = tempfile.TemporaryDirectory(prefix='hermes-chrome-window-')
+                    seed_file = Path(self.seed_dir.name) / 'start.html'
+                    self.seed_title = 'Hermes browser session ' + secrets.token_hex(12)
+                    seed_file.write_text('<!doctype html><title>' + self.seed_title + '</title>')
+                    seed = self.seed_url = seed_file.as_uri()
                     endpoint = startup.launch(self.data, self.profile, seed)
                     self.identity = startup.endpoint_identity(self.data)
                     if self.identity['endpoint'] != endpoint:

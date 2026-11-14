@@ -1,5 +1,5 @@
 name: original-chrome-default
-version: 0.4.8
+version: 0.5.0
 manifest_version: 2
 api_version: 1
 homepage: https://github.com/dhansxd/hermes-original-chrome-cdp
@@ -10,6 +10,8 @@ kind: backend
 capabilities: []
 provides_browser_providers:
   - original-chrome-default
+provides_tools:
+  - chrome_profiles
 provides_hooks:
   - pre_tool_call
   - agent_loop_stopped
@@ -21,7 +23,7 @@ config_schema:
   profile_directory:
     type: str
     default: Default
-    description: Existing directory in original Chrome user data, such as Default or Profile 2. No profile is copied.
+    description: Default original Chrome profile directory for new sessions. Use chrome_profiles to list profiles or choose a different profile per session.
 python_dependencies:
   - psutil>=5.9,<8; sys_platform == 'darwin'
   - websockets>=15,<17; sys_platform == 'darwin'

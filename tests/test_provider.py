@@ -11,6 +11,16 @@ import plugin
 
 
 class ProviderTests(unittest.TestCase):
+    def setUp(self):
+        def fixture_profile(identifier, data):
+            return plugin.ChromeProfile(plugin.profile_directory(identifier), 'Fixture profile', (1, 2, 3))
+        reader = patch('plugin.get_profile', side_effect=fixture_profile)
+        verifier = patch('plugin.verify_profile', side_effect=lambda profile, data: profile)
+        reader.start()
+        verifier.start()
+        self.addCleanup(reader.stop)
+        self.addCleanup(verifier.stop)
+
     def config(self):
         return {'browser': {'cloud_provider': plugin.NAME, 'auto_local_for_private_urls': False}}
 
@@ -161,11 +171,13 @@ class ProviderTests(unittest.TestCase):
         with patch.dict(os.environ, {'BROWSER_CDP_URL': 'ws://other'}):
             self.assertEqual(plugin.prepare_call('browser_exec', {}, 'a', config=self.config())['action'], 'block')
 
-    def test_only_provider_and_namespace_hook_are_registered(self):
+    def test_provider_profile_control_and_namespace_hook_are_registered(self):
         ctx = Mock()
         plugin.register(ctx)
         ctx.register_browser_provider.assert_called_once()
-        ctx.register_tool.assert_not_called()
+        ctx.register_tool.assert_called_once()
+        self.assertEqual(ctx.register_tool.call_args.kwargs['name'], 'chrome_profiles')
+        self.assertNotIn('override', ctx.register_tool.call_args.kwargs)
         provider = ctx.register_browser_provider.call_args.args[0]
         ctx.register_hook.assert_any_call('pre_tool_call', provider.prepare_call)
         self.assertEqual(provider.get_setup_schema()['name'], 'Original Chrome · CDP')
