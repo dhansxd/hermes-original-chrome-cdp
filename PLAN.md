@@ -65,6 +65,18 @@ declared tools/hooks. All 14 native Browser Harness Python files retain their
 distribution RECORD hashes. Account data and live observations stay in ignored
 local evidence.
 
+The installed Hermes gateway was reloaded through its native activation mechanism.
+A fresh Hermes CLI session successfully listed profiles, opened Default and a
+second existing profile through chrome_profiles and browser_exec, switched the
+second session back to Default, and read back both sessions' actual profile IDs.
+The peer session retained its native connection. The completed CLI process exited
+successfully, and the external window monitor observed zero remaining windows.
+
+Native Dock monitoring found a transient second application icon during startup.
+The same observation reproduced with the existing 0.4.8 launcher. Direct binary
+forwarding also reproduced it. This leaves the single-Dock-icon startup condition
+open. The profile-routing and window-isolation acceptance results above passed.
+
 ## Verification baseline
 
 The 0.4.4 baseline passes 114 unit tests and native four-agent Chrome acceptance.

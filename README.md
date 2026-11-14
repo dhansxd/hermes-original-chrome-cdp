@@ -187,6 +187,11 @@ Startup covers Chrome stopped, running without windows, and running with existin
 windows. Production sessions use the original Chrome application and its Dock entry.
 The explicit profile-directory launch selects the requested profile directly.
 
+Native Dock monitoring observed a brief second Chrome application icon during
+startup with the existing LaunchServices launcher. Git comparison confirms that
+launcher matches version 0.4.8. Eliminating this transient duplicate remains an
+open issue for the single-Dock-icon requirement.
+
 Authentication comes from each user's local Chrome profile. The installation
 configuration consists of the browser backend and an existing profile-directory
 name. Profile paths are resolved from the macOS user's home directory at runtime.
