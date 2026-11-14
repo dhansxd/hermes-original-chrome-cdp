@@ -71,6 +71,16 @@ fixture window. The foreground fixture stays selected during a native new-window
 typing, screenshot, and bring-to-front sequence. Cold startup received code review.
 These live runs began with the user's original Chrome already running.
 
+Version 0.4.7 records the task-local route for each admitted native browser name.
+A dedicated Stop callback matches Hermes's `session_key` payload and closes only
+its snapshot of owned names. Creation of finalized native names is rejected.
+Hermes's existing turn identity separates replacement names from delayed calls.
+The README describes the English and Indonesian debugging-dialog matching.
+
+All 126 unit tests pass. The native four-agent test now sends the actual Stop
+payload, verifies exact cleanup and peer/manual preservation, rejects late native
+creation, and confirms a replacement turn can browse with an independent name.
+
 Hermes manages plugin activation and browser selection separately. Select Local
 in its browser picker before disabling or removing this provider. Apply the
 supported plugin reload when the active Hermes surface requires it.

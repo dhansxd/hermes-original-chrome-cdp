@@ -59,7 +59,9 @@ class ChromeProvider(BrowserProvider):
         # errors instead of triggering Hermes's fallback to packaged Chromium.
         with self.lock:
             name = task_id.removeprefix('bu-named-').split('@', 1)[0]
-            if self.unloading or name in self.finishing:
+            # Finalization removes the hook's admission for this exact native name.
+            if (self.unloading or name in self.finishing
+                    or (task_id.startswith('bu-named-') and name not in self.owners)):
                 # Native Hermes falls back to Chromium on create_session exceptions.
                 # Retired providers and closing sessions fail at CDP without a new listener.
                 return {'session_name': NAME + '-unloaded', 'bb_session_id': 'unloaded',
@@ -118,7 +120,7 @@ class ChromeProvider(BrowserProvider):
                     len(self.sessions), len(self.owners))
         return complete
 
-    def prepare_call(self, tool_name, args, task_id, session_id='', **kwargs):
+    def prepare_call(self, tool_name, args, task_id, session_id='', session_key='', **kwargs):
         with self.lock:
             if self.unloading:
                 if tool_name == 'browser_exec':
@@ -129,15 +131,19 @@ class ChromeProvider(BrowserProvider):
                 name = result['args']['session']
                 if name in self.finishing:
                     return {'action': 'block', 'message': 'Original Chrome session is closing.'}
-                self.owners[name] = (task_id, session_id)
+                from tools.approval_context import get_current_session_key
+                route = session_key or get_current_session_key(default='') or session_id
+                self.owners[name] = (task_id, session_id, route)
         return result
 
-    def finish(self, task_id=None, session_id=None, completed=False, failed=False, interrupted=False, **kwargs):
+    def finish(self, task_id=None, session_id=None, completed=False, failed=False, interrupted=False,
+               session_name=None, **kwargs):
         with self.lock:
             if not (completed or failed or interrupted) or (self.waiting.get(session_id) and not interrupted):
                 return
             names = [name for name, owner in self.owners.items()
-                     if (task_id is None or owner[0] == task_id) and (session_id is None or owner[1] == session_id)]
+                     if (task_id is None or owner[0] == task_id) and (session_id is None or owner[1] == session_id)
+                     and (session_name is None or name == session_name)]
         if not names:
             return
         from tools.browser_session_lifecycle import cleanup_browser
@@ -171,6 +177,15 @@ class ChromeProvider(BrowserProvider):
         if session_id:
             self.finish(session_id=session_id, completed=True, interrupted=True)
 
+    def stopped(self, session_key='', **kwargs):
+        """Match Hermes's Stop route to the browser names admitted in that context."""
+        if not session_key:
+            return
+        with self.lock:
+            names = [name for name, owner in self.owners.items() if owner[-1] == session_key]
+        for name in names:
+            self.finish(session_name=name, interrupted=True)
+
     def human_wait(self, session_id=None, request_id='pending', **kwargs):
         with self.lock:
             self.waiting.setdefault(session_id, set()).add(request_id)
@@ -199,7 +214,7 @@ def stop_native_daemon(cache_key):
                    capture_output=True, text=True, timeout=15, check=True)
 
 
-def prepare_call(tool_name, args, task_id, *, session_id='', config=None, **kwargs):
+def prepare_call(tool_name, args, task_id, *, session_id='', turn_id='', config=None, **kwargs):
     """Keep native browser_exec, with per-agent names and a plugin-owned focus check."""
     if config is None:
         from hermes_cli.config import load_config_readonly
@@ -217,7 +232,9 @@ def prepare_call(tool_name, args, task_id, *, session_id='', config=None, **kwar
     alias = args.get('session') or 'default'
     if not isinstance(alias, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', alias):
         return {'action': 'block', 'message': 'Invalid browser session name.'}
-    prefix = 'hc-' + hashlib.sha256(f'{session_id}\0{task_id}'.encode()).hexdigest()[:20] + '-'
+    # A replacement turn must keep a different native cache key from a stopped turn.
+    identity = f'{session_id}\0{task_id}\0{turn_id}'
+    prefix = 'hc-' + hashlib.sha256(identity.encode()).hexdigest()[:20] + '-'
     name = alias if alias.startswith(prefix) else prefix + hashlib.sha256(alias.encode()).hexdigest()[:20]
     changes = {'session': name}
     if 'code' in args:
@@ -229,7 +246,7 @@ def register(ctx):
     provider = ChromeProvider(ctx.get_config)
     ctx.register_browser_provider(provider)
     ctx.register_hook('pre_tool_call', provider.prepare_call)
-    ctx.register_hook('agent_loop_stopped', provider.finish)
+    ctx.register_hook('agent_loop_stopped', provider.stopped)
     ctx.register_hook('on_session_finalize', provider.finalize)
     ctx.register_hook('on_session_end', provider.finalize)
     ctx.register_hook('on_human_input_request', provider.human_wait)

@@ -27,6 +27,108 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(a, self.call('agent-a', alias))
             self.assertEqual(a, self.call('agent-a', a['args']['session']))
 
+    def test_native_turn_identity_keeps_replacement_separate_from_stopped_turn(self):
+        with patch.dict(os.environ, {}, clear=True):
+            old = plugin.prepare_call('browser_exec', {'session': 'same'}, 'A',
+                                      session_id='chat', turn_id='old-turn', config=self.config())
+            current = plugin.prepare_call('browser_exec', {'session': 'same'}, 'A',
+                                          session_id='chat', turn_id='current-turn', config=self.config())
+            repeated = plugin.prepare_call('browser_exec', {'session': 'same'}, 'A',
+                                           session_id='chat', turn_id='current-turn', config=self.config())
+        self.assertNotEqual(old['args']['session'], current['args']['session'])
+        self.assertEqual(current, repeated)
+
+    def test_registered_stop_uses_native_route_payload_and_preserves_peer(self):
+        from tools.approval_context import set_current_session_key, reset_current_session_key
+        ctx = Mock()
+        plugin.register(ctx)
+        provider = ctx.register_browser_provider.call_args.args[0]
+        self.addCleanup(provider.unload)
+        hooks = {call.args[0]: call.args[1] for call in ctx.register_hook.call_args_list}
+        names = {}
+        with patch.dict(os.environ, {}, clear=True):
+            for task in ('A', 'B'):
+                token = set_current_session_key('route-' + task)
+                try:
+                    names[task] = provider.prepare_call('browser_exec', {}, task,
+                                                        session_id='history-' + task,
+                                                        config=self.config())['args']['session']
+                finally:
+                    reset_current_session_key(token)
+        with patch('tools.browser_session_lifecycle.cleanup_browser') as cleanup, \
+                patch('tools.browser_session_cdp.stop_cdp_supervisor'):
+            hooks['agent_loop_stopped'](session_key='route-A', platform='tui',
+                                        reason='user_stop', invalidation_reason='session_interrupt')
+            cleanup.assert_called_once_with('bu-named-' + names['A'])
+            self.assertNotIn(names['A'], provider.owners)
+            self.assertIn(names['B'], provider.owners)
+
+    def test_stop_without_matching_route_preserves_all_owners(self):
+        ctx = Mock()
+        plugin.register(ctx)
+        provider = ctx.register_browser_provider.call_args.args[0]
+        self.addCleanup(provider.unload)
+        provider.owners['fixture'] = ('A', 'history-A', 'route-A')
+        hooks = {call.args[0]: call.args[1] for call in ctx.register_hook.call_args_list}
+        with patch('tools.browser_session_lifecycle.cleanup_browser') as cleanup:
+            for key in ('', 'another-route'):
+                hooks['agent_loop_stopped'](session_key=key, platform='tui', reason='user_stop')
+            cleanup.assert_not_called()
+            self.assertIn('fixture', provider.owners)
+
+    def test_stop_snapshot_preserves_replacement_admitted_before_cleanup(self):
+        ctx = Mock()
+        plugin.register(ctx)
+        provider = ctx.register_browser_provider.call_args.args[0]
+        self.addCleanup(provider.unload)
+        hooks = {call.args[0]: call.args[1] for call in ctx.register_hook.call_args_list}
+        old = provider.prepare_call('browser_exec', {}, 'A', session_id='chat', session_key='route',
+                                    turn_id='old-turn', config=self.config())['args']['session']
+        finish = provider.finish
+        replacements = []
+
+        def replace_then_finish(**kwargs):
+            replacements.append(provider.prepare_call('browser_exec', {}, 'A', session_id='chat',
+                                                       session_key='route', turn_id='current-turn',
+                                                       config=self.config())['args']['session'])
+            finish(**kwargs)
+
+        with patch.object(provider, 'finish', side_effect=replace_then_finish), \
+                patch('tools.browser_session_lifecycle.cleanup_browser') as cleanup, \
+                patch('tools.browser_session_cdp.stop_cdp_supervisor'):
+            hooks['agent_loop_stopped'](session_key='route', platform='tui', reason='user_stop')
+            cleanup.assert_called_once_with('bu-named-' + old)
+            self.assertNotIn(old, provider.owners)
+            self.assertIn(replacements[0], provider.owners)
+
+    def test_finalized_native_session_stays_retired_after_replacement_is_admitted(self):
+        from tools import browser_session
+        provider = plugin.ChromeProvider()
+        self.addCleanup(provider.unload)
+        with patch.dict(os.environ, {}, clear=True), \
+                patch('tools.browser_session_lifecycle.cleanup_browser'), \
+                patch('tools.browser_session_cdp.stop_cdp_supervisor'):
+            old_name = provider.prepare_call('browser_exec', {'session': 'same'}, 'A',
+                                             session_id='chat', turn_id='old-turn',
+                                             config=self.config())['args']['session']
+            provider.finalize(session_id='chat')
+            with patch.object(browser_session, '_create_local_session') as local, \
+                    patch('plugin.ChromeSession') as create:
+                for replacement in (False, True):
+                    if replacement:
+                        new_name = provider.prepare_call('browser_exec', {'session': 'same'}, 'A',
+                                                         session_id='chat', turn_id='current-turn',
+                                                         config=self.config())['args']['session']
+                        self.assertIn(new_name, provider.owners)
+                    info = browser_session._create_cloud_session_or_fallback(
+                        'bu-named-' + old_name + '@fixture-home', provider)
+                    self.assertEqual(info['bb_session_id'], 'unloaded')
+                local.assert_not_called()
+                create.assert_not_called()
+                self.assertFalse(provider.sessions)
+            current = provider.create_session('bu-named-' + new_name + '@fixture-home')
+            self.assertIn(current['bb_session_id'], provider.sessions)
+
     def test_other_backends_and_tools_are_unchanged(self):
         self.assertIsNone(plugin.prepare_call('browser_exec', {}, 'a', config={'browser': {'cloud_provider': 'local'}}))
         self.assertIsNone(plugin.prepare_call('terminal', {}, 'a', config=self.config()))

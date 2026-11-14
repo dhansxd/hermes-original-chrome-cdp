@@ -26,16 +26,16 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.4.6 preserves foreground-window focus and fixes concurrent session
-cleanup. The compatibility baseline is Hermes commit
+Version 0.4.7 handles native Stop route payloads and rejects late session creation
+after finalization, including when a replacement turn starts. The compatibility baseline is Hermes commit
 `b200f5bc60e31588ba2cb60e288029c4a54ba5fa` and `browser-harness` 0.1.13 on macOS.
 It also uses Hermes's session-cleanup and harness-directory helpers. Compatibility
 with another Hermes revision should be checked with the tests below. Its startup
 and consent implementation uses macOS APIs.
 
 Hermes's validator currently warns about private imports used for native session
-cleanup, CDP supervisor teardown, browser environment construction, and harness
-directory namespacing. These helpers can change between Hermes releases. Native
+cleanup, CDP supervisor teardown, session-route context, browser environment
+construction, and harness directory namespacing. These helpers can change between Hermes releases. Native
 provider registration and hooks use the plugin interfaces, while the documented
 tested revision defines the compatibility baseline for those cleanup helpers.
 
@@ -112,6 +112,8 @@ Ask Hermes to perform a small browsing task.
 Chrome may show its debugging-consent dialog. The plugin verifies the dialog and
 connection identity, waits for stable geometry, and uses an Accessibility `AXPress`
 to approve that exact dialog. Normal website interaction uses CDP.
+Automatic dialog matching currently recognizes English and Indonesian Chrome
+debugging dialogs. Compatibility with other Chrome UI languages needs verification.
 
 To verify an existing website login, ask Hermes to open a site you already use in
 the selected profile and report whether the expected signed-in interface is visible.
@@ -127,8 +129,8 @@ changes, parallel sessions, updates, and switching back to the built-in browser.
 3. On first use, it opens a uniquely identified startup tab directly in the requested
    original Chrome profile and verifies the resulting Chrome process and profile path.
 4. The relay presents that session's owned tabs and opener-linked popups to the driver.
-5. Task and conversation identities namespace native named sessions, so agents can
-   independently use the same session alias.
+5. Task, conversation, and turn identities namespace native named sessions, so agents
+   can independently use the same session alias. A replacement turn gets a new name.
 6. Session-finalization hooks close owned targets, the native session daemon, and
    the relay. Other agents and pre-existing manual pages retain their ownership.
 
@@ -196,6 +198,11 @@ error path. Failed cleanup retains exact session ownership for another attempt a
 an in-process exit callback. That recovery state lasts for the lifetime of the
 Hermes process. If the process ends before cleanup succeeds, owned tabs may remain.
 
+Hermes Stop events identify their route through `session_key`. The provider records
+that task-local route during each browser call and closes the matching browser names
+when Stop arrives. Finalized native names lose admission, and replacement turns use
+different names to keep delayed calls scoped to their original turn.
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -223,11 +230,13 @@ hermes plugins validate .
 hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
 
-The 0.4.6 regression suite contains 121 unit tests. It covers registration, task
+The 0.4.7 regression suite contains 126 unit tests. It covers registration, task
 namespaces, startup and consent identity, input focus, target ownership, transport
 responses, concurrent unload, retryable cleanup, and dependency platform markers.
 Regression cases also cover foreground preservation, late window creation during
 cleanup, late client admission, and independent agent hooks during slow cleanup.
+Lifecycle regressions use native Stop payloads and cover peer preservation, late
+session rejection, and replacement turns admitted during cleanup.
 
 For real Chrome acceptance, run this command with the Python environment used by Hermes.
 
@@ -237,7 +246,8 @@ python tests/live_native.py --check-native-focus --require-unmodified-harness
 
 This test opens local fixture pages through four native agents, checks distinct
 Chrome window IDs, parallel responses, input/click, screenshots, iframe/shadow DOM,
-popups, and peer-preserving cleanup. It creates and closes its own test targets. Saved-login verification uses
+popups, native Stop payloads, late-session rejection, and peer-preserving cleanup.
+It creates and closes its own test targets. Saved-login verification uses
 the separate first-use check above. Native package hash checking verifies the
 installed harness against its package RECORD.
 

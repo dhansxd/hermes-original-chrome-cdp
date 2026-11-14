@@ -45,24 +45,29 @@ threading.Thread(target=server.serve_forever,daemon=True).start()
 base=f'http://127.0.0.1:{server.server_port}'
 from hermes_cli.plugins import get_plugin_manager,_dispatch_pre_tool_call_hooks
 from hermes_cli.plugins_manifest import parse_manifest_file
+from tools.approval_context import set_current_session_key,reset_current_session_key
 from tools.registry import registry
 import tools.browser_use_cli as native
 from tools.browser_session_lifecycle import cleanup_browser,cleanup_profile_browsers
 source=Path(__file__).resolve().parents[1];results=[]
+turns={task:uuid.uuid4().hex for task in ('A','B','C','D')}
 with set_hermes_home_override(home):
  manager=get_plugin_manager();manager._load_plugin(parse_manifest_file(source/'plugin.yaml',source,'user',''))
  from agent.browser_registry import get_provider
  provider=get_provider('original-chrome-default')
  def call(task,code,timeout=60):
   with set_hermes_home_override(home):
-   args={'code':code,'session':'same','timeout_s':timeout}
-   blocked,modified=_dispatch_pre_tool_call_hooks('browser_exec',args,task_id=task,session_id=task+'-chat',tool_call_id=uuid.uuid4().hex)
-   assert not blocked,blocked
-   result=registry.dispatch('browser_exec',modified or args,scope=str(home),task_id=task)
-   result=json.loads(result) if isinstance(result,str) else result
-   results.append({'task':task,'result':result});print(json.dumps(results[-1]),flush=True)
-   assert result.get('success'),result
-   return result
+   token=set_current_session_key('fixture-route-'+task)
+   try:
+    args={'code':code,'session':'same','timeout_s':timeout}
+    blocked,modified=_dispatch_pre_tool_call_hooks('browser_exec',args,task_id=task,session_id=task+'-chat',turn_id=turns[task],tool_call_id=uuid.uuid4().hex)
+    assert not blocked,blocked
+    result=registry.dispatch('browser_exec',modified or args,scope=str(home),task_id=task)
+    result=json.loads(result) if isinstance(result,str) else result
+    results.append({'task':task,'result':result});print(json.dumps(results[-1]),flush=True)
+    assert result.get('success'),result
+    return result
+   finally:reset_current_session_key(token)
  try:
   with concurrent.futures.ThreadPoolExecutor() as pool:
    futures=[pool.submit(call,agent,f'goto_url({base!r}); print(js("document.title")); print(js("window.agentMarker="+{agent!r}.__repr__()))') for agent in ('A','B','C','D')]
@@ -106,21 +111,26 @@ js("document.querySelector('#popup').click()")
    fast_ms=round((time.monotonic()-start)*1000);slow.result()
   print('PEER_READ_MS',fast_ms,flush=True);assert fast_ms<2500,fast_ms
   from tools.browser_session import get_session_info
-  a_args=_dispatch_pre_tool_call_hooks('browser_exec',{'code':'pass','session':'same'},task_id='A',session_id='A-chat')[1]
-  a_info=get_session_info(native._backend_cache_key('A',a_args['session']))
+  a_name=next(entry['result']['session'] for entry in results if entry['task']=='A')
+  a_key=native._backend_cache_key('A',a_name)
+  a_info=get_session_info(a_key)
   a_session=provider.sessions[a_info['bb_session_id']]
   owned_a={t['targetId'] for t in a_session._inventory()}
   from hermes_cli.plugins import invoke_hook
-  with set_hermes_home_override(home):invoke_hook('agent_loop_stopped',task_id='A',session_id='A-chat',completed=True)
+  with set_hermes_home_override(home):invoke_hook('agent_loop_stopped',session_key='fixture-route-A',platform='tui',reason='user_stop',invalidation_reason='session_interrupt')
   assert a_info['bb_session_id'] not in provider.sessions,'A cleanup not confirmed'
   peer=next(iter(provider.sessions.values()))
   remaining={t['targetId'] for t in peer.wire.call('Target.getTargets')['targetInfos']}
   assert not owned_a & remaining,'A targets remain after cleanup'
   assert manual_before <= remaining,'pre-existing manual targets changed'
   print('EXACT_CLEANUP_AND_MANUAL_PRESERVATION','PASS',flush=True)
+  assert provider.create_session(a_key)['bb_session_id']=='unloaded','Stopped native call admitted late'
   call('B','print(js("window.agentMarker"))')
   for agent in ('C','D'):call(agent,f'assert js("window.agentMarker")=={agent!r}')
+  turns['A']=uuid.uuid4().hex
   call('A','print(js("document.readyState"))')
+  assert provider.create_session(a_key)['bb_session_id']=='unloaded','Replacement reopened a stopped generation'
+  print('NATIVE_STOP_AND_LATE_SESSION_PASS',flush=True)
   if '--check-native-focus' in sys.argv:
    call('A',"""assert getattr(fill_input, '_original_chrome_focus_guard', False) is True
 js("document.body.innerHTML='<input id=previous value=KEEP><input id=disabled disabled><input id=hidden hidden><input id=readonly readonly><input id=visible>'")
