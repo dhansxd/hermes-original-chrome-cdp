@@ -356,12 +356,26 @@ def register(ctx):
     ctx.register_tool(name=PROFILE_TOOL, toolset='browser', handler=profile_control,
                       check_fn=provider.is_available, schema={
         'name': PROFILE_TOOL,
-        'description': 'List current original Chrome profiles, select a profile for your named browser_exec session, '
-                       'or set the default for new sessions. Select uses your own window and preserves other agents.',
+        'description': 'Control profile selection for the Original Chrome CDP provider and each agent\'s '
+                       'named browser_exec sessions. '
+                       'list refreshes directory IDs and display names from Chrome, reflecting profile additions, '
+                       'removals and renames. Agents can share a profile or choose different profiles with separate '
+                       'windows. select stores a choice for your session. Switching to a different profile closes '
+                       'that session\'s current windows and tabs. The next browser_exec using the same session alias '
+                       'opens the chosen profile directly. A session uses the saved default on its first '
+                       'browser_exec, with explicit selections taking precedence.',
         'parameters': {'type': 'object', 'properties': {
-            'action': {'type': 'string', 'enum': ['list', 'select', 'set_default'], 'default': 'list'},
-            'profile': {'type': 'string', 'description': 'Directory ID from list, such as Default or Profile 2.'},
-            'session': {'type': 'string', 'description': 'Your browser_exec session alias. Defaults to default.'},
+            'action': {'type': 'string', 'enum': ['list', 'select', 'set_default'], 'default': 'list',
+                       'description': 'list returns current profiles. select chooses or switches your named '
+                                      'session. set_default persists the default for new, unselected sessions. '
+                                      'Use select to switch an existing session.'},
+            'profile': {'type': 'string',
+                        'description': 'For select and set_default, pass a profile\'s id field from list, '
+                                       'such as Default or Profile 2.'},
+            'session': {'type': 'string',
+                        'description': 'Your session alias, defaulting to default. Use the same alias in '
+                                       'chrome_profiles and browser_exec. Each agent selects its own session '
+                                       'and may reuse an alias used by other agents.'},
         }},
     })
     ctx.register_hook('pre_tool_call', provider.prepare_call)

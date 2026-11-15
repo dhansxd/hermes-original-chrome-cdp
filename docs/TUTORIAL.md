@@ -99,6 +99,10 @@ Run the browsing work through `browser_exec` with `session` set to `research`.
 Several agents can use the same alias and profile with separate owned windows.
 The same agent can also choose another profile for another named session.
 
+To share one profile across several agents, give each agent the same current
+directory ID and have each call `select` for its own session. To use different
+profiles, assign the intended directory ID to each agent and use the same flow.
+
 Call `select` with a different profile and the same alias to switch that session.
 The previous owned connection is cleaned up and the next browser call opens the
 destination profile directly. Returning to an earlier profile gets a fresh
@@ -121,6 +125,11 @@ Each active session keeps its own choice. A new named session uses the current
 default when it first browses. Separate Hermes profile homes have their own plugin
 settings. A profile removed from Chrome can be replaced by selecting an available
 profile from the refreshed inventory.
+
+To move several active agents to one profile, have each agent call `select` with
+the shared destination ID. Refresh `list` when a profile is added, removed or
+renamed, or when selection reports that a profile is unavailable or replaced.
+Chrome's profile management handles profile creation and removal.
 
 ## Check parallel browsing
 

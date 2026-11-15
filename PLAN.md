@@ -142,6 +142,24 @@ AX observer also records 84 Chrome-surface read errors and two incomplete Dock
 readings. Successful native tool results and valid Dock readings establish the
 reported acceptance results. Detailed logs remain in ignored local evidence.
 
+## Profile guidance — approved 15 November 2026
+
+Version 0.5.2 expands the model-facing chrome_profiles tool and parameter
+descriptions. Explain fresh discovery, directory IDs, private agent/session
+aliases, shared and different profiles, saved defaults, and the window cleanup
+performed during a profile switch. Align the README and tutorial with those
+descriptions.
+
+Verify that the Python AST matches 0.5.1 after removing dictionary description
+fields. Run the existing 170 unit tests, validate a clean package, scan the release,
+and inspect the schema returned by Hermes's native tool_describe path. Verify the
+installed description and remote Git revision after publication.
+
+All 170 unit tests pass. The description-normalized Python AST matches version
+0.5.1. Hermes's native tool_describe dispatcher returns the complete tool and
+parameter descriptions from the new schema. The verification loads the plugin
+in an isolated Hermes home and reads its model-facing definitions.
+
 ## Verification baseline
 
 The 0.4.4 baseline passes 114 unit tests and native four-agent Chrome acceptance.

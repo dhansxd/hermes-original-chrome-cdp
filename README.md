@@ -30,7 +30,7 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.5.1 uses documented public Hermes plugin APIs for BrowserProvider,
+Version 0.5.2 uses documented public Hermes plugin APIs for BrowserProvider,
 configuration, session-route context, and CDP supervisor teardown. A regression
 check rejects private Hermes runtime imports. The plugin owns its Chrome startup,
 consent, CDP relay, targets, and cleanup. Hermes manages its native browser driver
@@ -107,8 +107,9 @@ process if it reports one. The selected profile takes effect for new browser ses
 
 ## Select profiles per agent
 
-The plugin provides `chrome_profiles` alongside native `browser_exec`. These are
-example tool arguments.
+The plugin provides `chrome_profiles` alongside native `browser_exec`. Its tool
+schema supplies profile guidance directly to the agent. These are example tool
+arguments.
 
 ```json
 {"action": "list"}
@@ -130,6 +131,10 @@ Each agent has its own session namespace and windows, including when agents use
 the same alias and the same profile. An agent can use several named sessions with
 different profiles. Selection uses the original Chrome profile directly.
 
+For a shared profile, set the saved default for new agent sessions, or have each
+agent select the same returned profile ID. For different profiles, give each agent
+its intended ID and have it select that profile for its own named session.
+
 To switch an existing named session, call `select` again with the destination
 profile. The plugin closes that session's previous owned browser resources and
 assigns a fresh native connection name. Its next `browser_exec` opens the selected
@@ -146,9 +151,11 @@ Each active session uses its own selected profile. A fresh named session uses th
 current default when it first browses. Explicit selection takes precedence for
 that session. Default changes use Hermes's public plugin settings writer.
 
-Inventory is refreshed for each list and selection. Display-name changes are
-reflected on subsequent reads. A removed or replaced profile produces a selection
-diagnostic so the caller can choose an available profile from the fresh inventory.
+Profile creation and removal are handled by Chrome's profile management. The
+plugin refreshes inventory for each list and selection, reflecting additions,
+removals and display-name changes. A removed or replaced profile produces a
+selection diagnostic so the caller can choose an available profile from the fresh
+inventory.
 
 ## First use
 
@@ -286,7 +293,7 @@ hermes plugins validate .
 hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
 
-The 0.5.1 regression suite contains 170 unit tests. It covers registration, task
+The 0.5.2 regression suite contains 170 unit tests. It covers registration, task
 namespaces, startup and consent identity, input focus, target ownership, transport
 responses, concurrent unload, retryable cleanup, and dependency platform markers.
 Regression cases also cover foreground preservation, late window creation during
