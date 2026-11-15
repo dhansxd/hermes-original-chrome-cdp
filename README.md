@@ -15,9 +15,9 @@ choose the same profile or different profiles, each with their own windows.
 
 Use `browser_app` to discover and run user-owned website extension packages.
 Their Python code and guides live outside the plugin installation and can be
-updated independently. Version 0.6.0 provides the package host. Gemini and Google
-Flow packages, package lifecycle commands, and service-specific profile rolling
-are tracked in [PLAN.md](PLAN.md).
+updated independently. Version 0.7.0 provides package lifecycle controls and
+independent profile policies. Gemini and Google Flow packages and service-specific
+profile rolling are tracked in [PLAN.md](PLAN.md).
 
 ## Requirements
 
@@ -36,7 +36,7 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.6.0 uses documented public Hermes plugin APIs for BrowserProvider,
+Version 0.7.0 uses documented public Hermes plugin APIs for BrowserProvider,
 configuration, session-route context, and CDP supervisor teardown. A regression
 check rejects private Hermes runtime imports. The plugin owns its Chrome startup,
 consent, CDP relay, targets, and cleanup. Hermes manages its native browser driver
@@ -166,7 +166,8 @@ inventory.
 
 ## User-owned website extensions
 
-The `browser_app` tool accepts `list`, `describe`, and `run`. Package discovery and
+The `browser_app` tool accepts `list`, `describe`, `run`, `enable`, `disable`, and
+`remove`. Package discovery and
 help read files without executing package code or opening Chrome. An operation
 uses an app-specific browser session bound to the calling agent and conversation.
 Different apps and ordinary browsing have separate windows, including when their
@@ -195,9 +196,54 @@ using `Path(__file__).parent`.
 
 Packages execute trusted local Python code with the permissions of the Hermes
 process. The bound browser context is valid during `run`. Its browser helpers use
-the native dispatch and the plugin's target ownership and input checks. An app
-session currently starts with the configured default Chrome profile. Per-app
-profile policies and rolling remain open PRD items.
+the native dispatch and the plugin's target ownership and input checks.
+
+Pass `app` to `chrome_profiles` to select or configure a website package's profile.
+Its choices are independent of ordinary browsing and other packages.
+
+```json
+{"action": "select", "app": "my-site", "profile": "Profile 2", "session": "work"}
+{"action": "set_rule", "app": "my-site", "scope": "session", "mode": "fixed", "profile": "Profile 2", "session": "work"}
+{"action": "set_rule", "app": "my-site", "scope": "default", "mode": "random"}
+```
+
+Use `set_rule` for persistent `fixed`, `default`, or `random` policy and
+`clear_rule` to restore inherited policy. Resolution follows session/agent,
+subagent role, platform, parent, and service default. `random` chooses once for
+an active session from current Chrome inventory. `default` uses the legacy
+`profile_directory`. Session rules persist for the conversation and alias.
+Agent rules address the current Hermes task ID. Platform rules target a channel
+such as `whatsapp` or `telegram`. Subagent rules target a public role name or `*`.
+Parent choices come from the public `subagent_start` hook. Each service has its
+own policy namespace. Defaults affect new sessions, while an explicit current
+selection uses the existing owned-session switching path.
+
+`list` returns `selected_profile`, the resolved `rule`/`rule_source`, and the
+`default_rule`. A random default reports `default_profile` as null and its active
+choice through `selected_profile`. Service rolling remains an open PRD item.
+
+An app returning `running` or `needs_inspection` retains its owned session across
+turns in that Hermes process. Call the same app and alias to continue observing.
+The source profile remains attached to that pending result. A newly saved policy
+is reported as deferred when a result is pending. `context.checkpoint(value)`
+atomically saves the package's known work position. Package result envelopes
+are saved as `result.json` beside its artifacts. Stop, finalization, disable and
+unload release the owned browser resources.
+
+```json
+{"action": "disable", "app": "my-site"}
+{"action": "enable", "app": "my-site"}
+{"action": "remove", "app": "my-site"}
+```
+
+Disable persists availability and releases that package's sessions owned by the
+serving Hermes process. Every bound browser call checks availability. Other
+Hermes processes observe the saved flag on their next call. An in-flight command
+in another process follows that process's own lifecycle. `cleanup_pending` means
+an active invocation or unconfirmed cleanup remains. Retry the action after it
+settles. Re-enabling starts a fresh owned session. Remove deletes the source
+folder after cleanup, preserving checkpoints and artifacts under plugin data.
+For a linked package, removal unlinks its package entry.
 
 See the [extension package tutorial](docs/TUTORIAL.md#create-a-website-extension)
 for a complete example and the context/result contract.
@@ -230,7 +276,8 @@ changes, parallel sessions, updates, and switching back to the built-in browser.
 4. The relay presents that session's owned tabs and opener-linked popups to the driver.
 5. Provider-instance, task, conversation, and turn identities namespace native named
    sessions, so agents can independently use the same session alias. Replacement
-   turns and reloaded providers receive new names.
+   turns and reloaded providers receive new names. Pending extension operations
+   reuse their owned session when continued in the same conversation.
 6. Session-finalization hooks close owned targets, their CDP supervisor, and the
    relay. Hermes manages its native driver processes and session cache through
    its own lifecycle. Other agents and pre-existing manual pages retain ownership.
@@ -338,7 +385,7 @@ hermes plugins validate .
 hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
 
-The 0.6.0 regression suite contains 192 unit tests. It covers registration, task
+The 0.7.0 regression suite covers registration, task
 namespaces, startup and consent identity, input focus, target ownership, transport
 responses, concurrent unload, retryable cleanup, and dependency platform markers.
 Regression cases also cover foreground preservation, late window creation during
@@ -352,6 +399,12 @@ Profile regressions also cover fresh discovery, additions/removals/renames,
 directory replacement, default changes with active agents, independent named
 sessions, repeated selection, round-trip switches, native JSON results and
 Stop arriving during a profile switch.
+Policy regressions cover service isolation, persistent session rules, default and
+random selection, scope precedence, parent/child inheritance, channel rules,
+separate Hermes configurations, malformed saved rules, and profile replacement.
+Package lifecycle cases cover active-code cancellation, retryable cleanup,
+checkpoint/receipt preservation, fresh sessions after re-enable, linked and broken
+package removal, and peer access during slow source deletion.
 
 Startup regressions cover warm-process forwarding, cold LaunchServices arguments,
 connected-peer identity, IPC nonce replacement, long socket paths, fragmented

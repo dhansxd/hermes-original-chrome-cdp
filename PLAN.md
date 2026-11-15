@@ -1,15 +1,16 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 2, 15 November 2026.
+Revisi PRD 3, 15 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-**Pemuat paket pengguna dan tool umum `browser_app` tersedia pada 0.6.0.**
-EXT-02, EXT-03 dan EXT-04 selesai. Bagian direktori pilihan pada EXT-01 serta
-penerusan identitas native pada CTX-01 sudah teruji. Template Gemini/Flow dan
-penerimaan kanal nyata masih terbuka. Langkah implementasi berikutnya adalah
-lifecycle paket serta aturan profil dalam tahap 2. Riset tambahan diarahkan ke
-kontrak teknis atau kegagalan yang ditemukan pada checklist terkait.
+**Lifecycle paket dan aturan profil tersedia pada 0.7.0.** EXT-05, EXT-06,
+PRO-01, PRO-03, PRO-05 dan LIF-01 selesai dengan bukti di bawah. PRO-02 sudah
+memiliki implementasi hook/aturan serta uji konteks sintetis. Penerimaan kanal
+nyata masih terbuka. PRO-04 sudah teruji untuk pemilihan/perpindahan profil satu
+paket saat peer aktif, dan menunggu uji rolling pada tahap 3. Langkah berikutnya
+adalah ROT-01 sampai ROT-05 memakai fixture. Template serta paket produksi
+Gemini/Flow tetap mengikuti tahap 4.
 
 Dokumen ini menjadi acuan spesifikasi, status implementasi, pemasangan, verifikasi,
 dan pekerjaan tersisa. Status yang sudah memiliki bukti menjadi titik awal sesi
@@ -17,20 +18,20 @@ berikutnya. Riwayat rinci sebelum PRD tersedia pada bagian sumber bukti.
 
 | Area | Implementasi | Terpasang lokal | Verifikasi dan status |
 | --- | --- | --- | --- |
-| Browser Chrome asli | Baseline 0.5.2 dipertahankan dalam 0.6.0 | Ya, plugin aktif dan provider dipilih | 192 tes offline lulus. Uji native empat agen, input, Stop, reload dan cleanup diulang pada 0.6.0. Startup/Dock mengacu baseline dengan source startup yang sama. |
-| Inventori/default/profil per sesi | Tersedia pada 0.6.0 | Ya | Penerimaan native empat agen/multiprofil diulang dan lulus. |
-| Panduan `chrome_profiles` | Tersedia pada 0.6.0 | Ya | Schema native `tool_describe` sudah diverifikasi pada baseline. |
-| Pemuat extension pengguna | Selesai untuk list/describe/run | Ya, gateway direload resmi | 22 regresi khusus paket dan uji native enam jendela lulus. Katalog ditemukan lewat sesi chat CLI baru. Paket produksi Gemini/Flow masih terbuka. |
-| Profil tetap/acak/per platform/subagent | Spesifikasi tersedia | Belum | PRO-01 sampai PRO-05 masih terbuka. |
+| Browser Chrome asli | Baseline 0.5.2 dipertahankan dalam 0.7.0 | Ya, plugin aktif dan provider dipilih | 216 tes offline lulus. Uji native empat agen, input, Stop, reload dan cleanup diulang pada 0.7.0. Startup/Dock mengacu baseline dengan source startup yang sama. |
+| Inventori/default/profil per sesi | Tersedia pada 0.7.0 | Ya | Penerimaan native empat agen/multiprofil diulang dan lulus. |
+| Panduan `chrome_profiles` | Tersedia pada 0.7.0 | Ya | Schema aturan profil dibaca melalui `tool_describe` pada chat CLI baru. |
+| Pemuat dan lifecycle extension pengguna | List/describe/run/enable/disable/remove | Ya, gateway direload resmi | 33 regresi khusus paket dan uji native enam jendela, disable/remove, serta pekerjaan lintas turn lulus. Paket produksi Gemini/Flow masih terbuka. |
+| Profil tetap/acak/per platform/subagent | Implementasi tersedia pada 0.7.0 | Ya | 13 regresi aturan profil dan uji native pemilihan profil child per paket lulus. Pesan kanal nyata dan rolling mengikuti item terbuka. |
 | Rolling generik dan handoff | Spesifikasi tersedia | Belum | ROT-01 sampai ROT-05 masih terbuka. |
 | Extension Gemini | Source dan pilot UI mandiri tersedia | Belum sebagai extension plugin | Regresi source 588 lulus, 40 tes live dilewati. Migrasi UI/routing dan penerimaan extension masih terbuka. |
 | Extension Google Flow | Controller mandiri tersedia | Belum sebagai extension plugin | 118 tes source offline lulus. Penerimaan media pada repo mandiri tercatat. Integrasi extension masih terbuka. |
 
 Status konfigurasi lokal diperiksa pada 15 November 2026. Browser provider bernilai
 `original-chrome-default`, dan plugin tercantum aktif. Runtime lokal memakai
-versi 0.6.0. Reload gateway mengaktifkan hook dan mendaftarkan tool untuk sesi
-baru. Pemeriksaan CLI pertama masih dilayani gateway dengan snapshot tool lama.
-Setelah reload resmi, katalog `browser_app` berhasil dipanggil dari chat baru.
+versi 0.7.0. Reload gateway mengaktifkan hook, termasuk `subagent_start`, dan
+mendaftarkan tool untuk sesi baru. Chat CLI sesudah reload berhasil membaca
+schema terbaru, panduan paket, serta menjalankan probe native dan checkpoint.
 Source pembanding Gemini berada pada `957aed5`, Flow mandiri pada `79d810a`.
 
 ### Cara memperbarui checklist
@@ -159,10 +160,15 @@ Tool umum bernama `browser_app`. Argumen utamanya adalah `action`,
 | `disable` | Tutup penerimaan operasi baru, simpan posisi pekerjaan, dan cleanup resource milik paket pada lingkupnya. |
 | `remove` | Lakukan lifecycle penonaktifan lalu hapus folder paket yang dituju. Hasil produksi dan catatan pekerjaan memiliki penyimpanan mandiri. |
 
-Versi 0.6.0 menyediakan `list`, `describe` dan `run`. Tiga aksi lifecycle berikutnya
-masih berada pada EXT-05. Metadata memvalidasi bentuk schema parameter operasi.
-Kode operasi memvalidasi nilai parameternya. Paket saat ini memakai profil default
-ketika sesi pertama disiapkan. Aturan profil per layanan mengikuti PRO/ROT.
+Versi 0.7.0 menyediakan keenam aksi tersebut. Disable menyimpan flag dan menutup
+sesi paket yang dimiliki proses Hermes yang melayani aksi. Setiap panggilan
+browser terikat memeriksa flag. Proses Hermes lain membacanya pada panggilan
+berikutnya dan mengelola perintah in-flight melalui lifecycle prosesnya sendiri.
+`cleanup_pending` menyatakan callback aktif atau cleanup yang belum terkonfirmasi.
+Remove menunggu keduanya selesai. Direktori paket berupa symlink dilepas melalui
+entry-nya. Artefak dan checkpoint berada di plugin data, terpisah dari source paket.
+Metadata memvalidasi bentuk schema parameter, lalu operasi memvalidasi nilainya.
+Profil layanan dipilih melalui `chrome_profiles` dengan argumen `app`.
 
 Kode host memuat metadata dan fungsi berdasarkan paket yang dipilih. Situs baru
 serta operasi baru ditemukan dari direktori tersebut melalui schema umum ini.
@@ -199,10 +205,13 @@ Nama Flow/Gemini menjadi data paket dan preset awal.
 - [x] **EXT-04** `browser_app` untuk katalog, bantuan dan eksekusi. Penambahan
   paket/operasi pada dua agen dan pembaruan source tanpa registrasi ulang lulus
   pada `tests/live_apps.py`. Enam sesi berbagi profil memakai enam jendela terpisah.
-- [ ] **EXT-05** Enable/disable/remove dengan lifecycle resource dan posisi pekerjaan
-  yang terverifikasi. Uji satu paket dinonaktifkan saat paket/agen lain berjalan.
-- [ ] **EXT-06** Bantuan paket dan panduan umum model-facing yang dapat ditemukan.
-  Uji perubahan panduan, panduan opsional, serta pemakaian pada sesi Hermes baru.
+- [x] **EXT-05** Enable/disable/remove dengan lifecycle resource dan posisi pekerjaan
+  terverifikasi pada 0.7.0. Native peer/manual dipertahankan, checkpoint/receipt
+  tetap ada, re-enable memakai nama native baru. Regresi juga mencakup callback
+  aktif, retry cleanup, paket rusak/link dan penghapusan source yang lambat.
+- [x] **EXT-06** Bantuan paket dan panduan umum model-facing tersedia pada 0.7.0.
+  Panduan berubah/opsional lulus regresi. Chat CLI baru berhasil membaca schema
+  kedua tool, panduan paket temporer dan menjalankan probe native.
 
 Uji 0.6.0 memakai paket fixture di direktori eksternal temporer melalui registry,
 hook native Hermes dan `ctx.dispatch_tool`. Native `browser_exec` dapat memeriksa
@@ -243,16 +252,32 @@ konfigurasi agen yang melayani pekerjaan. Profil Chrome menentukan direktori bro
   yang cocok. `tests/live_apps.py` menguji identitas
   parent/child dan route Telegram sintetis. Penerimaan pesan kanal nyata serta
   delegasi child melalui percakapan Hermes masih terbuka.
-- [ ] **PRO-01** Aturan sesi/agen dan profil tetap. Uji pengubahan aturan dan
-  pemakaian profil yang sama oleh beberapa agen.
+- [x] **PRO-01** Aturan sesi/agen dan profil tetap pada 0.7.0. Pengubahan dan
+  persistensi aturan lulus regresi. Native sesi berbagi profil tetap memiliki
+  jendela sendiri. Aturan sesi mengikat percakapan/alias lintas turn, sedangkan
+  aturan agent mengikat task ID Hermes yang dapat berubah pada turn berikutnya.
 - [ ] **PRO-02** Aturan WhatsApp/Telegram serta pewarisan parent/child. Uji
   parent A, child B, dua kanal bersamaan, serta routed Hermes profile berbeda.
-- [ ] **PRO-03** Mode default/acak dan prioritas resolusi. Uji pilihan acak stabil
-  sepanjang sesi dan konfigurasi lama yang hanya memiliki `profile_directory`.
+  Implementasi hook publik, prioritas role/channel/parent, dua konfigurasi Hermes
+  dan route sintetis lulus pada 0.7.0. Penerimaan pesan kanal dan delegasi nyata
+  melalui gateway dengan routed homes masih terbuka.
+- [x] **PRO-03** Mode default/acak dan prioritas resolusi lulus pada 0.7.0.
+  Pilihan acak stabil pada sesi aktif, inventori dibaca segar, konfigurasi lama
+  serta readback default tetap tercakup.
 - [ ] **PRO-04** Ruang profil browser umum dan tiap extension yang independen.
   Uji rolling satu extension sementara browser umum dan extension lain digunakan.
-- [ ] **PRO-05** Penambahan/penghapusan/rename/pergantian direktori saat routing.
-  Uji pemilihan ulang dan resource yang sudah dimiliki sesi lain.
+  Pemisahan pilihan/default dan perpindahan satu paket saat peer aktif lulus
+  pada 0.7.0. Bagian rolling menunggu ROT-01 sampai ROT-05.
+- [x] **PRO-05** Inventori dinamis dan identitas direktori tetap dipakai pada 0.7.0.
+  Penambahan/penghapusan/rename, penggantian direktori dan pemilihan ulang paket
+  tanpa mengganggu pilihan peer lulus regresi. Perpindahan native multiprofil lulus.
+
+Pilihan `running` dan `needs_inspection` menyimpan sesi, profil asal serta direktori
+artefak lintas turn dalam proses yang sama. `context.checkpoint()` menulis posisi
+JSON secara atomik, dan hasil paket disimpan sebagai `result.json`. Kebijakan baru
+disimpan sebagai deferred ketika hasil masih diikuti pada profil asal. Akhir sesi,
+Stop, disable dan unload melepaskan resource. Pemulihan otomatis setelah proses
+berakhir, identitas akun serta handoff lintas profil mengikuti ROT.
 
 ## 6. Rolling kuota dan kelanjutan pekerjaan
 
@@ -343,8 +368,10 @@ identitas media dan file asli dapat dikaitkan dengan permintaan asal.
 
 ## 8. Verifikasi integrasi dan distribusi
 
-- [ ] **LIF-01** Sesi extension mengikuti umur operasi dan kebutuhan hasil. Uji
-  akhir turn, operasi `running`, Stop, finalisasi, disable dan unload.
+- [x] **LIF-01** Umur sesi extension teruji pada 0.7.0 untuk akhir turn, operasi
+  `running`, Stop, finalisasi, disable dan unload. Uji native menjaga dokumen,
+  profil dan direktori artefak saat turn diganti, lalu melepas resource pemilik
+  yang tepat. Checkpoint/receipt berada di luar paket dan bertahan setelah cleanup.
 - [ ] **LIF-02** Enam agen pada profil sama serta profil campuran. Uji source
   paket bersama, jendela berbeda, operasi paralel, dan cleanup pemilik yang tepat.
 - [ ] **LIF-03** Browser umum, Flow, Gemini dan jendela manual berjalan bersama.
@@ -401,6 +428,10 @@ perilaku bersama profil Chrome asli.
 | --- | --- |
 | `tests/test_*.py`, 170 lulus | Regresi plugin 0.5.2. Pemasangan/provider aktif diperiksa kembali saat penyusunan PRD. |
 | `tests/test_*.py`, 192 lulus pada 0.6.0 | Termasuk 22 regresi pemuat paket, identitas, relative import dan pembaruan source. |
+| `tests/test_*.py`, 216 lulus pada 0.7.0 | 33 tes paket dan 13 tes aturan profil, termasuk lifecycle paralel, checkpoint, pending lintas turn, prioritas aturan serta konfigurasi terpisah. |
+| `tests/live_apps.py`, 0.7.0 | Enam jendela satu profil, pemilihan profil child per paket, status pending lintas turn, disable/enable/remove, preservasi artefak/peer/manual dan unload pending. |
+| `tests/live_native.py` dan `tests/live_profiles.py`, diulang pada 0.7.0 | Browser umum, empat agen, input/focus, Stop, reload, default/switch profil dan cleanup lulus. |
+| Chat CLI setelah reload resmi 0.7.0 | Tool describe memuat aksi lifecycle serta aturan profil, panduan paket terbaca, probe native dan checkpoint berhasil dengan identitas lengkap. Paket/artefak uji dibersihkan. |
 | `tests/live_apps.py`, 0.6.0 | Paket eksternal, dua situs, tiga identitas sintetis dan enam jendela, dokumen tetap, pembaruan source, inspeksi native dan Stop yang mempertahankan peer/manual. |
 | `tests/live_native.py` dan `tests/live_profiles.py`, diulang pada 0.6.0 | Regresi browser umum dan multiprofil lulus. 14 source Browser Harness cocok dengan hash RECORD. |
 | Validasi salinan distribusi bersih 0.6.0 | Registrasi tool/hook sesuai manifest, security scan safe, tanpa core override. |

@@ -149,7 +149,7 @@ site can therefore affect the other agent and manual browsing on that profile.
 
 ## Create a website extension
 
-Version 0.6.0 adds `browser_app`. Your packages live in `~/.hermes/browser-apps`,
+Version 0.7.0 provides `browser_app`. Your packages live in `~/.hermes/browser-apps`,
 independently of the installed plugin. A different root can be set through
 `plugins.entries.original-chrome-default.settings.apps_directory`.
 
@@ -217,6 +217,7 @@ The context exposes the following values and methods.
 | `session` | Prepared private browser-session name |
 | `profile` | Current Chrome profile directory ID |
 | `directory` | Created on access for app/owner artifacts under plugin data |
+| `checkpoint(value)` | Atomically save JSON work position to `checkpoint.json` beside artifacts |
 | `browser_exec(code, timeout_s=120)` | Native browser execution, with a decoded JSON result |
 
 Return a JSON-serializable object. The host wraps ordinary values as `status`
@@ -232,10 +233,78 @@ schema shape. The operation validates its own parameter values. `list` and
 packages discoverable.
 
 Package Python runs with the Hermes process's local permissions. Install code
-you trust. Context/browser access lasts for the `run` invocation. Start apps
-using the configured default profile in this release. Per-app selection,
-rolling, enable/disable/remove commands and the initial Gemini/Flow packages
-remain in the [PRD checklist](../PLAN.md).
+you trust. Context/browser access lasts for the `run` invocation. Service rolling
+and the initial Gemini/Flow packages remain in the [PRD checklist](../PLAN.md).
+
+## Configure profiles for a website package
+
+Pass the package ID as `app` to `chrome_profiles`, with the same session alias
+used by `browser_app`. Ordinary browsing and each package have separate choices.
+
+```json
+{"action": "list", "app": "my-site", "session": "work"}
+{"action": "select", "app": "my-site", "profile": "Profile 2", "session": "work"}
+{"action": "set_default", "app": "my-site", "profile": "Profile 2"}
+{"action": "set_rule", "app": "my-site", "scope": "session", "mode": "fixed", "profile": "Profile 2", "session": "work"}
+{"action": "clear_rule", "app": "my-site", "scope": "session", "session": "work"}
+```
+
+`select` changes the current named session. `set_rule` persists a policy in plugin
+configuration. Session policy follows the conversation and alias across turns.
+Agent policy targets a Hermes task ID, which can change on the next turn.
+`fixed` selects `profile`, `default` uses `profile_directory`, and `random` samples
+current profiles once for the active session. Use `set_rule` with `scope` set to
+`default` to configure future sessions for this service.
+
+Platform rules can select different profiles for WhatsApp and Telegram. Subagent
+rules can select a profile for a role or for every child using `*`.
+
+```json
+{"action": "set_rule", "app": "my-site", "scope": "platform", "target": "whatsapp", "mode": "fixed", "profile": "Profile 2"}
+{"action": "set_rule", "app": "my-site", "scope": "platform", "target": "telegram", "mode": "default"}
+{"action": "set_rule", "app": "my-site", "scope": "subagent", "target": "*", "mode": "random"}
+```
+
+Resolution starts with session, then agent, subagent role, platform, parent and
+service default. An explicit child rule takes precedence over the parent's
+selection. Parent selection is captured from the public lifecycle hook for the
+matching service and alias. `list` reports both active selection and policy.
+Several agents can resolve to the same profile and retain separate Chrome windows.
+
+## Continue and manage a package
+
+Before a long-running website operation returns, save its known job position and
+write output files under `context.directory`.
+
+```python
+context.checkpoint({'job_id': job_id, 'phase': 'waiting'})
+return {'status': 'running', 'data': {'job_id': job_id}}
+```
+
+`running` and `needs_inspection` preserve the owned browser session across turn
+end in the serving Hermes process. Continue through the same package and alias
+to retain the document, source profile and artifact directory. A completed result
+returns `ok`. Stop, session finalization, disable and host unload close the owned
+connection. The saved checkpoint and `result.json` remain available through the
+`data_directory` shown by `describe`. Recovery after host restart follows the
+package's saved checkpoint. Automatic job recovery/rolling is tracked in the PRD.
+
+```json
+{"action": "disable", "app": "my-site"}
+{"action": "enable", "app": "my-site"}
+{"action": "remove", "app": "my-site"}
+```
+
+Disable persists the flag and closes this package's owned sessions in the serving
+Hermes process. A bound operation rechecks availability before driving Chrome.
+An already-running Python callback can still be returning. While that callback or
+native cleanup remains, the result contains `cleanup_pending` and source removal
+waits. Retry the management action when it settles. Other processes check the
+saved flag on their next call and own their in-flight command lifecycle.
+Re-enabling uses fresh native names. Remove deletes its source after cleanup,
+retaining plugin-data artifacts, checkpoints and receipts. Linked packages are
+removed by unlinking the directory entry. A saved disabled flag also records
+removal for future template installation.
 
 ## Update
 

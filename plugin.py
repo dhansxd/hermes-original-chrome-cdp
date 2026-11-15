@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 import sys
 import threading
@@ -18,12 +19,14 @@ if __package__:
     from .startup import CHROME, PERSONAL
     from .profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
     from .browser_apps import APP_TOOL, AppHost, SCHEMA, app_identifier
+    from .profile_rules import ProfileRules
 else:
     from input_guard import prepare_code
     from relay import ChromeSession
     from startup import CHROME, PERSONAL
     from profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
     from browser_apps import APP_TOOL, AppHost, SCHEMA, app_identifier
+    from profile_rules import ProfileRules
 
 NAME = 'original-chrome-default'
 PROFILE_TOOL = 'chrome_profiles'
@@ -38,6 +41,11 @@ class SessionProfile:
     finished: bool = False
     app_id: str = ''
     turn_id: str = ''
+    alias: str = 'default'
+    platform: str = ''
+    pending: bool = False
+    active: int = 0
+    directory_key: str = ''
 
 
 class ChromeProvider(BrowserProvider):
@@ -54,6 +62,9 @@ class ChromeProvider(BrowserProvider):
         self.finishing = set()
         self.profile_choices = {}
         self.profile_routes = {}
+        self.rules = ProfileRules(get_setting, set_setting)
+        self.parents = {}
+        self.app_instances = {}
         self.lock = threading.RLock()
         self.unloading = False
         # Retain failed cleanup across host unload, until it succeeds or the process exits.
@@ -130,6 +141,7 @@ class ChromeProvider(BrowserProvider):
             complete = not self.sessions and not self.owners
             if complete:
                 self.waiting.clear()
+                self.parents.clear()
                 atexit.unregister(self.unload)
             else:
                 logging.getLogger(__name__).warning(
@@ -147,20 +159,23 @@ class ChromeProvider(BrowserProvider):
                 return {'action': 'block', 'message': 'Original Chrome provider is unloading.'}
             app_id = ''
             try:
+                app_id = app_identifier(args.get('app')) if args.get('app') else ''
+                if tool_name == APP_TOOL and not app_id:
+                    app_identifier(None)
+                alias = args.get('session') or 'default'
+                existing = self.profile_choices.get(self.profile_routes.get(alias, alias)) if isinstance(alias, str) else None
+                if (existing and existing.app_id and existing.owner[:2] == (task_id, session_id)
+                        and existing.turn_id == kwargs.get('turn_id', '')):
+                    app_id = existing.app_id
+                if app_id and self.get_setting('apps_disabled.' + app_id):
+                    return {'action': 'block', 'message': 'This website extension is disabled.'}
+                namespace = self.instance_id
+                if app_id:
+                    namespace += '\0app\0' + app_id + '\0' + self.app_instances.get(app_id, '')
                 if tool_name == PROFILE_TOOL:
-                    name = private_session_name(args.get('session'), task_id, session_id,
-                                                kwargs.get('turn_id', ''), self.instance_id)
+                    name = private_session_name(alias, task_id, session_id, kwargs.get('turn_id', ''), namespace)
                     result = {'action': 'modify', 'args': {'session': name}}
                 else:
-                    app_id = app_identifier(args.get('app')) if tool_name == APP_TOOL else ''
-                    if tool_name == 'browser_exec' and isinstance(args.get('session'), str):
-                        alias = args.get('session')
-                        existing = self.profile_choices.get(self.profile_routes.get(alias, alias))
-                        if (existing and existing.app_id
-                                and existing.owner[:2] == (task_id, session_id)
-                                and existing.turn_id == kwargs.get('turn_id', '')):
-                            app_id = existing.app_id
-                    namespace = self.instance_id + ('\0app\0' + app_id if app_id else '')
                     result = prepare_call('browser_exec', args, task_id, session_id=session_id,
                                           provider_id=namespace, **kwargs)
             except ValueError as error:
@@ -171,18 +186,31 @@ class ChromeProvider(BrowserProvider):
                 from gateway.session_context import get_session_env
                 route = session_key or get_session_env('HERMES_SESSION_KEY', '') or session_id
                 owner = (task_id, session_id, route)
-                choice = self.profile_choices.setdefault(base, SessionProfile(owner))
+                if app_id:
+                    requested_alias = (existing.alias if existing and existing.app_id == app_id
+                                       and existing.owner[1] == session_id else alias)
+                    pending = [(key, value) for key, value in self.profile_choices.items()
+                               if value.app_id == app_id and value.owner[1] == session_id
+                               and value.alias == requested_alias and value.pending and not value.finished]
+                    if pending:
+                        base, existing = pending[0]
+                        if existing.active and (existing.owner[:2] != (task_id, session_id)
+                                                or existing.turn_id != kwargs.get('turn_id', '')):
+                            return {'action': 'block', 'message': 'The previous extension operation is still returning.'}
+                choice = self.profile_choices.setdefault(base, SessionProfile(
+                    owner, alias=existing.alias if existing else alias))
                 if choice.finished or choice.switching:
                     return {'action': 'block', 'message': 'This browser session is finishing or changing Chrome profile.'}
                 choice.owner = owner
                 choice.app_id = app_id
                 choice.turn_id = kwargs.get('turn_id', '')
+                choice.platform = get_session_env('HERMES_SESSION_PLATFORM', '')
                 if tool_name == PROFILE_TOOL:
                     result['args']['session'] = base
                     return result
                 try:
                     if choice.profile is None:
-                        choice.profile = get_profile(self.get_setting('profile_directory'), self.data)
+                        choice.profile = self.choose_profile(choice)
                         choice.browser_name = base
                         self.profile_routes[base] = base
                     else:
@@ -195,6 +223,29 @@ class ChromeProvider(BrowserProvider):
                 self.owners[name] = owner
                 result['args']['session'] = name
         return result
+
+    def choose_profile(self, choice):
+        rule, _ = self.rules.resolve(choice.app_id, choice.owner, choice.alias,
+                                     choice.platform, self.parents.get(choice.owner[1]))
+        if rule['mode'] == 'random':
+            available = list_profiles(self.data)
+            if not available:
+                raise ValueError('No Chrome profiles are available.')
+            return random.choice(available)
+        directory = rule.get('profile') if rule['mode'] == 'fixed' else self.get_setting('profile_directory')
+        profile = get_profile(directory, self.data)
+        if rule.get('identity') and profile.identity != rule['identity']:
+            raise RuntimeError('The inherited Chrome profile was replaced. Select it again.')
+        return profile
+
+    def child_started(self, parent_session_id='', child_session_id='', child_role='', **kwargs):
+        if parent_session_id and child_session_id:
+            with self.lock:
+                self.parents[child_session_id] = {
+                    'session_id': parent_session_id, 'role': child_role or '*',
+                    'profiles': {(choice.app_id, choice.alias): choice.profile
+                                 for choice in self.profile_choices.values()
+                                 if choice.owner[1] == parent_session_id and choice.profile and not choice.finished}}
 
     def profiles(self, args, task_id='', session_id='', **kwargs):
         """Manage this caller's profile choice and the plugin's default."""
@@ -209,23 +260,64 @@ class ChromeProvider(BrowserProvider):
                 action = args.get('action', 'list')
                 if action == 'list':
                     profiles = list_profiles(self.data)
+                    rule, source = self.rules.resolve(choice.app_id, choice.owner, choice.alias,
+                                                      choice.platform, self.parents.get(session_id))
+                    default = self.rules.read(choice.app_id, 'default', '*') or {'mode': 'default'}
+                    default_profile = default.get('profile') if default['mode'] == 'fixed' else None
+                    if default['mode'] == 'default':
+                        default_profile = profile_directory(self.get_setting('profile_directory'))
                     return {'success': True, 'session': base,
-                            'default_profile': profile_directory(self.get_setting('profile_directory')),
+                            'default_profile': default_profile, 'default_rule': default,
                             'selected_profile': choice.profile.id if choice.profile else None,
+                            'app': choice.app_id or None,
+                            'rule': rule, 'rule_source': source,
                             'profiles': [{'id': item.id, 'name': item.name} for item in profiles]}
-                if action not in {'select', 'set_default'}:
-                    raise ValueError('Choose list, select or set_default.')
-                if not args.get('profile'):
-                    raise ValueError('Choose a profile directory ID from chrome_profiles.')
-                profile = get_profile(args['profile'], self.data)
+                if action in {'set_rule', 'clear_rule'}:
+                    scope = args.get('scope', 'session')
+                    if not isinstance(scope, str):
+                        raise ValueError('Choose a profile rule scope.')
+                    parent = self.parents.get(session_id)
+                    targets = {'session': session_id, 'agent': task_id, 'platform': choice.platform,
+                               'subagent': parent['role'] if parent else '*', 'default': '*'}
+                    target = args.get('target') or targets.get(scope)
+                    rule = None
+                    if action == 'set_rule':
+                        rule = {'mode': args.get('mode', 'fixed')}
+                        if rule['mode'] == 'fixed':
+                            if not args.get('profile'):
+                                raise ValueError('A fixed profile rule needs a Chrome directory ID.')
+                            rule['profile'] = get_profile(args.get('profile'), self.data).id
+                    saved = self.rules.change(choice.app_id, scope, target,
+                                              choice.alias if scope == 'session' else '', rule)
+                    if scope == 'default' or target != targets.get(scope):
+                        return {'success': True, 'rule': saved, 'applied_to_current_session': False}
+                    profile = self.choose_profile(choice)
+                    if choice.pending:
+                        return {'success': True, 'rule': saved, 'applied_to_current_session': False,
+                                'pending_source_profile': choice.profile.id}
+                elif action in {'select', 'set_default'}:
+                    if not args.get('profile'):
+                        raise ValueError('Choose a profile directory ID from chrome_profiles.')
+                    profile = get_profile(args['profile'], self.data)
+                else:
+                    raise ValueError('Choose list, select, set_default, set_rule or clear_rule.')
                 if action == 'set_default':
+                    if choice.app_id:
+                        self.rules.change(choice.app_id, 'default', '*', '',
+                                          {'mode': 'fixed', 'profile': profile.id})
+                        return {'success': True, 'app': choice.app_id, 'default_profile': profile.id}
                     if self.set_setting is None:
                         raise RuntimeError('The plugin configuration writer is unavailable.')
                     self.set_setting('profile_directory', profile.id)
+                    if self.rules.read('', 'default', '*') is not None:
+                        self.rules.change('', 'default', '*', '', None)
                     return {'success': True, 'default_profile': profile.id}
                 if choice.profile and choice.profile.id == profile.id and choice.profile.identity == profile.identity:
                     choice.profile = profile
                     return {'success': True, 'session': base, 'selected_profile': profile.id}
+                if choice.pending:
+                    raise RuntimeError('This app is still observing a result in its source profile. '
+                                       'Finish that result or stop its session before switching this alias.')
                 choice.switching = True
                 previous = choice.browser_name
             try:
@@ -303,6 +395,18 @@ class ChromeProvider(BrowserProvider):
     def finalize(self, session_id=None, **kwargs):
         if session_id:
             self.finish(session_id=session_id, completed=True, interrupted=True)
+            with self.lock:
+                self.parents.pop(session_id, None)
+
+    def ended(self, session_id=None, task_id=None, interrupted=False, **kwargs):
+        if not session_id:
+            return
+        with self.lock:
+            names = [base for base, choice in self.profile_choices.items()
+                     if choice.owner[1] == session_id and (task_id is None or choice.owner[0] == task_id)
+                     and (interrupted or not choice.pending)]
+        for name in names:
+            self.finish(session_name=name, completed=True, interrupted=interrupted)
 
     def stopped(self, session_key='', **kwargs):
         """Match Hermes's Stop route to the browser names admitted in that context."""
@@ -385,15 +489,27 @@ def register(ctx):
                        'windows. select stores a choice for your session. Switching to a different profile closes '
                        'that session\'s current windows and tabs. The next browser_exec using the same session alias '
                        'opens the chosen profile directly. A session uses the saved default on its first '
-                       'browser_exec, with explicit selections taking precedence.',
+                       'browser_exec, with explicit selections taking precedence. '
+                       'Pass app to manage a website extension independently of ordinary browsing. '
+                       'set_rule persists fixed/default/random policy for a session, agent, subagent '
+                       'role, platform or default. Rules resolve in that order, followed by parent '
+                       'inheritance and the service default. Random is chosen once for an active session. '
+                       'clear_rule restores inherited policy. Defaults affect new sessions. '
+                       'A pending app result keeps its source profile until observed or stopped.',
         'parameters': {'type': 'object', 'properties': {
-            'action': {'type': 'string', 'enum': ['list', 'select', 'set_default'], 'default': 'list',
+            'action': {'type': 'string', 'enum': ['list', 'select', 'set_default', 'set_rule', 'clear_rule'], 'default': 'list',
                        'description': 'list returns current profiles. select chooses or switches your named '
                                       'session. set_default persists the default for new, unselected sessions. '
                                       'Use select to switch an existing session.'},
             'profile': {'type': 'string',
                         'description': 'For select and set_default, pass a profile\'s id field from list, '
                                        'such as Default or Profile 2.'},
+            'app': {'type': 'string', 'description': 'Website package ID. Omit for ordinary browser sessions.'},
+            'mode': {'type': 'string', 'enum': ['fixed', 'default', 'random'],
+                     'description': 'For set_rule. fixed needs profile. default uses profile_directory. random chooses from fresh inventory.'},
+            'scope': {'type': 'string', 'enum': ['session', 'agent', 'subagent', 'platform', 'default'],
+                      'default': 'session', 'description': 'Policy scope. session persists for this conversation and alias. agent targets the current task. subagent targets a role or *. platform targets a channel. default is specific to app or ordinary browsing.'},
+            'target': {'type': 'string', 'description': 'Optional scope target. Defaults to the caller conversation/task/platform, current child role or *, or * for default.'},
             'session': {'type': 'string',
                         'description': 'Your session alias, defaulting to default. Use the same alias in '
                                        'chrome_profiles and browser_exec. Each agent selects its own session '
@@ -403,7 +519,8 @@ def register(ctx):
     ctx.register_hook('pre_tool_call', provider.prepare_call)
     ctx.register_hook('agent_loop_stopped', provider.stopped)
     ctx.register_hook('on_session_finalize', provider.finalize)
-    ctx.register_hook('on_session_end', provider.finalize)
+    ctx.register_hook('on_session_end', provider.ended)
+    ctx.register_hook('subagent_start', provider.child_started)
     ctx.register_hook('on_human_input_request', provider.human_wait)
     ctx.register_hook('on_human_input_resolved', provider.human_resume)
     ctx.on_unload(provider.unload)

@@ -44,9 +44,10 @@ def run(context, operation, params):
         code += f"js({expression!r})\n"
     code += 'print(js("JSON.stringify({marker:window.fixtureMarker,origin:performance.timeOrigin})"))'
     native = context.browser_exec(code)
-    return {'status': 'ok' if native['success'] else 'failed', 'data': {
+    context.checkpoint({'marker': params.get('marker'), 'phase': params.get('status', 'ok')})
+    return {'status': params.get('status', 'ok') if native['success'] else 'failed', 'data': {
         'task': context.task_id, 'chat': context.session_id, 'turn': context.turn_id,
-        'revision': 1, 'native': native}}
+        'revision': 1, 'directory': str(context.directory), 'native': native}}
 '''
 
 
@@ -106,8 +107,10 @@ plugins:
                     finally:
                         clear_session_vars(tokens)
 
-            def run(task, app='fixture', initialize=False, **extra):
+            def run(task, app='fixture', initialize=False, status=None, **extra):
                 params = {'url': url, 'marker': task + '-' + app} if initialize else {}
+                if status:
+                    params['status'] = status
                 result = call(task, action='run', app=app, operation='inspect',
                               session='same', params=params, **extra)
                 data = result['data']
@@ -158,7 +161,8 @@ plugins:
                 report['source_updates_in_both_agents_without_reload'] = True
 
                 sessions = list(provider.sessions.values())
-                observer = sessions[0].wire
+                observer = next(item.wire for item in sessions if item.cache_key.split('@', 1)[0]
+                                == 'bu-named-' + repeat['session'])
                 owned = set().union(*(item.owned for item in sessions))
                 manual_before = {row['targetId'] for row in observer.call('Target.getTargets')['targetInfos']
                                  if row.get('type') == 'page'} - owned
@@ -170,6 +174,30 @@ plugins:
                 assert len({item.profile for item in sessions}) == 1
                 report['six_distinct_windows_on_shared_profile'] = True
 
+                inventory = call('parent', tool='chrome_profiles', action='list', session='same')['profiles']
+                assert len(inventory) >= 2, 'This native test needs two existing Chrome profiles.'
+                destination = inventory[1]['id']
+                call('parent', tool='chrome_profiles', action='set_rule', scope='subagent',
+                     target='fixture-writer', app='new-site', mode='fixed', profile=destination,
+                     session='same')
+                invoke_hook('subagent_start', parent_session_id='parent-chat', child_session_id='child-chat',
+                            child_role='fixture-writer', parent_turn_id=turns['parent'])
+                call('child', tool='chrome_profiles', action='clear_rule', scope='session',
+                     app='new-site', session='same')
+                child_site = run('child', app='new-site', initialize=True, status='running')
+                assert child_site['profile'] == destination
+                assert run('parent', app='new-site')['profile'] == new_site['profile']
+                assert run('parent')['document'] == first[0]['document']
+                report['child_role_profile_switch_is_scoped_to_its_app'] = True
+                invoke_hook('on_session_end', session_id='child-chat', task_id='child',
+                            completed=True, failed=False, interrupted=False)
+                turns['child'] = uuid.uuid4().hex
+                resumed = run('child', app='new-site', status='running')
+                assert resumed['document'] == child_site['document']
+                assert resumed['session'] == child_site['session']
+                assert resumed['data']['directory'] == child_site['data']['directory']
+                report['pending_app_retains_document_profile_and_artifacts_across_turns'] = True
+
                 invoke_hook('agent_loop_stopped', session_key='apps-fixture-child', platform='cli',
                             reason='user_stop', invalidation_reason='session_interrupt')
                 assert run('parent')['document'] == first[0]['document']
@@ -180,9 +208,30 @@ plugins:
                 remaining = {row['targetId'] for row in observer.call('Target.getTargets')['targetInfos']}
                 assert manual_before <= remaining
                 report['child_stop_preserves_peers_sites_and_manual_targets'] = True
+                artifact_directory = Path(new_site['data']['directory'])
+                assert (artifact_directory / 'checkpoint.json').is_file()
+                disabled = call('parent', action='disable', app='new-site')
+                assert not disabled['enabled'] and not disabled['cleanup_pending']
+                assert run('parent')['document'] == first[0]['document']
+                assert run('channel', platform='telegram')['document'] == first[2]['document']
+                report['disable_releases_only_the_package_and_retains_checkpoints'] = True
+                call('parent', action='enable', app='new-site')
+                reopened = run('parent', app='new-site', initialize=True)
+                assert reopened['session'] != new_site['session']
+                assert call('parent', action='remove', app='new-site')['removed']
+                assert not added.exists()
+                assert (artifact_directory / 'checkpoint.json').is_file()
+                assert (artifact_directory / 'result.json').is_file()
+                call('parent', tool='browser_exec', session=ordinary['session'],
+                     code='assert js("window.ordinaryMarker")==42')
+                remaining = {row['targetId'] for row in observer.call('Target.getTargets')['targetInfos']}
+                assert manual_before <= remaining
+                report['reenable_uses_fresh_session_and_remove_preserves_artifacts_and_peers'] = True
+                pending = run('parent', status='running')
                 assert provider.unload()
                 assert not provider.sessions and not provider.owners
                 assert not provider.profile_choices and not provider.profile_routes
+                assert Path(pending['data']['directory'], 'result.json').is_file()
                 report['provider_resources_released'] = True
             finally:
                 cleanup_profile_browsers(str(home))

@@ -1,5 +1,5 @@
 name: original-chrome-default
-version: 0.6.0
+version: 0.7.0
 manifest_version: 2
 api_version: 1
 homepage: https://github.com/dhansxd/hermes-original-chrome-cdp
@@ -18,9 +18,18 @@ provides_hooks:
   - agent_loop_stopped
   - on_session_finalize
   - on_session_end
+  - subagent_start
   - on_human_input_request
   - on_human_input_resolved
 config_schema:
+  apps_disabled:
+    type: dict
+    default: {}
+    description: Persistent disabled or removed website package IDs.
+  profile_rules:
+    type: dict
+    default: {}
+    description: Profile policies managed with chrome_profiles set_rule and clear_rule.
   apps_directory:
     type: str
     default: ''

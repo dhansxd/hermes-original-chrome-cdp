@@ -4,9 +4,12 @@ import importlib.abc
 import importlib.machinery
 import importlib.util
 import json
+import os
 import re
+import shutil
 import sys
 import types
+import tempfile
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -105,10 +108,12 @@ class AppContext:
             base = provider.profile_routes.get(self.session, self.session)
             choice = provider.profile_choices.get(base)
             if (not self.active or provider.unloading or self.session in provider.finishing
+                    or self.host.get_setting('apps_disabled.' + self.app)
                     or choice is None or choice.finished or choice.switching
                     or choice.app_id != self.app
                     or choice.owner[:2] != (self.task_id, self.session_id)
                     or choice.browser_name != self.session
+                    or (hasattr(self, 'turn_id') and choice.turn_id != self.turn_id)
                     or self.session not in provider.owners):
                 raise RuntimeError('This extension requires its active calling browser session.')
             return choice
@@ -119,12 +124,18 @@ class AppContext:
 
     @property
     def directory(self):
-        self._choice()
-        owner = hashlib.sha256(
-            f'{self.task_id}\0{self.session_id}\0{self.session}'.encode()).hexdigest()
+        choice = self._choice()
+        if not choice.directory_key:
+            choice.directory_key = hashlib.sha256(
+                f'{self.task_id}\0{self.session_id}\0{self.session}'.encode()).hexdigest()
+        owner = choice.directory_key
         path = self.host.data_dir() / 'browser-apps' / self.app / owner
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
         return path
+
+    def checkpoint(self, value):
+        """Save the package's last known work position outside its source directory."""
+        return write_json(self.directory / 'checkpoint.json', value)
 
     def browser_exec(self, code, *, timeout_s=120):
         self._choice()
@@ -139,6 +150,59 @@ class AppHost:
     def __init__(self, provider, get_setting, dispatch, prepare_code, data_dir):
         self.provider, self.get_setting, self.dispatch = provider, get_setting, dispatch
         self.prepare_code, self.data_dir = prepare_code, data_dir
+        self.active = set()
+        self.changing = set()
+
+    def manage(self, action, identifier):
+        directory = self.root / identifier
+        with self.provider.lock:
+            if self.provider.unloading:
+                raise RuntimeError('Original Chrome provider is unloading.')
+            if identifier in self.changing:
+                return {'status': 'running', 'success': True, 'app': identifier,
+                        'cleanup_pending': True}
+            if action == 'enable':
+                read_package(self.root, identifier)
+                if not self.get_setting('apps_disabled.' + identifier):
+                    return {'status': 'ok', 'success': True, 'app': identifier, 'enabled': True}
+            elif not directory.is_dir() and not self.get_setting('apps_disabled.' + identifier):
+                raise ValueError('Choose a package from browser_app list.')
+            if self.provider.set_setting is None:
+                raise RuntimeError('The plugin configuration writer is unavailable.')
+            self.changing.add(identifier)
+            if action != 'enable':
+                try:
+                    self.provider.set_setting('apps_disabled.' + identifier, True)
+                except Exception:
+                    self.changing.discard(identifier)
+                    raise
+            names = [base for base, choice in self.provider.profile_choices.items()
+                     if choice.app_id == identifier]
+        try:
+            for name in names:
+                self.provider.finish(session_name=name, interrupted=True)
+            with self.provider.lock:
+                pending = any(context.app == identifier for context in self.active)
+                pending |= any(choice.app_id == identifier for choice in self.provider.profile_choices.values())
+                result = {'status': 'running' if pending else 'ok', 'success': True,
+                          'app': identifier, 'enabled': False, 'cleanup_pending': pending,
+                          'data_directory': str(self.data_dir() / 'browser-apps' / identifier)}
+                if pending:
+                    return result
+                if action == 'enable':
+                    self.provider.app_instances[identifier] = uuid.uuid4().hex
+                    self.provider.set_setting('apps_disabled.' + identifier, False)
+                    result['enabled'] = True
+            if action == 'remove':
+                if directory.is_symlink():
+                    directory.unlink()
+                elif directory.exists():
+                    shutil.rmtree(directory)
+                result['removed'] = True
+            return result
+        finally:
+            with self.provider.lock:
+                self.changing.discard(identifier)
 
     @property
     def root(self):
@@ -162,18 +226,23 @@ class AppHost:
                     try:
                         _, metadata, _ = read_package(self.root, directory.name)
                         entries.append({'id': directory.name, 'available': True,
+                                        'enabled': not bool(self.get_setting('apps_disabled.' + directory.name)),
                                         'name': metadata.get('name', directory.name),
                                         'operations': list(metadata['operations'])})
                     except (OSError, ValueError, RuntimeError) as error:
                         entries.append({'id': directory.name, 'available': False,
                                         'error': str(error)})
                 result = {'success': True, 'status': 'ok', 'directory': str(self.root), 'apps': entries}
+            elif action in {'enable', 'disable', 'remove'}:
+                result = self.manage(action, app_identifier(args.get('app')))
             elif action in {'describe', 'run'}:
                 identifier = app_identifier(args.get('app'))
                 directory, metadata, source = read_package(self.root, identifier)
                 if action == 'describe':
                     guide = directory / 'SKILL.md'
                     result = {'success': True, 'status': 'ok', 'app': metadata,
+                              'enabled': not bool(self.get_setting('apps_disabled.' + identifier)),
+                              'data_directory': str(self.data_dir() / 'browser-apps' / identifier),
                               'guide': guide.read_text() if guide.exists() else ''}
                 else:
                     operation = args.get('operation')
@@ -182,7 +251,12 @@ class AppHost:
                     params = args.get('params', {})
                     if not isinstance(params, dict):
                         raise ValueError('Extension params must be an object.')
-                    context = AppContext(self, identifier, args.get('session', ''), task_id, session_id)
+                    with self.provider.lock:
+                        if identifier in self.changing:
+                            raise RuntimeError('This extension is changing lifecycle state.')
+                        context = AppContext(self, identifier, args.get('session', ''), task_id, session_id)
+                        context._choice().active += 1
+                        self.active.add(context)
                     with loaded_package(directory, source) as module:
                         value = module.run(context, operation, params)
                     if not isinstance(value, dict) or 'status' not in value:
@@ -192,8 +266,11 @@ class AppHost:
                     result = {**value, 'success': value['status'] in {'ok', 'running'},
                               'app': identifier, 'operation': operation,
                               'session': context.session, 'profile': context.profile}
+                    with self.provider.lock:
+                        context._choice().pending = value['status'] in {'running', 'needs_inspection'}
+                        write_json(context.directory / 'result.json', result)
             else:
-                raise ValueError('Choose list, describe, or run.')
+                raise ValueError('Choose list, describe, run, enable, disable, or remove.')
             return json.dumps(result, ensure_ascii=False)
         except Exception as error:
             return json.dumps({'success': False, 'status': 'failed',
@@ -202,7 +279,27 @@ class AppHost:
                               ensure_ascii=False)
         finally:
             if context is not None:
-                context.active = False
+                with self.provider.lock:
+                    if context in self.active:
+                        self.active.remove(context)
+                        choice = self.provider.profile_choices.get(
+                            self.provider.profile_routes.get(context.session, context.session))
+                        if choice is not None:
+                            choice.active -= 1
+                    context.active = False
+
+
+def write_json(path, value):
+    encoded = json.dumps(value, ensure_ascii=False)
+    descriptor, temporary = tempfile.mkstemp(prefix='.' + path.name, dir=path.parent)
+    try:
+        with os.fdopen(descriptor, 'w') as stream:
+            stream.write(encoded)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return str(path)
 
 
 SCHEMA = {
@@ -212,9 +309,13 @@ SCHEMA = {
                    'one package\'s operations, parameter schemas and guide. run executes that '
                    'package with its own agent/session namespace. Reuse the same session alias '
                    'for related calls. Packages are read from the configured apps_directory and '
-                   'can be edited or added independently of this plugin.',
+                   'can be edited or added independently of this plugin. enable and disable persist '
+                   'package availability. disable closes only this package\'s owned browser sessions. '
+                   'remove disables and deletes its source after cleanup finishes. Artifacts and '
+                   'checkpoints remain under plugin data. Retry a management action when cleanup_pending '
+                   'is true. chrome_profiles accepts app to configure this app\'s profile independently.',
     'parameters': {'type': 'object', 'properties': {
-        'action': {'type': 'string', 'enum': ['list', 'describe', 'run'], 'default': 'list'},
+        'action': {'type': 'string', 'enum': ['list', 'describe', 'run', 'enable', 'disable', 'remove'], 'default': 'list'},
         'app': {'type': 'string', 'description': 'Directory ID returned by list.'},
         'operation': {'type': 'string', 'description': 'Operation declared by the selected package.'},
         'params': {'type': 'object', 'description': 'Operation arguments, following describe.'},

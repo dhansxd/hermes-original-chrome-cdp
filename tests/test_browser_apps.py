@@ -19,7 +19,7 @@ class BrowserAppTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.settings = {'apps_directory': str(self.root / 'packages'), 'profile_directory': 'Default'}
-        self.provider = plugin.ChromeProvider(self.settings.get)
+        self.provider = plugin.ChromeProvider(self.settings.get, set_setting=self.settings.__setitem__)
         self.addCleanup(self.provider.unload)
         profile = plugin.ChromeProfile('Default', 'Fixture', (1, 2, 3))
         reader = patch('plugin.get_profile', return_value=profile)
@@ -250,6 +250,158 @@ class BrowserAppTests(unittest.TestCase):
         result = json.loads(self.host.handle({'action': 'run', 'app': 'fixture',
             'operation': 'inspect', 'session': 'same'}, task_id='A', session_id='chat-A'))
         self.assertFalse(result['success'])
+        self.dispatch.assert_not_called()
+
+    def manage(self, action, identifier='fixture'):
+        return json.loads(self.host.handle({'action': action, 'app': identifier}))
+
+    def test_disable_is_persistent_and_preserves_another_package(self):
+        self.package()
+        self.package('peer')
+        first, peer = self.invoke(), self.invoke('peer', task='B', chat='chat-B')
+        result = self.manage('disable')
+        self.assertFalse(result['enabled'])
+        self.assertFalse(result['cleanup_pending'])
+        self.assertNotIn(first['session'], self.provider.owners)
+        self.assertIn(peer['session'], self.provider.owners)
+        self.assertTrue(self.settings['apps_disabled.fixture'])
+        catalog = json.loads(self.host.handle({'action': 'list'}))
+        self.assertFalse(next(row for row in catalog['apps'] if row['id'] == 'fixture')['enabled'])
+        blocked = self.provider.prepare_call('browser_app', {'action': 'run', 'app': 'fixture'}, 'A')
+        self.assertEqual(blocked['action'], 'block')
+
+    def test_enable_is_idempotent_and_reenable_gets_a_fresh_native_name(self):
+        self.package()
+        first = self.invoke()
+        self.assertTrue(self.manage('enable')['enabled'])
+        self.assertEqual(self.invoke()['session'], first['session'])
+        self.assertTrue(self.manage('disable')['success'])
+        self.assertTrue(self.manage('enable')['enabled'])
+        self.assertNotEqual(self.invoke()['session'], first['session'])
+
+    def test_remove_retains_artifacts_checkpoints_and_receipts(self):
+        self.package(source='''def run(context, operation, params):
+    context.checkpoint({'job': 'fixture-job', 'phase': 'downloaded'})
+    (context.directory / 'artifact.txt').write_text('fixture output')
+    return str(context.directory)
+''')
+        result = self.invoke()
+        artifacts = Path(result['data'])
+        removed = self.manage('remove')
+        self.assertTrue(removed['removed'])
+        self.assertFalse((self.host.root / 'fixture').exists())
+        self.assertEqual((artifacts / 'artifact.txt').read_text(), 'fixture output')
+        self.assertEqual(json.loads((artifacts / 'checkpoint.json').read_text())['job'], 'fixture-job')
+        self.assertEqual(json.loads((artifacts / 'result.json').read_text())['profile'], 'Default')
+        self.assertTrue(self.settings['apps_disabled.fixture'])
+
+    def test_broken_package_can_be_removed_without_executing_it(self):
+        directory = self.package(source='raise AssertionError("must not run")')
+        (directory / 'app.json').write_text('broken metadata')
+        self.assertTrue(self.manage('remove')['removed'])
+        self.assertFalse(directory.exists())
+
+    def test_remove_a_linked_package_removes_its_entry_only(self):
+        directory = self.package('source')
+        (self.host.root / 'fixture').symlink_to(directory, target_is_directory=True)
+        self.assertTrue(self.manage('remove')['removed'])
+        self.assertFalse((self.host.root / 'fixture').is_symlink())
+        self.assertTrue((directory / 'app.py').is_file())
+
+    def test_remove_during_active_code_waits_and_rejects_late_browser_access(self):
+        self.package(source='''def run(context, operation, params):
+    context.checkpoint({'phase': 'waiting'})
+    params['entered'].set()
+    params['release'].wait(3)
+    return context.browser_exec('print("late")')
+''')
+        entered, release = threading.Event(), threading.Event()
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            future = pool.submit(self.invoke, params={'entered': entered, 'release': release})
+            try:
+                self.assertTrue(entered.wait(3))
+                result = self.manage('remove')
+                self.assertTrue(result['cleanup_pending'])
+                self.assertTrue((self.host.root / 'fixture').is_dir())
+                self.assertFalse(self.manage('enable')['enabled'])
+            finally:
+                release.set()
+            self.assertFalse(future.result(timeout=3)['success'])
+        self.dispatch.assert_not_called()
+        self.assertTrue(self.manage('remove')['removed'])
+        checkpoints = list((self.root / 'data/browser-apps/fixture').glob('*/checkpoint.json'))
+        self.assertEqual(len(checkpoints), 1)
+        self.assertEqual(json.loads(checkpoints[0].read_text()), {'phase': 'waiting'})
+
+    def test_failed_native_cleanup_retains_source_until_retry(self):
+        self.package()
+        result = self.invoke()
+        native = self.provider.create_session('bu-named-' + result['session'] + '@fixture')
+        session = self.provider.sessions[native['bb_session_id']]
+        with patch.object(session, 'close', return_value=False):
+            pending = self.manage('remove')
+        self.assertTrue(pending['cleanup_pending'])
+        self.assertTrue((self.host.root / 'fixture/app.py').is_file())
+        self.assertTrue(self.manage('remove')['removed'])
+
+    def test_pending_operation_keeps_its_session_and_directory_across_turns(self):
+        self.package(source='''def run(context, operation, params):
+    context.checkpoint({'job': 'fixture', 'status': params.get('status', 'running')})
+    return {'status': params.get('status', 'running'), 'data': str(context.directory)}
+''')
+        first = self.invoke()
+        self.provider.ended(session_id='chat-A', task_id='A')
+        self.assertIn(first['session'], self.provider.owners)
+        second = self.invoke(task='next-task', chat='chat-A', turn='next-turn', alias=first['session'])
+        self.assertEqual(second['session'], first['session'])
+        self.assertEqual(second['data'], first['data'])
+        done = self.invoke(task='next-task', chat='chat-A', turn='next-turn', params={'status': 'ok'})
+        self.provider.ended(session_id='chat-A', task_id='next-task')
+        self.assertNotIn(done['session'], self.provider.owners)
+        self.assertTrue(Path(done['data']).is_dir())
+
+    def test_removing_a_large_package_does_not_lock_other_agents(self):
+        self.package()
+        self.package('peer')
+        entered, release = threading.Event(), threading.Event()
+        remove = browser_apps.shutil.rmtree
+        def slow_remove(path):
+            entered.set()
+            self.assertTrue(release.wait(3))
+            remove(path)
+        with patch('browser_apps.shutil.rmtree', side_effect=slow_remove), \
+                concurrent.futures.ThreadPoolExecutor() as pool:
+            removal = pool.submit(self.manage, 'remove')
+            try:
+                self.assertTrue(entered.wait(3))
+                peer = pool.submit(self.invoke, identifier='peer', task='B', chat='chat-B')
+                self.assertTrue(peer.result(timeout=1)['success'])
+            finally:
+                release.set()
+            self.assertTrue(removal.result(timeout=3)['removed'])
+
+    def test_stop_and_finalize_release_pending_sessions(self):
+        self.package(source='def run(context, operation, params):\n    return {"status": "running"}\n')
+        self.package('peer')
+        first = self.invoke()
+        peer = self.invoke('peer', task='B', chat='chat-B')
+        self.provider.stopped(session_key='route-A')
+        self.assertNotIn(first['session'], self.provider.owners)
+        self.assertIn(peer['session'], self.provider.owners)
+        next_run = self.invoke(turn='next-turn')
+        self.provider.finalize(session_id='chat-A')
+        self.assertNotIn(next_run['session'], self.provider.owners)
+        self.assertIn(peer['session'], self.provider.owners)
+
+    def test_guide_edits_and_optional_guide_are_read_fresh(self):
+        directory = self.package()
+        def guide():
+            return json.loads(self.host.handle({'action': 'describe', 'app': 'fixture'}))['guide']
+        self.assertEqual(guide(), '')
+        (directory / 'SKILL.md').write_text('first')
+        self.assertEqual(guide(), 'first')
+        (directory / 'SKILL.md').write_text('newer')
+        self.assertEqual(guide(), 'newer')
         self.dispatch.assert_not_called()
 
 
