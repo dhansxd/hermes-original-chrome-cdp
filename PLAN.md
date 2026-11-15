@@ -124,6 +124,24 @@ remain absent from those observations. All 14 native Browser Harness Python file
 retain their distribution RECORD hashes. Clean indexed-package validation and
 secret scans pass.
 
+The installed Hermes gateway reload succeeds. A fresh CLI task loads version 0.5.1
+and uses its native chrome_profiles and browser_exec tools to read back the first
+profile, a second profile, a switch back, and the preserved peer session. All four
+browser calls succeed. External checks after task finalization confirm zero Chrome
+windows and CDP clients before the final cold-start test.
+
+The final native four-agent run starts after a normal quit of windowless Chrome.
+It passes the same ownership, input, Stop, reload and cleanup checks in a new
+original Chrome process. The final Chrome window count is zero. The separate
+native package check verifies all 14 Browser Harness Python files again, and the
+Hermes core checkout is clean at its original revision.
+
+The complete observer log contains 16,939 valid Dock readings, each with one
+Chrome application item, and zero observed profile-picker windows. The external
+AX observer also records 84 Chrome-surface read errors and two incomplete Dock
+readings. Successful native tool results and valid Dock readings establish the
+reported acceptance results. Detailed logs remain in ignored local evidence.
+
 ## Verification baseline
 
 The 0.4.4 baseline passes 114 unit tests and native four-agent Chrome acceptance.
