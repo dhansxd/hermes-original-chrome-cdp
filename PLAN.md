@@ -281,6 +281,42 @@ Sesi bernama tambahan dapat memakai profil berikutnya sementara hasil asal ditun
 
 ### Bentuk implementasi fitur situs
 
+#### Paket situs yang dapat ditambah pengguna
+
+Kebutuhan terbaru menempatkan implementasi situs pada direktori ekstensi milik
+pengguna di luar checkout/instalasi plugin. Plugin menyediakan pemuat, konteks
+browser/profil, dan pintu pemanggilan umum. Flow dan Gemini menjadi dua paket
+awal. Penambahan Instagram, Facebook/Messenger, YouTube, TikTok, atau situs lain
+dilakukan dengan menambahkan paket pada direktori tersebut.
+
+Contoh isi paket adalah `app.json` untuk metadata/daftar operasi, `app.py` untuk
+fungsi situs, dan `SKILL.md` untuk panduan yang dapat diperbarui pengguna bersama
+agennya. Lokasi direktori paket menjadi pengaturan pengguna. Panggilan umum yang
+diusulkan adalah `browser_app` dengan nama paket, operasi, parameter, dan sesi.
+Katalog serta bantuan operasi dibaca dari paket yang tersedia saat dipanggil.
+Panduan paket dibaca sesuai kebutuhan melalui bantuan tersebut. Schema pintu
+pemanggilan umum berlaku untuk paket yang ditambahkan kemudian.
+
+Implementasi awal menambahkan kontrak ekstensi umum tersebut pada plugin.
+Selanjutnya kode, metadata, dan panduan situs diperbarui pada paket masing-masing.
+Versi modul yang sedang menjalankan operasi tetap menjadi milik panggilan aktif.
+Panggilan berikutnya membaca pembaruan source dan metadata yang sesuai. Uji juga
+pembaruan dengan ukuran file sama dan pergantian file cepat untuk memeriksa
+kesegaran pemuatan. Perkembangan kemampuan dasar CDP/profil mengikuti versi API
+ekstensi yang disediakan plugin.
+
+Konteks dan keadaan eksekusi mengikuti agen/sesi serta paket yang dipanggil.
+Pemakaian source paket yang sama oleh beberapa agen tetap menghasilkan jendela,
+pilihan profil, dan keadaan pekerjaan yang terpisah. Pengendali profil membaca
+kebijakan paket melalui kontrak umum. Flow/Gemini menggunakan rolling setelah
+kuota habis, sedangkan paket lain mengikuti pilihan profil yang dikonfigurasi.
+
+Prototipe offline melalui pemuat `agent_helpers.py` yang terpasang berhasil
+menambahkan paket baru dan memperbarui fungsinya pada dua workspace agen terpisah.
+Prototipe memakai direktori temporer serta fungsi penanda. Pengujian ini membuktikan
+mekanisme pemuatan helper. Pintu `browser_app`, katalog paket persisten, kontrak
+profil, dan integrasi operasi situs masih merupakan pekerjaan implementasi.
+
 Fondasinya adalah provider Chrome plugin yang sekarang. Helper situs menerima
 tab/koneksi milik sesi tersebut. Browser Harness menyediakan ekstensi
 `agent_helpers.py`, dan Hermes menyediakan panduan terbundel melalui
@@ -288,8 +324,8 @@ tab/koneksi milik sesi tersebut. Browser Harness menyediakan ekstensi
 pengaturan, status, atau hasil yang relevan. Pembacaan lebih luas membantu diagnosis
 saat kontrol yang diharapkan berubah.
 
-Rolling otomatis membutuhkan pengendali layanan tipis di dalam plugin. Pengendali
-tersebut menghubungkan hasil helper, pemilihan profil, dan handoff pekerjaan.
+Rolling otomatis membutuhkan pengendali layanan umum yang tipis di dalam plugin.
+Pengendali menghubungkan hasil helper paket, pemilihan profil, dan handoff pekerjaan.
 Entry point layanan yang ringkas dapat didaftarkan melalui `ctx.register_tool()`
 dan memanggil `browser_exec` lewat `ctx.dispatch_tool()` dengan identitas pemilik
 yang sama. Penerusan task/session/turn, persiapan sesi privat plugin, dan pelaksanaan
@@ -321,8 +357,9 @@ untuk plugin. Pilih komponen interaksi situs secara terarah dari repo yang ada.
 2. Buktikan pengendali layanan melalui kontrak publik, termasuk identitas pada CLI,
    WhatsApp/Telegram, child, dan named session. Pertahankan penerusan konteks routed
    Hermes profile dan jalur konfigurasi publik plugin.
-3. Tambahkan helper Flow dan Gemini serta panduan pemakaian yang terbundel. Uji
-   pengaturan, unggahan, submit, hasil, dan unduhan melalui jendela milik sesi.
+3. Buktikan pemuatan paket eksternal, katalog/bantuan, pembaruan antar pemanggilan,
+   dan pemisahan keadaan agen. Tambahkan paket Flow dan Gemini beserta panduannya,
+   lalu uji pengaturan, unggahan, submit, hasil, dan unduhan pada jendela milik sesi.
 4. Hubungkan rolling otomatis. Fixture mencakup A -> B -> C, semua kuota habis,
    reset -> A, profil baru/dihapus, akun sama dalam beberapa profil, kuota berbeda
    antaroperasi, hasil parsial, dan permintaan yang masih belum pasti.
