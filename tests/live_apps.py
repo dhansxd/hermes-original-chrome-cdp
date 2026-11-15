@@ -120,7 +120,7 @@ plugins:
                 return result
 
             try:
-                assert len(call('parent', action='list')['apps']) == 1
+                assert {entry['id'] for entry in call('parent', action='list')['apps']} == {'fixture', 'flow'}
                 assert call('parent', action='describe', app='fixture')['guide'] == 'Local fixture guide'
                 assert not provider.sessions and not provider.owners
                 report['discovery_and_guide_without_browser'] = True
@@ -148,7 +148,7 @@ plugins:
                 metadata = json.loads((added / 'app.json').read_text())
                 metadata['operations']['new-operation'] = {'parameters': {'type': 'object'}}
                 (added / 'app.json').write_text(json.dumps(metadata))
-                assert len(call('parent', action='list')['apps']) == 2
+                assert {entry['id'] for entry in call('parent', action='list')['apps']} == {'fixture', 'flow', 'new-site'}
                 assert 'new-operation' in call('child', action='describe', app='new-site')['app']['operations']
                 new_site = run('parent', app='new-site', initialize=True)
                 operation = call('child', action='run', app='new-site', operation='new-operation',

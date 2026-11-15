@@ -15,9 +15,29 @@ choose the same profile or different profiles, each with their own windows.
 
 Use `browser_app` to discover and run user-owned website extension packages.
 Their Python code and guides live outside the plugin installation and can be
-updated independently. Version 0.8.0 provides package lifecycle controls,
-independent profile policies, quota-driven rolling and durable job recovery.
-Gemini and Google Flow packages are tracked in [PLAN.md](PLAN.md).
+updated independently. Version 0.9.0 adds the initial Google Flow package to the
+package lifecycle, independent profile policies and durable job recovery.
+Classic and Agent image/video generation have original-file acceptance evidence.
+Reference coverage, real-account rolling and the Gemini package follow the open
+checklist in [PLAN.md](PLAN.md).
+
+On first package discovery, the bundled Flow template is copied to
+`~/.hermes/browser-apps/flow`, or the configured `apps_directory`. Existing user
+packages and persistent disable/remove choices are preserved during host updates.
+The installed copy is editable independently of this plugin. Read its current
+operations and guide with `browser_app` action `describe`, app `flow`.
+
+Flow uses native UI actions in the extension's owned Chrome window. Settings and
+progress are read through targeted DOM queries. Downloads use Chrome's original
+download action and a page-bound download GUID. Collected files include SHA-256
+and decoded metadata. Install FFmpeg and ffprobe on the Hermes process PATH for
+these media checks. Credit fields report the balance displayed in that page.
+Concurrent activity in another window can make a displayed balance stale.
+
+Agent settings expose model, aspect and output-count defaults. The package also
+includes these choices in the Agent instruction. Duration and resolution on the
+inspected Agent UI are prompt requests. Classic uses the numeric controls exposed
+by the chosen model. The package guide describes the current acceptance scope.
 
 ## Requirements
 
@@ -36,7 +56,7 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.8.0 uses documented public Hermes plugin APIs for BrowserProvider,
+Version 0.9.0 uses documented public Hermes plugin APIs for BrowserProvider,
 configuration, session-route context, and CDP supervisor teardown. A regression
 check rejects private Hermes runtime imports. The plugin owns its Chrome startup,
 consent, CDP relay, targets, and cleanup. Hermes manages its native browser driver

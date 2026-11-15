@@ -187,18 +187,46 @@ class AppContext:
 
 
 class AppHost:
-    def __init__(self, provider, get_setting, dispatch, prepare_code, data_dir):
+    def __init__(self, provider, get_setting, dispatch, prepare_code, data_dir, *, bundled_source=None):
         self.provider, self.get_setting, self.dispatch = provider, get_setting, dispatch
         self.prepare_code, self.data_dir = prepare_code, data_dir
         self.active = set()
         self.changing = set()
+        self.bundled_source = bundled_source
 
     def jobs(self, identifier):
         return JobStore(self.data_dir() / 'browser-apps' / identifier / 'jobs', write_json)
 
+    def seed_packages(self, source):
+        """Install missing bundled packages, preserving user source and lifecycle choices."""
+        import fcntl
+        source = Path(source)
+        if not source.is_dir() or source.resolve() == self.root.resolve():
+            return
+        self.root.mkdir(parents=True, exist_ok=True)
+        with (self.root / '.install.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            for directory in sorted(source.iterdir()):
+                if not directory.is_dir() or directory.name.startswith('.'):
+                    continue
+                identifier = app_identifier(directory.name)
+                destination = self.root / identifier
+                if os.path.lexists(destination) or self.get_setting('apps_disabled.' + identifier):
+                    continue
+                read_package(source, identifier)
+                temporary = Path(tempfile.mkdtemp(prefix='.install-', dir=self.root))
+                try:
+                    shutil.copytree(directory, temporary, dirs_exist_ok=True,
+                                    ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+                    temporary.rename(destination)
+                finally:
+                    shutil.rmtree(temporary, ignore_errors=True)
+
     def prepare_call(self, tool_name, args, task_id, **context):
         if tool_name == APP_TOOL and args.get('action', 'list') == 'run':
             try:
+                if self.bundled_source:
+                    self.seed_packages(self.bundled_source)
                 _, metadata, _ = read_package(self.root, app_identifier(args.get('app')))
                 if metadata.get('profile_policy') == 'rotate_on_limit':
                     context['defer_profile'] = True
@@ -269,12 +297,14 @@ class AppHost:
     def handle(self, args, task_id='', session_id='', **kwargs):
         context = None
         try:
+            if self.bundled_source:
+                self.seed_packages(self.bundled_source)
             action = args.get('action', 'list')
             if action == 'list':
                 entries = []
                 directories = sorted(self.root.iterdir()) if self.root.exists() else []
                 for directory in directories:
-                    if not directory.is_dir():
+                    if not directory.is_dir() or directory.name.startswith('.'):
                         continue
                     try:
                         _, metadata, _ = read_package(self.root, directory.name)

@@ -1,0 +1,291 @@
+{
+  "api_version": 1,
+  "id": "flow",
+  "name": "Google Flow",
+  "version": "0.1.0",
+  "profile_policy": "rotate_on_limit",
+  "operations": {
+    "inspect": {
+      "description": "Read Flow's current account, mode and available settings.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "classic",
+              "agent"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "image",
+              "video"
+            ]
+          }
+        }
+      }
+    },
+    "create_project": {
+      "description": "Create a new Flow project in this extension's owned Chrome window.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "configure": {
+      "description": "Select Flow settings and return native selected-control readback. Inspect exposes current model/option names.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "classic",
+              "agent"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "image",
+              "video"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "aspect": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "integer"
+          },
+          "resolution": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "input_type": {
+            "enum": [
+              "ingredients",
+              "frames"
+            ]
+          }
+        }
+      }
+    },
+    "generate_image": {
+      "description": "Submit one image request through the selected classic or Agent composer. Resume the returned job to observe the same source request.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "classic",
+              "agent"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "image",
+              "video"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "aspect": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "integer"
+          },
+          "resolution": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "input_type": {
+            "enum": [
+              "ingredients",
+              "frames"
+            ]
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "references": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "image",
+                    "video",
+                    "character",
+                    "voice"
+                  ]
+                },
+                "slot": {
+                  "enum": [
+                    "first",
+                    "last"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      }
+    },
+    "generate_video": {
+      "description": "Submit one video request through the selected classic or Agent composer. Resume the returned job to observe the same source request.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "classic",
+              "agent"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "image",
+              "video"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "aspect": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "integer"
+          },
+          "resolution": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "input_type": {
+            "enum": [
+              "ingredients",
+              "frames"
+            ]
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "references": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "image",
+                    "video",
+                    "character",
+                    "voice"
+                  ]
+                },
+                "slot": {
+                  "enum": [
+                    "first",
+                    "last"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      }
+    },
+    "upload": {
+      "description": "Upload a local image/video through the native picker and retain its portable local file and hash.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "bind_reference": {
+      "description": "Select an exact titled asset through the native picker and verify its ingredient/frame chip.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "image",
+              "video",
+              "character",
+              "voice"
+            ]
+          },
+          "slot": {
+            "enum": [
+              "first",
+              "last"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

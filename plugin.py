@@ -10,6 +10,7 @@ import sys
 import threading
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 from agent.browser_provider import BrowserProvider
 
@@ -476,7 +477,7 @@ def register(ctx):
     provider = ChromeProvider(ctx.get_config, set_setting=ctx.set_config)
     ctx.register_browser_provider(provider)
     apps = AppHost(provider, ctx.get_config, ctx.dispatch_tool, prepare_code,
-                   lambda: ctx.state.data_dir)
+                   lambda: ctx.state.data_dir, bundled_source=Path(__file__).parent / 'site_apps')
     ctx.register_tool(name=APP_TOOL, toolset='browser', handler=apps.handle,
                       check_fn=provider.is_available, schema=SCHEMA)
 

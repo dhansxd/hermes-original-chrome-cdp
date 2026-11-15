@@ -147,6 +147,38 @@ relay routes each session to its owned tabs and opener-linked popups. Within the
 same Chrome profile, cookies and website storage remain shared. Signing out of a
 site can therefore affect the other agent and manual browsing on that profile.
 
+## Use Google Flow
+
+Ask Hermes to describe the `flow` app through `browser_app`. First discovery
+installs the bundled template in the user package directory. Existing package
+source and persistent disable/remove choices are preserved. Install FFmpeg for
+the original-file decode checks, for example with `brew install ffmpeg` on macOS.
+
+Choose the Flow profile with `chrome_profiles` and `app: "flow"`. Keep a stable
+session alias for the project operations. Several agents can use the same profile
+while their windows remain independently owned.
+
+Run `create_project`, or pass a canonical Flow project ID to `inspect`. Inspection
+returns current model names and settings. Classic video accepts the actual model,
+aspect, duration, resolution, count and input type exposed by the UI. Agent uses
+its own native model/aspect/count defaults and automatic approval.
+
+Run `generate_image` or `generate_video` with the desired settings and prompt.
+Generation is submitted once. Continue a running or uncertain result by passing
+the returned `job` at the tool's top level, using the same operation and session.
+The guide returned by `describe` includes complete call arguments.
+
+`upload` accepts a local media path and returns a portable copy, content hash and
+unique asset title. `bind_reference` selects that exact title in the native picker
+and verifies the loaded ingredient or frame. Generation can also accept a
+`references` array containing local `path`, `kind`, and optional `slot` values
+`first` or `last`. The current verification coverage is recorded in PLAN.md.
+
+Completed media results include the native request identity, original local file,
+SHA-256, byte count and decoded dimensions/duration. Compare the measured result
+with the intended output, especially in Agent mode where the agent can choose
+generation parameters. Credit balances are observations from the current page.
+
 ## Create a website extension
 
 Version 0.8.0 provides `browser_app`. Your packages live in `~/.hermes/browser-apps`,

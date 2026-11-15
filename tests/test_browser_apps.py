@@ -71,6 +71,42 @@ class BrowserAppTests(unittest.TestCase):
         result = json.loads(self.host.handle({'action': 'list'}))
         self.assertEqual(result['apps'], [])
 
+    def test_bundled_packages_install_once_and_preserve_user_edits(self):
+        source = self.root / 'bundled'
+        package = source / 'sample'
+        package.mkdir(parents=True)
+        (package / 'app.json').write_text(json.dumps({
+            'api_version': 1, 'id': 'sample', 'operations': {'inspect': {}}}))
+        (package / 'app.py').write_text('def run(context, operation, params): return params\n')
+        self.host.seed_packages(source)
+        installed = self.host.root / 'sample' / 'app.py'
+        installed.write_text('user-owned source\n')
+        (package / 'app.py').write_text('updated bundle\n')
+        self.host.seed_packages(source)
+        self.assertEqual(installed.read_text(), 'user-owned source\n')
+        self.assertEqual([entry['id'] for entry in json.loads(self.host.handle({}))['apps']], ['sample'])
+
+    def test_bundled_removed_package_stays_removed_and_disabled_stays_disabled(self):
+        source = self.package()
+        self.settings['apps_disabled.fixture'] = True
+        self.settings['apps_directory'] = str(self.root / 'fresh')
+        self.host.seed_packages(source.parent)
+        self.assertFalse((self.host.root / 'fixture').exists())
+        self.settings['apps_disabled.fixture'] = False
+        self.host.seed_packages(source.parent)
+        self.assertTrue((self.host.root / 'fixture').is_dir())
+        self.settings['apps_disabled.fixture'] = True
+        self.host.seed_packages(source.parent)
+        self.assertTrue(self.settings['apps_disabled.fixture'])
+
+    def test_bundled_install_preserves_an_existing_user_symlink(self):
+        source = self.package()
+        self.settings['apps_directory'] = str(self.root / 'fresh')
+        self.host.root.mkdir()
+        (self.host.root / 'fixture').symlink_to(self.root / 'missing')
+        self.host.seed_packages(source.parent)
+        self.assertTrue((self.host.root / 'fixture').is_symlink())
+
     def test_bad_package_does_not_hide_healthy_packages(self):
         self.package('healthy')
         self.package('bad', api_version=2)
