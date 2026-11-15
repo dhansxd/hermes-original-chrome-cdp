@@ -149,7 +149,7 @@ site can therefore affect the other agent and manual browsing on that profile.
 
 ## Create a website extension
 
-Version 0.7.0 provides `browser_app`. Your packages live in `~/.hermes/browser-apps`,
+Version 0.8.0 provides `browser_app`. Your packages live in `~/.hermes/browser-apps`,
 independently of the installed plugin. A different root can be set through
 `plugins.entries.original-chrome-default.settings.apps_directory`.
 
@@ -218,6 +218,8 @@ The context exposes the following values and methods.
 | `profile` | Current Chrome profile directory ID |
 | `directory` | Created on access for app/owner artifacts under plugin data |
 | `checkpoint(value)` | Atomically save JSON work position to `checkpoint.json` beside artifacts |
+| `job_id` | Current host job ID for a `rotate_on_limit` operation |
+| `accepted(request_id, data=None)` | Save a rotating job's provider receipt before waiting |
 | `browser_exec(code, timeout_s=120)` | Native browser execution, with a decoded JSON result |
 
 Return a JSON-serializable object. The host wraps ordinary values as `status`
@@ -233,8 +235,9 @@ schema shape. The operation validates its own parameter values. `list` and
 packages discoverable.
 
 Package Python runs with the Hermes process's local permissions. Install code
-you trust. Context/browser access lasts for the `run` invocation. Service rolling
-and the initial Gemini/Flow packages remain in the [PRD checklist](../PLAN.md).
+you trust. Context/browser access lasts for the `run` invocation. The
+[rolling contract](ROLLING.md) explains opt-in account rolling, provider receipts,
+handoff and recovery. Initial Gemini/Flow packages remain in the [PRD checklist](../PLAN.md).
 
 ## Configure profiles for a website package
 
@@ -287,7 +290,8 @@ to retain the document, source profile and artifact directory. A completed resul
 returns `ok`. Stop, session finalization, disable and host unload close the owned
 connection. The saved checkpoint and `result.json` remain available through the
 `data_directory` shown by `describe`. Recovery after host restart follows the
-package's saved checkpoint. Automatic job recovery/rolling is tracked in the PRD.
+package's saved checkpoint. Opt-in rotating jobs also expose a durable job ID and
+source-reconciliation callbacks through the rolling contract.
 
 ```json
 {"action": "disable", "app": "my-site"}

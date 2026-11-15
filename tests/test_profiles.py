@@ -189,6 +189,16 @@ class ProfileRoutingTests(ChromeFixture):
         self.assertEqual(args['session'], name)
         self.assertFalse(session.closed)
 
+    def test_turn_end_releases_the_current_name_after_a_profile_switch(self):
+        self.browser('A')
+        self.control('select', 'Profile 2')
+        name, _, session = self.browser('A')
+        self.provider.ended(session_id='chat-A', task_id='A')
+        self.assertTrue(session.closed)
+        self.assertFalse(self.provider.owners)
+        self.assertFalse(self.provider.profile_choices)
+        self.assertEqual(self.provider.create_session('bu-named-' + name + '@fixture-home')['bb_session_id'], 'unloaded')
+
     def test_round_trip_retires_connections_and_preserves_peer(self):
         first, first_info, original = self.browser('A')
         peer_name, _, peer = self.browser('B')

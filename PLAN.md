@@ -1,16 +1,14 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 3, 15 November 2026.
+Revisi PRD 4, 15 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-**Lifecycle paket dan aturan profil tersedia pada 0.7.0.** EXT-05, EXT-06,
-PRO-01, PRO-03, PRO-05 dan LIF-01 selesai dengan bukti di bawah. PRO-02 sudah
-memiliki implementasi hook/aturan serta uji konteks sintetis. Penerimaan kanal
-nyata masih terbuka. PRO-04 sudah teruji untuk pemilihan/perpindahan profil satu
-paket saat peer aktif, dan menunggu uji rolling pada tahap 3. Langkah berikutnya
-adalah ROT-01 sampai ROT-05 memakai fixture. Template serta paket produksi
-Gemini/Flow tetap mengikuti tahap 4.
+**Rolling generik, handoff dan jurnal job tersedia pada 0.8.0.** ROT-01 sampai
+ROT-05 serta PRO-04 selesai pada fixture, termasuk CDP UI native. Operasi situs
+nyata Gemini/Flow mengikuti tahap 4. Penerimaan kanal nyata pada CTX-01/PRO-02
+tetap terbuka. Langkah berikutnya adalah membangun kedua paket awal dengan
+kontrak host yang sudah diuji, lalu menjalankan penerimaan media sebenarnya.
 
 Dokumen ini menjadi acuan spesifikasi, status implementasi, pemasangan, verifikasi,
 dan pekerjaan tersisa. Status yang sudah memiliki bukti menjadi titik awal sesi
@@ -18,18 +16,18 @@ berikutnya. Riwayat rinci sebelum PRD tersedia pada bagian sumber bukti.
 
 | Area | Implementasi | Terpasang lokal | Verifikasi dan status |
 | --- | --- | --- | --- |
-| Browser Chrome asli | Baseline 0.5.2 dipertahankan dalam 0.7.0 | Ya, plugin aktif dan provider dipilih | 216 tes offline lulus. Uji native empat agen, input, Stop, reload dan cleanup diulang pada 0.7.0. Startup/Dock mengacu baseline dengan source startup yang sama. |
+| Browser Chrome asli | Baseline dipakai dalam 0.8.0 | Ya, plugin aktif dan provider dipilih | 248 tes otomatis lulus. Regresi native browser umum/multiprofil diulang. Cleanup akhir turn serta disable memakai nama sesi terkini setelah perpindahan profil. Startup/Dock mengacu source baseline. |
 | Inventori/default/profil per sesi | Tersedia pada 0.7.0 | Ya | Penerimaan native empat agen/multiprofil diulang dan lulus. |
 | Panduan `chrome_profiles` | Tersedia pada 0.7.0 | Ya | Schema aturan profil dibaca melalui `tool_describe` pada chat CLI baru. |
 | Pemuat dan lifecycle extension pengguna | List/describe/run/enable/disable/remove | Ya, gateway direload resmi | 33 regresi khusus paket dan uji native enam jendela, disable/remove, serta pekerjaan lintas turn lulus. Paket produksi Gemini/Flow masih terbuka. |
-| Profil tetap/acak/per platform/subagent | Implementasi tersedia pada 0.7.0 | Ya | 13 regresi aturan profil dan uji native pemilihan profil child per paket lulus. Pesan kanal nyata dan rolling mengikuti item terbuka. |
-| Rolling generik dan handoff | Spesifikasi tersedia | Belum | ROT-01 sampai ROT-05 masih terbuka. |
+| Profil tetap/acak/per platform/subagent | Implementasi tersedia pada 0.8.0 | Ya | Regresi aturan profil dan uji native pemilihan profil child per paket lulus. Kanal nyata mengikuti item terbuka. |
+| Rolling generik dan handoff | Implementasi tersedia pada 0.8.0 | Ya, gateway direload resmi | 31 regresi rolling lulus. Fixture CDP UI membuktikan A -> B -> C, profil sumber pending bersama peer, source receipt setelah Stop/reload, serta preservasi browser umum/extension lain/manual. |
 | Extension Gemini | Source dan pilot UI mandiri tersedia | Belum sebagai extension plugin | Regresi source 588 lulus, 40 tes live dilewati. Migrasi UI/routing dan penerimaan extension masih terbuka. |
 | Extension Google Flow | Controller mandiri tersedia | Belum sebagai extension plugin | 118 tes source offline lulus. Penerimaan media pada repo mandiri tercatat. Integrasi extension masih terbuka. |
 
 Status konfigurasi lokal diperiksa pada 15 November 2026. Browser provider bernilai
 `original-chrome-default`, dan plugin tercantum aktif. Runtime lokal memakai
-versi 0.7.0. Reload gateway mengaktifkan hook, termasuk `subagent_start`, dan
+versi 0.8.0. Reload gateway mengaktifkan hook, termasuk `subagent_start`, dan
 mendaftarkan tool untuk sesi baru. Chat CLI sesudah reload berhasil membaca
 schema terbaru, panduan paket, serta menjalankan probe native dan checkpoint.
 Source pembanding Gemini berada pada `957aed5`, Flow mandiri pada `79d810a`.
@@ -264,10 +262,9 @@ konfigurasi agen yang melayani pekerjaan. Profil Chrome menentukan direktori bro
 - [x] **PRO-03** Mode default/acak dan prioritas resolusi lulus pada 0.7.0.
   Pilihan acak stabil pada sesi aktif, inventori dibaca segar, konfigurasi lama
   serta readback default tetap tercakup.
-- [ ] **PRO-04** Ruang profil browser umum dan tiap extension yang independen.
-  Uji rolling satu extension sementara browser umum dan extension lain digunakan.
-  Pemisahan pilihan/default dan perpindahan satu paket saat peer aktif lulus
-  pada 0.7.0. Bagian rolling menunggu ROT-01 sampai ROT-05.
+- [x] **PRO-04** Pemisahan pilihan/default dan rolling satu extension saat browser
+  umum, extension lain serta job sumber aktif lulus pada fixture native 0.8.0.
+  Jendela sumber mempertahankan marker/timeOrigin dan receipt yang sama.
 - [x] **PRO-05** Inventori dinamis dan identitas direktori tetap dipakai pada 0.7.0.
   Penambahan/penghapusan/rename, penggantian direktori dan pemilihan ulang paket
   tanpa mengganggu pilihan peer lulus regresi. Perpindahan native multiprofil lulus.
@@ -277,7 +274,8 @@ artefak lintas turn dalam proses yang sama. `context.checkpoint()` menulis posis
 JSON secara atomik, dan hasil paket disimpan sebagai `result.json`. Kebijakan baru
 disimpan sebagai deferred ketika hasil masih diikuti pada profil asal. Akhir sesi,
 Stop, disable dan unload melepaskan resource. Pemulihan otomatis setelah proses
-berakhir, identitas akun serta handoff lintas profil mengikuti ROT.
+berakhir, identitas akun serta handoff lintas profil memakai kontrak rolling 0.8.0.
+Implementasi callback UI produksi pada Gemini/Flow mengikuti GEM/FLO.
 
 ## 6. Rolling kuota dan kelanjutan pekerjaan
 
@@ -313,16 +311,29 @@ pekerjaan. Akun tujuan membuka/membuat proyek/chat sendiri, mengunggah bahan, da
 mengikat referensi tujuan. ID dan riwayat native dimiliki akun sumber. File hasil,
 catatan sumber permintaan, dan posisi pekerjaan disimpan terpisah dari source paket.
 
-- [ ] **ROT-01** Klasifikasi kuota dan status permintaan yang terverifikasi.
-  Uji penolakan nyata tersimulasi, timeout, error CDP/selector, dan hasil parsial.
-- [ ] **ROT-02** Urutan seluruh kandidat, deduplikasi akun, dan inventori mutakhir.
-  Uji A -> B -> C, profil berubah, dan beberapa profil dengan akun yang sama.
-- [ ] **ROT-03** Semua kuota habis lalu pulih. Uji semua kandidat terkunjungi,
-  posisi tersimpan, dan reset -> A dengan bukti ketersediaan baru.
-- [ ] **ROT-04** Handoff konteks dan bahan, termasuk referensi milik akun tujuan.
-  Uji kelanjutan pekerjaan setelah berganti akun.
-- [ ] **ROT-05** Kepemilikan job aktif, Stop, error, dan pemulihan setelah proses
-  berakhir. Uji pengambilan hasil asal setelah operasi lain berpindah profil.
+- [x] **ROT-01** Kuota dipetakan dari scope, bukti layanan serta penolakan request.
+  Timeout/selector dan bukti tidak lengkap menjalani rekonsiliasi sumber. Regresi
+  0.8.0 mencakup penolakan tersimulasi, ID hasil salah dan hasil parsial.
+- [x] **ROT-02** Kandidat segar, urutan pilihan dan deduplikasi akun/scope lulus
+  pada 0.8.0. A -> B -> C memakai CDP UI native. Tambah/hapus profil di tengah
+  putaran dan akun yang sama di dua profil tercakup pada fixture otomatis.
+- [x] **ROT-03** Seluruh kandidat habis, checkpoint dan reset -> A dengan bukti
+  availability baru lulus. Cursor mempertahankan akun kerja lintas turn sampai
+  kuota habis. Kebijakan profil baru mengambil prioritas atas cursor tersimpan.
+- [x] **ROT-04** Packet handoff membawa input, checkpoint, source receipt, berkas,
+  hasil selesai dan sisa pekerjaan. Callback mengikat parameter/ID tujuan.
+  Regresi memeriksa file hilang, hasil parsial serta handoff yang terinterupsi.
+- [x] **ROT-05** Intent ditulis sebelum submit dan receipt disimpan lewat accepted.
+  Penguncian filesystem, Stop, ID/account/profile salah dan pemulihan lulus.
+  Proses fixture benar-benar keluar setelah accepted, lalu recovery mengambil
+  receipt yang sama tanpa submit kedua. Native UI menguji Stop/reload saat peer aktif.
+
+Kontrak lengkap terdapat di [docs/ROLLING.md](docs/ROLLING.md). Paket opt-in
+menyediakan `identify`, `run`, `handoff` dan `resume`. Penanda bukti berasal dari
+UI layanan yang diperiksa callback. Jurnal, quota per akun/scope dan cursor
+berada di plugin data. `browser_app describe` menampilkan job pemilik percakapan,
+dan `run` menerima ID `job` untuk meneruskan rekonsiliasi. Callback produksi serta
+bukti kuota/media Google yang sebenarnya masih menjadi penerimaan GEM/FLO.
 
 ## 7. Paket awal dan penerimaan fungsional
 
@@ -402,6 +413,9 @@ permintaan dan artefak yang dapat diperiksa.
 | Launcher bundel Gemini/Flow masih memakai `open -n` | Perlu penyesuaian integrasi | Extension memakai fondasi Chrome plugin mutakhir dan context yang disediakan host. |
 | Source Gemini mencantumkan AGPLv3, host/Flow memakai MIT | Perlu pemeriksaan REL-04 | Pilih komponen dan tata distribusi yang sesuai sebelum membundel source untuk publikasi. |
 | Warning konfigurasi pytest-asyncio dan cleanup direktori temporer | Catatan kualitas pengujian | Seluruh regresi yang dilaporkan lulus. Tindak lanjut diarahkan pada dampak yang ditemukan. |
+| Cleanup akhir turn/disable pada 0.7.0 memakai nama dasar setelah profil berpindah | Diperbaiki pada 0.8.0 | Nama browser terkini dipakai. Regresi akhir turn, disable rolling dan peer native lulus. |
+| Fixture UI membaca akun sebelum halaman siap | Fixture diperbaiki pada uji 0.8.0 | Penanda ready ditunggu sebelum account readback. Percobaan awal berhenti sebelum submit, lalu uji native lulus. |
+| Kode probe chat awal salah mengutip string | Fixture diperbaiki pada uji 0.8.0 | Sintaks probe divalidasi sebelum pengulangan. Chat baru menjalankan native probe dan mengembalikan job cached yang sama. |
 
 Baseline native Dock mempunyai 16.939 pembacaan valid, masing-masing satu ikon.
 Observer juga mencatat 84 error pembacaan AX dan dua pembacaan Dock tidak lengkap.
@@ -429,6 +443,10 @@ perilaku bersama profil Chrome asli.
 | `tests/test_*.py`, 170 lulus | Regresi plugin 0.5.2. Pemasangan/provider aktif diperiksa kembali saat penyusunan PRD. |
 | `tests/test_*.py`, 192 lulus pada 0.6.0 | Termasuk 22 regresi pemuat paket, identitas, relative import dan pembaruan source. |
 | `tests/test_*.py`, 216 lulus pada 0.7.0 | 33 tes paket dan 13 tes aturan profil, termasuk lifecycle paralel, checkpoint, pending lintas turn, prioritas aturan serta konfigurasi terpisah. |
+| `tests/test_*.py`, 248 lulus pada 0.8.0 | 31 tes rolling dan regresi cleanup sesi yang namanya berubah. Proses fixture keluar setelah accepted untuk menguji jurnal/lease sebenarnya. |
+| `tests/live_rolling.py`, 0.8.0 | CDP UI lokal menghitung submit, membuktikan A -> B -> C, receipt sumber, browser/extension peer, disable setelah rolling, Stop/reload dan target manual. |
+| Regresi native umum, profil dan paket pada 0.8.0 | `live_native.py`, `live_profiles.py`, `live_apps.py` diulang. |
+| Chat CLI 0.8.0 setelah reload resmi | Schema job, panduan paket, probe native serta pengambilan ulang job dengan `cached: true` diverifikasi dari hasil tool. Artefak/paket fixture dibersihkan. |
 | `tests/live_apps.py`, 0.7.0 | Enam jendela satu profil, pemilihan profil child per paket, status pending lintas turn, disable/enable/remove, preservasi artefak/peer/manual dan unload pending. |
 | `tests/live_native.py` dan `tests/live_profiles.py`, diulang pada 0.7.0 | Browser umum, empat agen, input/focus, Stop, reload, default/switch profil dan cleanup lulus. |
 | Chat CLI setelah reload resmi 0.7.0 | Tool describe memuat aksi lifecycle serta aturan profil, panduan paket terbaca, probe native dan checkpoint berhasil dengan identitas lengkap. Paket/artefak uji dibersihkan. |

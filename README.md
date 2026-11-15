@@ -15,9 +15,9 @@ choose the same profile or different profiles, each with their own windows.
 
 Use `browser_app` to discover and run user-owned website extension packages.
 Their Python code and guides live outside the plugin installation and can be
-updated independently. Version 0.7.0 provides package lifecycle controls and
-independent profile policies. Gemini and Google Flow packages and service-specific
-profile rolling are tracked in [PLAN.md](PLAN.md).
+updated independently. Version 0.8.0 provides package lifecycle controls,
+independent profile policies, quota-driven rolling and durable job recovery.
+Gemini and Google Flow packages are tracked in [PLAN.md](PLAN.md).
 
 ## Requirements
 
@@ -36,7 +36,7 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.7.0 uses documented public Hermes plugin APIs for BrowserProvider,
+Version 0.8.0 uses documented public Hermes plugin APIs for BrowserProvider,
 configuration, session-route context, and CDP supervisor teardown. A regression
 check rejects private Hermes runtime imports. The plugin owns its Chrome startup,
 consent, CDP relay, targets, and cleanup. Hermes manages its native browser driver
@@ -220,7 +220,15 @@ selection uses the existing owned-session switching path.
 
 `list` returns `selected_profile`, the resolved `rule`/`rule_source`, and the
 `default_rule`. A random default reports `default_profile` as null and its active
-choice through `selected_profile`. Service rolling remains an open PRD item.
+choice through `selected_profile`.
+
+Packages declaring `profile_policy: rotate_on_limit` can use generic account
+rolling. Their UI callbacks identify the service account, supply quota evidence,
+prepare destination references and reconcile source requests. Host jobs preserve
+the source profile and provider receipt across interruption. `describe` lists
+recoverable jobs, and `run` accepts a returned `job` ID. The current account is
+remembered for the conversation/alias until exhaustion. See the
+[rolling contract](docs/ROLLING.md) for callbacks, evidence and recovery.
 
 An app returning `running` or `needs_inspection` retains its owned session across
 turns in that Hermes process. Call the same app and alias to continue observing.
@@ -385,7 +393,7 @@ hermes plugins validate .
 hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
 
-The 0.7.0 regression suite covers registration, task
+The 0.8.0 regression suite covers registration, task
 namespaces, startup and consent identity, input focus, target ownership, transport
 responses, concurrent unload, retryable cleanup, and dependency platform markers.
 Regression cases also cover foreground preservation, late window creation during
@@ -418,6 +426,7 @@ For real Chrome acceptance, run this command with the Python environment used by
 python tests/live_native.py --check-native-focus --require-unmodified-harness
 python tests/live_profiles.py
 python tests/live_apps.py
+python tests/live_rolling.py
 ```
 
 The multi-profile native test requires two existing Chrome profiles. It uses local

@@ -14,6 +14,11 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+if __package__:
+    from .rolling import JobStore, RollingJob
+else:
+    from rolling import JobStore, RollingJob
+
 
 APP_TOOL = 'browser_app'
 STATUSES = {'ok', 'running', 'quota_exhausted', 'needs_inspection', 'failed'}
@@ -35,6 +40,8 @@ def read_package(root, identifier):
     if type(metadata.get('api_version')) is not int or metadata['api_version'] != 1:
         raise ValueError('This extension requires a supported api_version of 1.')
     operations = metadata.get('operations')
+    if metadata.get('profile_policy') is not None and metadata['profile_policy'] != 'rotate_on_limit':
+        raise ValueError('Supported profile_policy is rotate_on_limit, or omit it for ordinary execution.')
     if not isinstance(operations, dict):
         raise ValueError('Extension operations must be an object.')
     for name, details in operations.items():
@@ -135,7 +142,40 @@ class AppContext:
 
     def checkpoint(self, value):
         """Save the package's last known work position outside its source directory."""
-        return write_json(self.directory / 'checkpoint.json', value)
+        path = write_json(self.directory / 'checkpoint.json', value)
+        if getattr(self, '_rolling', None) is not None:
+            self._rolling.checkpoint(value)
+        return path
+
+    @property
+    def job_id(self):
+        return self._rolling.record['id'] if getattr(self, '_rolling', None) is not None else None
+
+    def accepted(self, request_id, data=None):
+        """Record the provider receipt immediately after a submission is accepted."""
+        self._choice()
+        if getattr(self, '_rolling', None) is None:
+            raise RuntimeError('accepted requires a rotate_on_limit job context.')
+        self._rolling.accepted(request_id, data)
+
+    def select_profile(self, profile):
+        provider = self.host.provider
+        with provider.lock:
+            self._choice()
+            base = provider.profile_routes[self.session]
+        result = provider.profiles({'action': 'select', 'profile': profile, 'session': base},
+                                   task_id=self.task_id, session_id=self.session_id)
+        if not result.get('success'):
+            raise RuntimeError(result.get('error', 'App profile selection failed.'))
+        with provider.lock:
+            choice = provider.profile_choices.get(base)
+            if (choice is None or choice.finished or provider.unloading
+                    or choice.owner[:2] != (self.task_id, self.session_id)
+                    or choice.turn_id != self.turn_id):
+                raise RuntimeError('The calling app session has finished.')
+            self.session = choice.browser_name
+            provider.owners[self.session] = choice.owner
+            self._choice()
 
     def browser_exec(self, code, *, timeout_s=120):
         self._choice()
@@ -152,6 +192,19 @@ class AppHost:
         self.prepare_code, self.data_dir = prepare_code, data_dir
         self.active = set()
         self.changing = set()
+
+    def jobs(self, identifier):
+        return JobStore(self.data_dir() / 'browser-apps' / identifier / 'jobs', write_json)
+
+    def prepare_call(self, tool_name, args, task_id, **context):
+        if tool_name == APP_TOOL and args.get('action', 'list') == 'run':
+            try:
+                _, metadata, _ = read_package(self.root, app_identifier(args.get('app')))
+                if metadata.get('profile_policy') == 'rotate_on_limit':
+                    context['defer_profile'] = True
+            except (OSError, ValueError, RuntimeError):
+                pass  # The handler reports package errors through the existing entry point.
+        return self.provider.prepare_call(tool_name, args, task_id, **context)
 
     def manage(self, action, identifier):
         directory = self.root / identifier
@@ -176,7 +229,7 @@ class AppHost:
                 except Exception:
                     self.changing.discard(identifier)
                     raise
-            names = [base for base, choice in self.provider.profile_choices.items()
+            names = [choice.browser_name or base for base, choice in self.provider.profile_choices.items()
                      if choice.app_id == identifier]
         try:
             for name in names:
@@ -244,6 +297,11 @@ class AppHost:
                               'enabled': not bool(self.get_setting('apps_disabled.' + identifier)),
                               'data_directory': str(self.data_dir() / 'browser-apps' / identifier),
                               'guide': guide.read_text() if guide.exists() else ''}
+                    if metadata.get('profile_policy') == 'rotate_on_limit':
+                        try:
+                            result['jobs'] = self.jobs(identifier).summaries(session_id)
+                        except (OSError, ValueError) as error:
+                            result['jobs_error'] = str(error)
                 else:
                     operation = args.get('operation')
                     if not isinstance(operation, str) or operation not in metadata['operations']:
@@ -255,20 +313,26 @@ class AppHost:
                         if identifier in self.changing:
                             raise RuntimeError('This extension is changing lifecycle state.')
                         context = AppContext(self, identifier, args.get('session', ''), task_id, session_id)
-                        context._choice().active += 1
+                        context._binding = context._choice()
+                        context._binding.active += 1
                         self.active.add(context)
                     with loaded_package(directory, source) as module:
-                        value = module.run(context, operation, params)
-                    if not isinstance(value, dict) or 'status' not in value:
-                        value = {'status': 'ok', 'data': value}
-                    if value['status'] not in STATUSES:
-                        raise ValueError('Extension result must use a documented status.')
-                    result = {**value, 'success': value['status'] in {'ok', 'running'},
-                              'app': identifier, 'operation': operation,
-                              'session': context.session, 'profile': context.profile}
-                    with self.provider.lock:
-                        context._choice().pending = value['status'] in {'running', 'needs_inspection'}
-                        write_json(context.directory / 'result.json', result)
+                        if metadata.get('profile_policy') == 'rotate_on_limit':
+                            result = RollingJob(self, context, module).execute(operation, params, args.get('job'))
+                        else:
+                            if args.get('job'):
+                                raise ValueError('Job recovery requires a rotate_on_limit package.')
+                            value = module.run(context, operation, params)
+                            if not isinstance(value, dict) or 'status' not in value:
+                                value = {'status': 'ok', 'data': value}
+                            if value['status'] not in STATUSES:
+                                raise ValueError('Extension result must use a documented status.')
+                            result = {**value, 'success': value['status'] in {'ok', 'running'},
+                                      'app': identifier, 'operation': operation,
+                                      'session': context.session, 'profile': context.profile}
+                            with self.provider.lock:
+                                context._choice().pending = value['status'] in {'running', 'needs_inspection'}
+                                write_json(context.directory / 'result.json', result)
             else:
                 raise ValueError('Choose list, describe, run, enable, disable, or remove.')
             return json.dumps(result, ensure_ascii=False)
@@ -282,10 +346,7 @@ class AppHost:
                 with self.provider.lock:
                     if context in self.active:
                         self.active.remove(context)
-                        choice = self.provider.profile_choices.get(
-                            self.provider.profile_routes.get(context.session, context.session))
-                        if choice is not None:
-                            choice.active -= 1
+                        context._binding.active -= 1
                     context.active = False
 
 
@@ -313,12 +374,16 @@ SCHEMA = {
                    'package availability. disable closes only this package\'s owned browser sessions. '
                    'remove disables and deletes its source after cleanup finishes. Artifacts and '
                    'checkpoints remain under plugin data. Retry a management action when cleanup_pending '
-                   'is true. chrome_profiles accepts app to configure this app\'s profile independently.',
+                   'is true. chrome_profiles accepts app to configure this app\'s profile independently. '
+                   'rotate_on_limit packages roll on evidenced quota refusal. A job ID binds each '
+                   'request to its source profile/account. Pass job with the owning operation/session '
+                   'to reconcile or continue it. describe lists this conversation\'s recoverable jobs.',
     'parameters': {'type': 'object', 'properties': {
         'action': {'type': 'string', 'enum': ['list', 'describe', 'run', 'enable', 'disable', 'remove'], 'default': 'list'},
         'app': {'type': 'string', 'description': 'Directory ID returned by list.'},
         'operation': {'type': 'string', 'description': 'Operation declared by the selected package.'},
         'params': {'type': 'object', 'description': 'Operation arguments, following describe.'},
+        'job': {'type': 'string', 'description': 'Resume a rotate_on_limit job returned by run or describe. Reconciles its source request before further submission.'},
         'session': {'type': 'string', 'description': 'Your session alias. Each app and agent has '
                                                     'its own private browser session.'},
     }},

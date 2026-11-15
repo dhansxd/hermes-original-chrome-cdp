@@ -209,7 +209,11 @@ class ChromeProvider(BrowserProvider):
                     result['args']['session'] = base
                     return result
                 try:
-                    if choice.profile is None:
+                    if tool_name == APP_TOOL and kwargs.get('defer_profile'):
+                        if choice.browser_name is None:
+                            choice.browser_name = base
+                            self.profile_routes[base] = base
+                    elif choice.profile is None:
                         choice.profile = self.choose_profile(choice)
                         choice.browser_name = base
                         self.profile_routes[base] = base
@@ -402,7 +406,7 @@ class ChromeProvider(BrowserProvider):
         if not session_id:
             return
         with self.lock:
-            names = [base for base, choice in self.profile_choices.items()
+            names = [choice.browser_name or base for base, choice in self.profile_choices.items()
                      if choice.owner[1] == session_id and (task_id is None or choice.owner[0] == task_id)
                      and (interrupted or not choice.pending)]
         for name in names:
@@ -516,7 +520,7 @@ def register(ctx):
                                        'and may reuse an alias used by other agents.'},
         }},
     })
-    ctx.register_hook('pre_tool_call', provider.prepare_call)
+    ctx.register_hook('pre_tool_call', apps.prepare_call)
     ctx.register_hook('agent_loop_stopped', provider.stopped)
     ctx.register_hook('on_session_finalize', provider.finalize)
     ctx.register_hook('on_session_end', provider.ended)

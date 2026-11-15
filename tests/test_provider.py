@@ -179,7 +179,8 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(set(registered), {'chrome_profiles', 'browser_app'})
         self.assertTrue(all('override' not in entry for entry in registered.values()))
         provider = ctx.register_browser_provider.call_args.args[0]
-        ctx.register_hook.assert_any_call('pre_tool_call', provider.prepare_call)
+        hooks = {call.args[0]: call.args[1] for call in ctx.register_hook.call_args_list}
+        self.assertIs(hooks['pre_tool_call'].__self__.provider, provider)
         self.assertEqual(provider.get_setup_schema()['name'], 'Original Chrome · CDP')
 
     def test_finish_cleans_only_the_calling_agents_native_names(self):

@@ -1,5 +1,5 @@
 name: original-chrome-default
-version: 0.7.0
+version: 0.8.0
 manifest_version: 2
 api_version: 1
 homepage: https://github.com/dhansxd/hermes-original-chrome-cdp
@@ -22,6 +22,10 @@ provides_hooks:
   - on_human_input_request
   - on_human_input_resolved
 config_schema:
+  rolling_profiles:
+    type: dict
+    default: {}
+    description: Preferred Chrome directory order per rotate_on_limit app. Other current profiles follow in natural order.
   apps_disabled:
     type: dict
     default: {}
