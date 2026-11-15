@@ -160,6 +160,195 @@ All 170 unit tests pass. The description-normalized Python AST matches version
 parameter descriptions from the new schema. The verification loads the plugin
 in an isolated Hermes home and reads its model-facing definitions.
 
+## Rencana profil dan integrasi Flow/Gemini — audit 15 November 2026
+
+Status tahap ini adalah audit dan rancangan. Fitur pada bagian ini merupakan
+pekerjaan implementasi berikutnya. Baseline browser yang diperiksa adalah 0.5.2.
+
+### Hasil pemeriksaan kode
+
+| Bagian | Perilaku yang sudah tersedia | Pekerjaan untuk kebutuhan terbaru |
+| --- | --- | --- |
+| Plugin browser | `chrome_profiles` menyediakan `list`, `select`, dan `set_default`. Pilihan tersimpan per agen/sesi bernama. Default dipakai saat sesi pertama kali browsing. Inventori membaca penambahan, penghapusan, rename, dan penggantian direktori. | Tambahkan aturan profil tetap, default per platform/subagent, dan pilihan acak sesuai pengaturan pengguna. |
+| Konteks Hermes | Konfigurasi plugin mengikuti profil Hermes yang sedang melayani sesi. API publik menyediakan konteks sesi/platform serta hubungan parent/child. | Hubungkan aturan profil Chrome dengan konteks tersebut. Profil Hermes menyimpan konfigurasi agen. Profil Chrome merupakan direktori browser yang dipilih. |
+| Flow mandiri | `next_profile()` menyegarkan inventori, memilih akun berikutnya, dan kembali ke awal urutan. Pemanggil menentukan saat berpindah berdasarkan kondisi Flow. | Tambahkan rolling otomatis pada pengendali layanan Flow dan simpan kelanjutan pekerjaan. |
+| Gemini custom | `generate_with_profiles()` sudah menangani penolakan kuota, akun berbeda, dan handoff konteks/berkas. CLI mengaktifkannya melalui `--rotate-on-limit` pada `ask`/`reply`. | Perluas rolling ke operasi layanan yang diintegrasikan dan gunakan interaksi UI yang dipilih. |
+| Pilot UI Gemini | Memiliki pemilihan tool, editor, unggahan, percakapan lanjutan, streaming, gambar/edit gambar, video, musik, dan tahapan Research. Sebagian hasil masih memakai pembacaan respons/riwayat lama di Chrome. | Adaptasi komponen sesuai operasi. Catat batas pilot, termasuk Argon/High, satu lampiran, serta hasil akhir Research yang masih pending pada catatan uji sumber. |
+
+`profile_directory` saat ini merupakan default yang dapat diganti. Opsi tersebut
+belum menerapkan penguncian profil per platform atau subagent. Pilihan per sesi
+sudah memungkinkan agen utama dan child memakai profil berbeda melalui `select`.
+
+Audit ini menjalankan 170 tes plugin, 118 tes Flow, dan 333 tes Gemini yang
+mencakup routing, kuota, pilot UI, dan unggahan. Seluruhnya lulus secara offline.
+Output uji memuat warning konfigurasi pytest-asyncio dan cleanup direktori temporer
+implisit. Pengujian integrasi layanan di dalam plugin masih menjadi tahap berikutnya.
+
+### Pemilihan profil browser umum
+
+Gunakan pengaturan plugin dan kontrol profil yang sama untuk menyimpan aturan
+berikut. Profil default yang sudah ada menjadi fallback untuk konfigurasi lama.
+
+- Pilihan eksplisit untuk sesi atau agen tertentu.
+- Binding profil untuk subagent yang ditentukan pengguna.
+- Default atau binding platform, misalnya WhatsApp dan Telegram.
+- Default yang diwarisi dari parent apabila child belum memiliki pilihan sendiri.
+- Default global plugin.
+
+Urutan tersebut merupakan usulan prioritas resolusi, dari paling khusus ke paling
+umum. Binding subagent yang eksplisit mengalahkan default parent. Identitas sesi
+dan parent/child berasal dari kontrak publik Hermes. Nama peran child dipakai
+hanya bila menjadi aturan eksplisit pengguna. Format string ID internal menjadi
+identitas opaque yang diteruskan apa adanya.
+
+Pengaturan dapat memilih profil tetap, default yang dapat diganti, atau acak.
+Profil tetap berlaku pada lingkup binding sampai pengaturannya diubah. Pilihan
+acak dilakukan sekali saat sesi dibuat dari inventori yang masih valid. Sesi
+tersebut kemudian memakai hasil pilihan itu sepanjang pekerjaannya. Beberapa
+agen tetap dapat memperoleh profil yang sama dan masing-masing memiliki jendela.
+Penguncian merupakan aturan pemilihan untuk lingkup tertentu, dengan kepemilikan
+jendela yang tetap per agen/sesi.
+
+Aturan yang tersimpan berlaku kembali pada turn berikutnya. Pilihan sementara
+mengikuti umur sesi yang sekarang. Perubahan default dipakai oleh sesi baru.
+Binding yang menunjuk profil terhapus menghasilkan laporan profil yang perlu
+dipilih ulang. Inventori dan pemeriksaan identitas direktori dipakai kembali.
+
+### Pemisahan browser umum, Flow, dan Gemini
+
+Setiap agen memiliki sesi bernama tersendiri untuk browser umum, Flow, dan Gemini.
+Contoh alias adalah `browser`, `flow`, dan `gemini`. Nama privat yang sekarang
+dipakai plugin tetap mengikat setiap alias pada pemilik agen/percakapan/turn.
+
+- Browser umum mengikuti binding/default/pilihan acak pada lingkupnya.
+- Flow mempunyai profil awal, urutan kandidat, dan cursor rolling tersendiri.
+- Gemini mempunyai profil awal, urutan kandidat, dan cursor rolling tersendiri.
+- Rolling layanan menggunakan pemilihan profil pada sesi layanan tersebut.
+  Default global disimpan hanya lewat tindakan pengubahan default pengguna.
+- Agen utama dengan browser profil A dapat bekerja bersama child berprofil B.
+  Pada waktu yang sama, Flow milik agen utama dapat bergulir ke C dan Gemini ke D.
+  Seluruh sesi mempunyai jendela dan target milik masing-masing.
+
+Keputusan layanan berasal dari entry point/helper Flow atau Gemini yang dipanggil.
+Browsing URL kedua situs melalui sesi browser umum mengikuti aturan browser umum.
+Binding browser umum pada A tetap memberi Flow/Gemini urutan layanan masing-masing.
+Profil awal atau urutan khusus layanan mengikuti pengaturan pengguna jika tersedia.
+
+### Rolling layanan ketika kredit atau limit habis
+
+Rolling aktif pada entry point Flow dan Gemini untuk operasi layanan yang
+diintegrasikan. Keputusan perpindahan dikerjakan kode pengendali layanan.
+Panduan terbundel menjelaskan pemakaian dan cara membaca statusnya.
+
+1. Mulai dari profil layanan yang dipilih. Ambil kandidat dari inventori Chrome
+   terkini dalam urutan direktori alami, atau urutan yang ditentukan pengguna.
+   Kandidat default mencakup seluruh profil yang dapat mengakses layanan terkait.
+2. Gunakan akun aktif selama masih dapat melakukan operasi yang diminta. Saldo
+   dapat dipakai sampai layanan menyatakan kredit/kuota habis atau tidak cukup
+   untuk operasi tersebut. Kebijakan ini mengikuti otorisasi biaya pengguna.
+3. Catat penolakan kuota yang benar-benar diamati, akun aktif, jenis operasi atau
+   model yang terdampak, dan waktu pemulihan jika layanan menampilkannya. Informasi
+   akun dari metadata Chrome menjadi petunjuk penemuan. Identitas akun layanan
+   diperiksa pada situs yang sedang dipakai.
+4. Setelah kuota habis terkonfirmasi, lanjutkan pekerjaan yang tersisa pada akun
+   berikutnya. Profil berbeda yang sedang memakai akun layanan sama berbagi status
+   kuota yang sama untuk operasi terdampak. Pemeriksaan ini mempertahankan
+   kemungkinan beberapa agen memakai satu profil secara paralel.
+5. Segarkan inventori sebelum memilih kandidat. Ikuti penambahan/penghapusan
+   profil, perubahan akun aktif, dan pergantian identitas direktori.
+6. Catat akun yang sudah diperiksa dalam putaran tersebut. Setelah seluruh kandidat
+   habis, kembalikan status kuota habis beserta posisi pekerjaan dan informasi reset
+   yang tersedia. Ketika ketersediaan pulih atau pekerjaan dilanjutkan, periksa lagi
+   dari awal putaran sehingga profil pertama dapat dipakai kembali.
+
+Status kuota disimpan menurut layanan, akun, dan operasi/model yang terdampak.
+Setiap layanan memakai bukti kuotanya sendiri. Saldo bersama antarlayanan hanya
+dianggap sama ketika sumber layanan benar-benar menunjukkannya.
+
+Timeout, error CDP, kegagalan selector, dan respons yang masih ambigu masuk ke
+diagnosis/rekonsiliasi permintaan asal. Permintaan yang sudah diterima mempertahankan
+akun, proyek/chat, dan identitas hasil asal selama masih perlu dipantau atau diunduh.
+Rolling menentukan tujuan pekerjaan berikutnya yang belum dijalankan atau yang
+telah ditolak karena kuota. Hasil parsial yang sudah ada disimpan dan dipakai
+untuk menentukan pekerjaan tersisa.
+
+Pengendali layanan menyiapkan handoff dari konteks pekerjaan, instruksi yang masih
+berlaku, pengaturan, dan berkas lokal yang tersedia. Pada akun tujuan, buka/buat
+proyek atau chat tujuan, unggah kembali bahan yang diperlukan, dan ikat referensi
+akun tujuan. ID proyek/chat/media dan riwayat native tetap milik akun sumber.
+Koneksi asal dipertahankan selama pekerjaan yang sudah diterima masih memerlukannya.
+Sesi bernama tambahan dapat memakai profil berikutnya sementara hasil asal ditunggu.
+
+### Bentuk implementasi fitur situs
+
+Fondasinya adalah provider Chrome plugin yang sekarang. Helper situs menerima
+tab/koneksi milik sesi tersebut. Browser Harness menyediakan ekstensi
+`agent_helpers.py`, dan Hermes menyediakan panduan terbundel melalui
+`ctx.register_skill()`. Helper membaca DOM terkini secara terarah dan mengembalikan
+pengaturan, status, atau hasil yang relevan. Pembacaan lebih luas membantu diagnosis
+saat kontrol yang diharapkan berubah.
+
+Rolling otomatis membutuhkan pengendali layanan tipis di dalam plugin. Pengendali
+tersebut menghubungkan hasil helper, pemilihan profil, dan handoff pekerjaan.
+Entry point layanan yang ringkas dapat didaftarkan melalui `ctx.register_tool()`
+dan memanggil `browser_exec` lewat `ctx.dispatch_tool()` dengan identitas pemilik
+yang sama. Penerusan task/session/turn, persiapan sesi privat plugin, dan pelaksanaan
+hook tepat sekali harus dibuktikan sebelum transport ini dipilih untuk produksi.
+`browser_exec` tetap menyediakan akses browser umum dan pemeriksaan UI yang fleksibel.
+
+| Layanan | Perilaku yang dipertahankan dalam adaptor |
+| --- | --- |
+| Flow klasik | Pilih media/model, rasio, durasi, kualitas, jumlah hasil, unggah/reference/karakter/suara sesuai kontrol yang tersedia, Generate, pantau, dan ambil hasil asli. |
+| Flow Agent | Pilih mode, kontrol yang tersedia, referensi, approval native sesuai pengaturan pengguna, percakapan/progres, dan hasil. Durasi/kualitas yang hanya berupa permintaan prompt dicatat sebagai permintaan. |
+| Gemini | Pilih model/penalaran/tool, pasang lampiran, isi prompt, Kirim, ikuti chat yang sama, bedakan jawaban selesai dari streaming, lalu ambil gambar/video/media yang benar-benar dihasilkan oleh turn itu. |
+
+Perilaku gambar/edit gambar dan video pada pilot Gemini menjadi acuan khusus yang
+diminta pengguna. Pemilihan model memakai permintaan atau preset pengguna dan opsi
+akun yang tersedia. Pembacaan respons aplikasi dapat melengkapi DOM ketika diperlukan
+untuk streaming atau identitas hasil. Catat jalur UI dan pembacaan tambahan per fitur.
+Rute rolling lama memakai SDK baseline. Penggabungan routing dengan pilot UI masih
+merupakan pekerjaan implementasi dan verifikasi.
+
+Repo Gemini yang diaudit mencantumkan AGPLv3. Plugin browser dan repo Flow memakai
+MIT. Seleksi source Gemini untuk distribusi publik mencakup pemeriksaan asal-usul
+kode dan lisensinya. Perilaku UI dapat dijadikan acuan bagi helper yang ditulis
+untuk plugin. Pilih komponen interaksi situs secara terarah dari repo yang ada.
+
+### Urutan pekerjaan dan penerimaan
+
+1. Tetapkan binding profil dan ruang sesi layanan. Verifikasi prioritas aturan,
+   pewarisan child, profil tetap/acak, perubahan inventori, dan isolasi enam agen.
+2. Buktikan pengendali layanan melalui kontrak publik, termasuk identitas pada CLI,
+   WhatsApp/Telegram, child, dan named session. Pertahankan penerusan konteks routed
+   Hermes profile dan jalur konfigurasi publik plugin.
+3. Tambahkan helper Flow dan Gemini serta panduan pemakaian yang terbundel. Uji
+   pengaturan, unggahan, submit, hasil, dan unduhan melalui jendela milik sesi.
+4. Hubungkan rolling otomatis. Fixture mencakup A -> B -> C, semua kuota habis,
+   reset -> A, profil baru/dihapus, akun sama dalam beberapa profil, kuota berbeda
+   antaroperasi, hasil parsial, dan permintaan yang masih belum pasti.
+5. Buktikan handoff konteks/berkas dan hasil media sesuai mode/operasi yang diuji.
+   Verifikasi sesi browser umum yang terikat A serta sesi layanan/agen lain selama
+   salah satu layanan berganti profil, dihentikan, atau gagal.
+6. Jalankan regresi startup Chrome mati/windowless/sudah dipakai, pemilihan profil
+   langsung, satu ikon Dock, kepemilikan jendela, Stop, dan cleanup. Publikasi mengikuti
+   pemeriksaan paket, lisensi, secret scan, Git bersih, dan SHA remote yang cocok.
+
+Pengelolaan supervisor native Hermes mengikuti pembaruan resmi Hermes. Integrasi
+menggunakan kontrak publik plugin dan komponen Chrome milik plugin.
+
+### Sumber riset
+
+- Konteks sesi dan hubungan child memakai kontrak lifecycle yang didokumentasikan.
+  [Hermes observer hooks](https://hermes-agent.nousresearch.com/docs/developer-guide/observer-hooks)
+- Konfigurasi, bundled skills, tool registration, dan dispatch memiliki API plugin.
+  [Panduan plugin Hermes](https://hermes-agent.nousresearch.com/docs/developer-guide/plugins)
+- Browser Harness memisahkan primitive CDP, helper workspace, dan domain skills.
+  [Struktur upstream](https://github.com/browser-use/browser-harness/blob/main/AGENTS.md)
+- Proyek komunitas Gemini menyediakan rujukan penemuan profil, pemilihan akun, dan
+  pembacaan limit melalui UI. Pilihan lifecycle pada implementasi ini mengikuti
+  provider plugin yang sudah diuji.
+  [Google Gemini CLI](https://github.com/Zahed316/google-gemini-cli)
+
 ## Verification baseline
 
 The 0.4.4 baseline passes 114 unit tests and native four-agent Chrome acceptance.
