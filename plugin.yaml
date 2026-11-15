@@ -1,5 +1,5 @@
 name: original-chrome-default
-version: 0.5.2
+version: 0.6.0
 manifest_version: 2
 api_version: 1
 homepage: https://github.com/dhansxd/hermes-original-chrome-cdp
@@ -12,6 +12,7 @@ provides_browser_providers:
   - original-chrome-default
 provides_tools:
   - chrome_profiles
+  - browser_app
 provides_hooks:
   - pre_tool_call
   - agent_loop_stopped
@@ -20,6 +21,10 @@ provides_hooks:
   - on_human_input_request
   - on_human_input_resolved
 config_schema:
+  apps_directory:
+    type: str
+    default: ''
+    description: User-owned site packages directory. Empty uses ~/.hermes/browser-apps.
   profile_directory:
     type: str
     default: Default

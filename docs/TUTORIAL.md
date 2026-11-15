@@ -147,6 +147,96 @@ relay routes each session to its owned tabs and opener-linked popups. Within the
 same Chrome profile, cookies and website storage remain shared. Signing out of a
 site can therefore affect the other agent and manual browsing on that profile.
 
+## Create a website extension
+
+Version 0.6.0 adds `browser_app`. Your packages live in `~/.hermes/browser-apps`,
+independently of the installed plugin. A different root can be set through
+`plugins.entries.original-chrome-default.settings.apps_directory`.
+
+Create `~/.hermes/browser-apps/my-site/app.json` with the following content.
+
+```json
+{
+  "api_version": 1,
+  "id": "my-site",
+  "name": "My website",
+  "operations": {
+    "inspect": {
+      "description": "Open the site when requested and read its current title.",
+      "parameters": {
+        "type": "object",
+        "properties": {"url": {"type": "string"}}
+      }
+    }
+  }
+}
+```
+
+Create `app.py` beside it.
+
+```python
+def run(context, operation, params):
+    code = ''
+    if params.get('url'):
+        code += f"goto_url({params['url']!r})\n"
+    code += 'print(js("document.title"))'
+    result = context.browser_exec(code)
+    return {
+        'status': 'ok' if result.get('success') else 'failed',
+        'data': result,
+    }
+```
+
+Ask Hermes to call `browser_app` with the following arguments.
+
+```json
+{"action": "list"}
+{"action": "describe", "app": "my-site"}
+{"action": "run", "app": "my-site", "operation": "inspect", "session": "work", "params": {"url": "https://example.com"}}
+{"action": "run", "app": "my-site", "operation": "inspect", "session": "work", "params": {}}
+```
+
+The final call reads the current document. Navigating depends on the code in
+`run`. Reusing an alias keeps the owned browser session for related calls within
+the caller's turn. Each app, agent, and conversation gets its own namespace.
+The app's returned private `session` can be used with native `browser_exec` by
+the same caller in that turn when further DOM inspection is needed.
+
+Add an optional `SKILL.md` in the package to explain its operations. `describe`
+reads its latest content. New packages and operations appear on the next tool
+call. Edited Python source is compiled fresh, including rapid edits with the
+same size. Relative Python imports keep each invocation's module namespace
+separate. The loaded functions of an active operation remain in that invocation.
+
+The context exposes the following values and methods.
+
+| Member | Meaning |
+| --- | --- |
+| `app` | Package ID |
+| `task_id`, `session_id`, `turn_id` | Calling Hermes identities |
+| `session` | Prepared private browser-session name |
+| `profile` | Current Chrome profile directory ID |
+| `directory` | Created on access for app/owner artifacts under plugin data |
+| `browser_exec(code, timeout_s=120)` | Native browser execution, with a decoded JSON result |
+
+Return a JSON-serializable object. The host wraps ordinary values as `status`
+`ok` with `data`. An explicit `status` may be `ok`, `running`, `quota_exhausted`,
+`needs_inspection`, or `failed`. Add service evidence, a job ID, and artifact
+paths as needed. The host adds the app, operation, private session and profile.
+`success` is true for `ok` and `running`. Execution errors contain the exception
+type/message and the requested app/operation.
+
+The host validates the manifest's contract version, identity and operation
+schema shape. The operation validates its own parameter values. `list` and
+`describe` execute no package code. Errors in a package leave other valid
+packages discoverable.
+
+Package Python runs with the Hermes process's local permissions. Install code
+you trust. Context/browser access lasts for the `run` invocation. Start apps
+using the configured default profile in this release. Per-app selection,
+rolling, enable/disable/remove commands and the initial Gemini/Flow packages
+remain in the [PRD checklist](../PLAN.md).
+
 ## Update
 
 ```sh

@@ -1,13 +1,15 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 1, 15 November 2026.
+Revisi PRD 2, 15 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-**Kebutuhan produk sudah cukup untuk memulai implementasi fondasi extension.**
-Langkah berikutnya adalah EXT-01 sampai EXT-04 dan pengujian penerusan konteks
-pada CTX-01. Riset tambahan diarahkan ke kontrak teknis atau kegagalan yang ditemukan
-ketika mengerjakan checklist terkait.
+**Pemuat paket pengguna dan tool umum `browser_app` tersedia pada 0.6.0.**
+EXT-02, EXT-03 dan EXT-04 selesai. Bagian direktori pilihan pada EXT-01 serta
+penerusan identitas native pada CTX-01 sudah teruji. Template Gemini/Flow dan
+penerimaan kanal nyata masih terbuka. Langkah implementasi berikutnya adalah
+lifecycle paket serta aturan profil dalam tahap 2. Riset tambahan diarahkan ke
+kontrak teknis atau kegagalan yang ditemukan pada checklist terkait.
 
 Dokumen ini menjadi acuan spesifikasi, status implementasi, pemasangan, verifikasi,
 dan pekerjaan tersisa. Status yang sudah memiliki bukti menjadi titik awal sesi
@@ -15,18 +17,20 @@ berikutnya. Riwayat rinci sebelum PRD tersedia pada bagian sumber bukti.
 
 | Area | Implementasi | Terpasang lokal | Verifikasi dan status |
 | --- | --- | --- | --- |
-| Browser Chrome asli | Selesai pada 0.5.2 | Ya, plugin aktif dan provider dipilih | 170 tes offline lulus. Penerimaan native startup, profil, jendela dan cleanup tercatat pada baseline. |
-| Inventori/default/profil per sesi | Selesai pada 0.5.2 | Ya | Offline dan penerimaan native empat agen/multiprofil tercatat. |
-| Panduan `chrome_profiles` | Selesai pada 0.5.2 | Ya | Schema native `tool_describe` sudah diverifikasi. |
-| Pemuat extension pengguna | Prototipe fungsi penanda | Belum | Pemuatan/pembaruan pada dua workspace terpisah lulus secara offline. Kontrak produk masih perlu implementasi. |
+| Browser Chrome asli | Baseline 0.5.2 dipertahankan dalam 0.6.0 | Ya, plugin aktif dan provider dipilih | 192 tes offline lulus. Uji native empat agen, input, Stop, reload dan cleanup diulang pada 0.6.0. Startup/Dock mengacu baseline dengan source startup yang sama. |
+| Inventori/default/profil per sesi | Tersedia pada 0.6.0 | Ya | Penerimaan native empat agen/multiprofil diulang dan lulus. |
+| Panduan `chrome_profiles` | Tersedia pada 0.6.0 | Ya | Schema native `tool_describe` sudah diverifikasi pada baseline. |
+| Pemuat extension pengguna | Selesai untuk list/describe/run | Ya, gateway direload resmi | 22 regresi khusus paket dan uji native enam jendela lulus. Katalog ditemukan lewat sesi chat CLI baru. Paket produksi Gemini/Flow masih terbuka. |
 | Profil tetap/acak/per platform/subagent | Spesifikasi tersedia | Belum | PRO-01 sampai PRO-05 masih terbuka. |
 | Rolling generik dan handoff | Spesifikasi tersedia | Belum | ROT-01 sampai ROT-05 masih terbuka. |
 | Extension Gemini | Source dan pilot UI mandiri tersedia | Belum sebagai extension plugin | Regresi source 588 lulus, 40 tes live dilewati. Migrasi UI/routing dan penerimaan extension masih terbuka. |
 | Extension Google Flow | Controller mandiri tersedia | Belum sebagai extension plugin | 118 tes source offline lulus. Penerimaan media pada repo mandiri tercatat. Integrasi extension masih terbuka. |
 
 Status konfigurasi lokal diperiksa pada 15 November 2026. Browser provider bernilai
-`original-chrome-default`, dan plugin tercantum aktif. Kode runtime plugin mengacu
-pada `f072557`, versi 0.5.2. Commit setelahnya sebelum PRD berisi perubahan dokumen.
+`original-chrome-default`, dan plugin tercantum aktif. Runtime lokal memakai
+versi 0.6.0. Reload gateway mengaktifkan hook dan mendaftarkan tool untuk sesi
+baru. Pemeriksaan CLI pertama masih dilayani gateway dengan snapshot tool lama.
+Setelah reload resmi, katalog `browser_app` berhasil dipanggil dari chat baru.
 Source pembanding Gemini berada pada `957aed5`, Flow mandiri pada `79d810a`.
 
 ### Cara memperbarui checklist
@@ -143,7 +147,7 @@ host. Distribusi awal dan pemulihan instalasi mengikuti status pemasangan terseb
 
 ### Pintu pemanggilan umum
 
-Tool yang direncanakan bernama `browser_app`. Argumen utamanya adalah `action`,
+Tool umum bernama `browser_app`. Argumen utamanya adalah `action`,
 `app`, `operation`, `params`, `session`, dan `job_id` jika melanjutkan pekerjaan.
 
 | Action | Perilaku |
@@ -154,6 +158,11 @@ Tool yang direncanakan bernama `browser_app`. Argumen utamanya adalah `action`,
 | `enable` | Aktifkan paket yang dipilih. |
 | `disable` | Tutup penerimaan operasi baru, simpan posisi pekerjaan, dan cleanup resource milik paket pada lingkupnya. |
 | `remove` | Lakukan lifecycle penonaktifan lalu hapus folder paket yang dituju. Hasil produksi dan catatan pekerjaan memiliki penyimpanan mandiri. |
+
+Versi 0.6.0 menyediakan `list`, `describe` dan `run`. Tiga aksi lifecycle berikutnya
+masih berada pada EXT-05. Metadata memvalidasi bentuk schema parameter operasi.
+Kode operasi memvalidasi nilai parameternya. Paket saat ini memakai profil default
+ketika sesi pertama disiapkan. Aturan profil per layanan mengikuti PRO/ROT.
 
 Kode host memuat metadata dan fungsi berdasarkan paket yang dipilih. Situs baru
 serta operasi baru ditemukan dari direktori tersebut melalui schema umum ini.
@@ -180,20 +189,26 @@ Nama Flow/Gemini menjadi data paket dan preset awal.
 
 - [ ] **EXT-01** Direktori paket pengguna dan template awal yang menghormati paket
   yang sudah tersedia. Uji instalasi baru, update host, dan direktori pilihan.
-- [ ] **EXT-02** Penemuan/validasi `app.json`, operasi dan versi kontrak. Uji paket
-  baru serta paket dengan metadata/entry point yang tidak sesuai.
-- [ ] **EXT-03** Pemuatan `app.py`, namespace/context per pemilik, dan pembaruan
-  antar pemanggilan. Uji source ukuran sama, edit cepat, dan operasi lama masih aktif.
-- [ ] **EXT-04** `browser_app` untuk katalog, bantuan dan eksekusi. Uji penambahan
-  paket/operasi pada dua agen tanpa mendaftarkan schema per situs.
+  Bagian direktori default/pilihan dan pemuatan eksternal lulus pada 0.6.0.
+  Template awal Gemini/Flow serta penerimaan update bundelnya masih terbuka.
+- [x] **EXT-02** Penemuan/validasi `app.json`, operasi dan versi kontrak. Paket
+  baru serta metadata/entry point yang keliru tercakup pada `tests/test_browser_apps.py`.
+- [x] **EXT-03** Pemuatan `app.py`, namespace/context per pemilik, dan pembaruan
+  antar pemanggilan. Source/relative import ukuran sama, edit cepat, fungsi lama
+  yang sedang dimuat, dan dua pemanggil paralel lulus pada regresi 0.6.0.
+- [x] **EXT-04** `browser_app` untuk katalog, bantuan dan eksekusi. Penambahan
+  paket/operasi pada dua agen dan pembaruan source tanpa registrasi ulang lulus
+  pada `tests/live_apps.py`. Enam sesi berbagi profil memakai enam jendela terpisah.
 - [ ] **EXT-05** Enable/disable/remove dengan lifecycle resource dan posisi pekerjaan
   yang terverifikasi. Uji satu paket dinonaktifkan saat paket/agen lain berjalan.
 - [ ] **EXT-06** Bantuan paket dan panduan umum model-facing yang dapat ditemukan.
   Uji perubahan panduan, panduan opsional, serta pemakaian pada sesi Hermes baru.
 
-Prototipe yang sudah lulus memakai fungsi penanda di direktori temporer dan dua
-workspace Browser Harness. Hasil itu membuktikan mekanisme helper, sementara
-EXT-01–EXT-06 mencakup penerimaan kontrak produk yang sebenarnya.
+Uji 0.6.0 memakai paket fixture di direktori eksternal temporer melalui registry,
+hook native Hermes dan `ctx.dispatch_tool`. Native `browser_exec` dapat memeriksa
+sesi aplikasi milik pemanggil yang sama pada turn tersebut. Pemanggilan ulang
+mempertahankan marker dan `performance.timeOrigin` halaman. Source dan panduan
+paket nyata tersedia dalam tutorial. Penerimaan Gemini/Flow mengikuti GEM/FLO.
 
 ## 5. Aturan profil dan pemisahan konteks
 
@@ -222,6 +237,12 @@ konfigurasi agen yang melayani pekerjaan. Profil Chrome menentukan direktori bro
 
 - [ ] **CTX-01** Penerusan identitas pada `ctx.dispatch_tool()`/`browser_exec`,
   persiapan namespace plugin, dan hook tepat sekali. Uji CLI, kanal, child dan sesi bernama.
+  Bagian dispatch, task/session/turn asli, namespace aplikasi serta inspeksi native
+  pemilik yang sama lulus pada regresi 0.6.0. Eksekusi paket temporer dari chat CLI
+  melalui gateway juga lulus, termasuk identitas lengkap dan nama sesi native
+  yang cocok. `tests/live_apps.py` menguji identitas
+  parent/child dan route Telegram sintetis. Penerimaan pesan kanal nyata serta
+  delegasi child melalui percakapan Hermes masih terbuka.
 - [ ] **PRO-01** Aturan sesi/agen dan profil tetap. Uji pengubahan aturan dan
   pemakaian profil yang sama oleh beberapa agen.
 - [ ] **PRO-02** Aturan WhatsApp/Telegram serta pewarisan parent/child. Uji
@@ -379,6 +400,12 @@ perilaku bersama profil Chrome asli.
 | Bukti | Cakupan |
 | --- | --- |
 | `tests/test_*.py`, 170 lulus | Regresi plugin 0.5.2. Pemasangan/provider aktif diperiksa kembali saat penyusunan PRD. |
+| `tests/test_*.py`, 192 lulus pada 0.6.0 | Termasuk 22 regresi pemuat paket, identitas, relative import dan pembaruan source. |
+| `tests/live_apps.py`, 0.6.0 | Paket eksternal, dua situs, tiga identitas sintetis dan enam jendela, dokumen tetap, pembaruan source, inspeksi native dan Stop yang mempertahankan peer/manual. |
+| `tests/live_native.py` dan `tests/live_profiles.py`, diulang pada 0.6.0 | Regresi browser umum dan multiprofil lulus. 14 source Browser Harness cocok dengan hash RECORD. |
+| Validasi salinan distribusi bersih 0.6.0 | Registrasi tool/hook sesuai manifest, security scan safe, tanpa core override. |
+| Chat CLI melalui gateway setelah reload resmi | `tool_call` menemukan `browser_app`, katalog berhasil dan melaporkan nol paket produksi terpasang. |
+| Operasi paket temporer dari chat CLI | Hasil tool `browser_app` memuat identitas task/session/turn, output native yang benar dan nama sesi yang sama. Paket uji dihapus setelah penerimaan. |
 | `tests/live_native.py` dan `tests/live_profiles.py` | Baseline penerimaan native empat agen/multiprofil, Stop, target manual, input, screenshot, reload dan cleanup. |
 | Regresi Gemini custom, 588 lulus dan 40 live dilewati | Hasil penuh source yang diaudit. Uji ini memiliki guard offline. |
 | Regresi Flow mandiri, 118 lulus | Kontrak controller dan lifecycle Chrome bundel source pembanding. |

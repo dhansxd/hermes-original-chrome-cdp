@@ -13,6 +13,12 @@ Use `chrome_profiles` to list current profiles, choose a profile for an agent's
 named browser session, or change the default for new sessions. Several agents can
 choose the same profile or different profiles, each with their own windows.
 
+Use `browser_app` to discover and run user-owned website extension packages.
+Their Python code and guides live outside the plugin installation and can be
+updated independently. Version 0.6.0 provides the package host. Gemini and Google
+Flow packages, package lifecycle commands, and service-specific profile rolling
+are tracked in [PLAN.md](PLAN.md).
+
 ## Requirements
 
 | Component | Requirement |
@@ -30,7 +36,7 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.5.2 uses documented public Hermes plugin APIs for BrowserProvider,
+Version 0.6.0 uses documented public Hermes plugin APIs for BrowserProvider,
 configuration, session-route context, and CDP supervisor teardown. A regression
 check rejects private Hermes runtime imports. The plugin owns its Chrome startup,
 consent, CDP relay, targets, and cleanup. Hermes manages its native browser driver
@@ -97,6 +103,7 @@ current IDs and display names from Chrome metadata. The final component of
 | `browser.auto_local_for_private_urls: false` | Keeps Hermes's private-URL sidecar from choosing another browser backend |
 | `browser.use_real_profile: false` | Leaves profile attachment to this provider |
 | `plugins.entries.original-chrome-default.settings.profile_directory` | Default existing Chrome profile for new sessions |
+| `plugins.entries.original-chrome-default.settings.apps_directory` | External package root, defaulting to `~/.hermes/browser-apps` |
 
 Clear competing `browser.cdp_url`, `BROWSER_CDP_URL`, `BU_CDP_URL`, and `BU_CDP_WS`
 overrides when selecting this provider. Hermes's normal private-URL permissions
@@ -156,6 +163,44 @@ plugin refreshes inventory for each list and selection, reflecting additions,
 removals and display-name changes. A removed or replaced profile produces a
 selection diagnostic so the caller can choose an available profile from the fresh
 inventory.
+
+## User-owned website extensions
+
+The `browser_app` tool accepts `list`, `describe`, and `run`. Package discovery and
+help read files without executing package code or opening Chrome. An operation
+uses an app-specific browser session bound to the calling agent and conversation.
+Different apps and ordinary browsing have separate windows, including when their
+agents share the same Chrome profile.
+
+```json
+{"action": "list"}
+{"action": "describe", "app": "my-site"}
+{"action": "run", "app": "my-site", "operation": "inspect", "session": "work", "params": {}}
+```
+
+Create packages in `~/.hermes/browser-apps/<id>/`, or configure `apps_directory`.
+The package contains `app.json`, `app.py`, and an optional `SKILL.md`. The ID must
+match its directory and use letters, numbers, underscores, or hyphens. The first
+character is a letter or number. `describe` supplies operation parameter schemas
+and the current guide to the agent. Package code receives the supplied parameter
+object and validates the operation's required values.
+
+Use the same alias for related calls. The returned private `session` can also be
+passed to native `browser_exec` by that caller during the same turn for targeted
+DOM inspection. The package decides when navigation is necessary. The host loads
+the current source on each call and preserves the loaded module during an active
+operation. Relative imports such as `from .helpers import inspect_page` use the
+package's own namespace and current source. Files beside `app.py` can be located
+using `Path(__file__).parent`.
+
+Packages execute trusted local Python code with the permissions of the Hermes
+process. The bound browser context is valid during `run`. Its browser helpers use
+the native dispatch and the plugin's target ownership and input checks. An app
+session currently starts with the configured default Chrome profile. Per-app
+profile policies and rolling remain open PRD items.
+
+See the [extension package tutorial](docs/TUTORIAL.md#create-a-website-extension)
+for a complete example and the context/result contract.
 
 ## First use
 
@@ -293,7 +338,7 @@ hermes plugins validate .
 hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
 
-The 0.5.2 regression suite contains 170 unit tests. It covers registration, task
+The 0.6.0 regression suite contains 192 unit tests. It covers registration, task
 namespaces, startup and consent identity, input focus, target ownership, transport
 responses, concurrent unload, retryable cleanup, and dependency platform markers.
 Regression cases also cover foreground preservation, late window creation during
@@ -319,6 +364,7 @@ For real Chrome acceptance, run this command with the Python environment used by
 ```sh
 python tests/live_native.py --check-native-focus --require-unmodified-harness
 python tests/live_profiles.py
+python tests/live_apps.py
 ```
 
 The multi-profile native test requires two existing Chrome profiles. It uses local
@@ -331,6 +377,14 @@ reload within the same turn, and peer-preserving cleanup.
 It creates and closes its own test targets. Saved-login verification uses
 the separate first-use check above. Native package hash checking verifies the
 installed harness against its package RECORD.
+
+The site-package native test uses external temporary packages, two apps, parent
+and child identities, a simulated Telegram route, and ordinary browsing. It checks
+six separate windows on one profile, repeated calls without navigation, package
+and operation discovery, source updates in two agents, targeted native inspection,
+and cleanup that preserves peers and existing manual targets. These are native
+tool/route tests. Receiving real Telegram or WhatsApp messages is a separate
+channel acceptance step.
 
 The source files `plugin.py`, `relay.py`, `startup.py`, `consent.py`, `cdp_peers.py`,
 and `input_guard.py` implement provider registration, transport, startup, consent,

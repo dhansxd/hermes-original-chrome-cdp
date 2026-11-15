@@ -17,11 +17,13 @@ if __package__:
     from .relay import ChromeSession
     from .startup import CHROME, PERSONAL
     from .profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
+    from .browser_apps import APP_TOOL, AppHost, SCHEMA, app_identifier
 else:
     from input_guard import prepare_code
     from relay import ChromeSession
     from startup import CHROME, PERSONAL
     from profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
+    from browser_apps import APP_TOOL, AppHost, SCHEMA, app_identifier
 
 NAME = 'original-chrome-default'
 PROFILE_TOOL = 'chrome_profiles'
@@ -34,6 +36,8 @@ class SessionProfile:
     browser_name: str | None = None
     switching: bool = False
     finished: bool = False
+    app_id: str = ''
+    turn_id: str = ''
 
 
 class ChromeProvider(BrowserProvider):
@@ -134,19 +138,31 @@ class ChromeProvider(BrowserProvider):
         return complete
 
     def prepare_call(self, tool_name, args, task_id, session_id='', session_key='', **kwargs):
-        if tool_name not in {'browser_exec', PROFILE_TOOL}:
+        if tool_name not in {'browser_exec', PROFILE_TOOL, APP_TOOL}:
+            return None
+        if tool_name == APP_TOOL and args.get('action', 'list') != 'run':
             return None
         with self.lock:
             if self.unloading:
                 return {'action': 'block', 'message': 'Original Chrome provider is unloading.'}
+            app_id = ''
             try:
                 if tool_name == PROFILE_TOOL:
                     name = private_session_name(args.get('session'), task_id, session_id,
                                                 kwargs.get('turn_id', ''), self.instance_id)
                     result = {'action': 'modify', 'args': {'session': name}}
                 else:
-                    result = prepare_call(tool_name, args, task_id, session_id=session_id,
-                                          provider_id=self.instance_id, **kwargs)
+                    app_id = app_identifier(args.get('app')) if tool_name == APP_TOOL else ''
+                    if tool_name == 'browser_exec' and isinstance(args.get('session'), str):
+                        alias = args.get('session')
+                        existing = self.profile_choices.get(self.profile_routes.get(alias, alias))
+                        if (existing and existing.app_id
+                                and existing.owner[:2] == (task_id, session_id)
+                                and existing.turn_id == kwargs.get('turn_id', '')):
+                            app_id = existing.app_id
+                    namespace = self.instance_id + ('\0app\0' + app_id if app_id else '')
+                    result = prepare_call('browser_exec', args, task_id, session_id=session_id,
+                                          provider_id=namespace, **kwargs)
             except ValueError as error:
                 return {'action': 'block', 'message': str(error)}
             if result and result.get('action') == 'modify':
@@ -159,6 +175,8 @@ class ChromeProvider(BrowserProvider):
                 if choice.finished or choice.switching:
                     return {'action': 'block', 'message': 'This browser session is finishing or changing Chrome profile.'}
                 choice.owner = owner
+                choice.app_id = app_id
+                choice.turn_id = kwargs.get('turn_id', '')
                 if tool_name == PROFILE_TOOL:
                     result['args']['session'] = base
                     return result
@@ -349,6 +367,10 @@ def prepare_call(tool_name, args, task_id, *, session_id='', turn_id='', provide
 def register(ctx):
     provider = ChromeProvider(ctx.get_config, set_setting=ctx.set_config)
     ctx.register_browser_provider(provider)
+    apps = AppHost(provider, ctx.get_config, ctx.dispatch_tool, prepare_code,
+                   lambda: ctx.state.data_dir)
+    ctx.register_tool(name=APP_TOOL, toolset='browser', handler=apps.handle,
+                      check_fn=provider.is_available, schema=SCHEMA)
 
     def profile_control(args, **context):
         return json.dumps(provider.profiles(args, **context), ensure_ascii=False)

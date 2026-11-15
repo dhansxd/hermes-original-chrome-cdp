@@ -1,0 +1,224 @@
+"""User-owned site packages executed through the provider's native browser session."""
+import hashlib
+import importlib.abc
+import importlib.machinery
+import importlib.util
+import json
+import re
+import sys
+import types
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
+
+
+APP_TOOL = 'browser_app'
+STATUSES = {'ok', 'running', 'quota_exhausted', 'needs_inspection', 'failed'}
+
+
+def app_identifier(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', value):
+        raise ValueError('Choose an extension ID from browser_app list.')
+    return value
+
+
+def read_package(root, identifier):
+    directory = root / app_identifier(identifier)
+    path = directory / 'app.json'
+    original = path.read_bytes()
+    metadata = json.loads(original)
+    if not isinstance(metadata, dict) or metadata.get('id') != identifier:
+        raise ValueError('Extension metadata must identify its directory.')
+    if type(metadata.get('api_version')) is not int or metadata['api_version'] != 1:
+        raise ValueError('This extension requires a supported api_version of 1.')
+    operations = metadata.get('operations')
+    if not isinstance(operations, dict):
+        raise ValueError('Extension operations must be an object.')
+    for name, details in operations.items():
+        if not isinstance(name, str) or not name or not isinstance(details, dict):
+            raise ValueError('Each extension operation needs a name and metadata object.')
+        parameters = details.get('parameters', {'type': 'object'})
+        if not isinstance(parameters, dict) or parameters.get('type') != 'object':
+            raise ValueError('Operation parameters must describe an object.')
+    source = (directory / 'app.py').read_bytes()
+    if path.read_bytes() != original:
+        raise RuntimeError('Extension metadata changed while loading. Inspect the updated package.')
+    return directory, metadata, source
+
+
+class _FreshSource(importlib.machinery.SourceFileLoader):
+    def get_code(self, fullname):
+        # mtime/size bytecode caches miss rapid edits with the same file size.
+        return self.source_to_code(self.get_data(self.path), self.path)
+
+
+class _PackageImports(importlib.abc.MetaPathFinder):
+    def __init__(self, name, directory):
+        self.name, self.directory = name, directory
+
+    def find_spec(self, fullname, path=None, target=None):
+        if not fullname.startswith(self.name + '.'):
+            return None
+        relative = fullname[len(self.name) + 1:].split('.')
+        location = self.directory.joinpath(*relative)
+        package = location / '__init__.py'
+        source = package if package.is_file() else location.with_suffix('.py')
+        if not source.is_file():
+            return None
+        return importlib.util.spec_from_file_location(
+            fullname, source, loader=_FreshSource(fullname, str(source)),
+            submodule_search_locations=[str(location)] if source == package else None)
+
+
+@contextmanager
+def loaded_package(directory, source):
+    name = '_original_chrome_app_' + uuid.uuid4().hex
+    module = types.ModuleType(name)
+    module.__file__ = str(directory / 'app.py')
+    module.__package__ = name
+    module.__path__ = [str(directory)]
+    finder = _PackageImports(name, directory)
+    sys.modules[name] = module
+    sys.meta_path.insert(0, finder)
+    try:
+        exec(compile(source, module.__file__, 'exec'), module.__dict__)
+        if not callable(getattr(module, 'run', None)):
+            raise ValueError('Extension app.py must define run(context, operation, params).')
+        yield module
+    finally:
+        sys.meta_path.remove(finder)
+        for key in list(sys.modules):
+            if key == name or key.startswith(name + '.'):
+                sys.modules.pop(key, None)
+
+
+class AppContext:
+    def __init__(self, host, identifier, session, task_id, session_id):
+        self.host, self.app, self.session = host, identifier, session
+        self.task_id, self.session_id = task_id, session_id
+        self.active = True
+        self.turn_id = self._choice().turn_id
+
+    def _choice(self):
+        provider = self.host.provider
+        with provider.lock:
+            base = provider.profile_routes.get(self.session, self.session)
+            choice = provider.profile_choices.get(base)
+            if (not self.active or provider.unloading or self.session in provider.finishing
+                    or choice is None or choice.finished or choice.switching
+                    or choice.app_id != self.app
+                    or choice.owner[:2] != (self.task_id, self.session_id)
+                    or choice.browser_name != self.session
+                    or self.session not in provider.owners):
+                raise RuntimeError('This extension requires its active calling browser session.')
+            return choice
+
+    @property
+    def profile(self):
+        return self._choice().profile.id
+
+    @property
+    def directory(self):
+        self._choice()
+        owner = hashlib.sha256(
+            f'{self.task_id}\0{self.session_id}\0{self.session}'.encode()).hexdigest()
+        path = self.host.data_dir() / 'browser-apps' / self.app / owner
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        return path
+
+    def browser_exec(self, code, *, timeout_s=120):
+        self._choice()
+        result = self.host.dispatch('browser_exec', {
+            'session': self.session, 'code': self.host.prepare_code(code),
+            'timeout_s': timeout_s,
+        }, task_id=self.task_id, session_id=self.session_id, parent_agent=None)
+        return json.loads(result) if isinstance(result, str) else result
+
+
+class AppHost:
+    def __init__(self, provider, get_setting, dispatch, prepare_code, data_dir):
+        self.provider, self.get_setting, self.dispatch = provider, get_setting, dispatch
+        self.prepare_code, self.data_dir = prepare_code, data_dir
+
+    @property
+    def root(self):
+        configured = self.get_setting('apps_directory')
+        if configured is None or configured == '':
+            return Path.home() / '.hermes' / 'browser-apps'
+        if not isinstance(configured, str):
+            raise ValueError('apps_directory must name the user extension directory.')
+        return Path(configured).expanduser().resolve()
+
+    def handle(self, args, task_id='', session_id='', **kwargs):
+        context = None
+        try:
+            action = args.get('action', 'list')
+            if action == 'list':
+                entries = []
+                directories = sorted(self.root.iterdir()) if self.root.exists() else []
+                for directory in directories:
+                    if not directory.is_dir():
+                        continue
+                    try:
+                        _, metadata, _ = read_package(self.root, directory.name)
+                        entries.append({'id': directory.name, 'available': True,
+                                        'name': metadata.get('name', directory.name),
+                                        'operations': list(metadata['operations'])})
+                    except (OSError, ValueError, RuntimeError) as error:
+                        entries.append({'id': directory.name, 'available': False,
+                                        'error': str(error)})
+                result = {'success': True, 'status': 'ok', 'directory': str(self.root), 'apps': entries}
+            elif action in {'describe', 'run'}:
+                identifier = app_identifier(args.get('app'))
+                directory, metadata, source = read_package(self.root, identifier)
+                if action == 'describe':
+                    guide = directory / 'SKILL.md'
+                    result = {'success': True, 'status': 'ok', 'app': metadata,
+                              'guide': guide.read_text() if guide.exists() else ''}
+                else:
+                    operation = args.get('operation')
+                    if not isinstance(operation, str) or operation not in metadata['operations']:
+                        raise ValueError('Choose an operation from browser_app describe.')
+                    params = args.get('params', {})
+                    if not isinstance(params, dict):
+                        raise ValueError('Extension params must be an object.')
+                    context = AppContext(self, identifier, args.get('session', ''), task_id, session_id)
+                    with loaded_package(directory, source) as module:
+                        value = module.run(context, operation, params)
+                    if not isinstance(value, dict) or 'status' not in value:
+                        value = {'status': 'ok', 'data': value}
+                    if value['status'] not in STATUSES:
+                        raise ValueError('Extension result must use a documented status.')
+                    result = {**value, 'success': value['status'] in {'ok', 'running'},
+                              'app': identifier, 'operation': operation,
+                              'session': context.session, 'profile': context.profile}
+            else:
+                raise ValueError('Choose list, describe, or run.')
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as error:
+            return json.dumps({'success': False, 'status': 'failed',
+                               'app': args.get('app'), 'operation': args.get('operation'),
+                               'error': {'type': type(error).__name__, 'message': str(error)}},
+                              ensure_ascii=False)
+        finally:
+            if context is not None:
+                context.active = False
+
+
+SCHEMA = {
+    'name': APP_TOOL,
+    'description': 'Use user-owned site extensions through your Original Chrome session. '
+                   'list refreshes installed packages without running their code. describe reads '
+                   'one package\'s operations, parameter schemas and guide. run executes that '
+                   'package with its own agent/session namespace. Reuse the same session alias '
+                   'for related calls. Packages are read from the configured apps_directory and '
+                   'can be edited or added independently of this plugin.',
+    'parameters': {'type': 'object', 'properties': {
+        'action': {'type': 'string', 'enum': ['list', 'describe', 'run'], 'default': 'list'},
+        'app': {'type': 'string', 'description': 'Directory ID returned by list.'},
+        'operation': {'type': 'string', 'description': 'Operation declared by the selected package.'},
+        'params': {'type': 'object', 'description': 'Operation arguments, following describe.'},
+        'session': {'type': 'string', 'description': 'Your session alias. Each app and agent has '
+                                                    'its own private browser session.'},
+    }},
+}
