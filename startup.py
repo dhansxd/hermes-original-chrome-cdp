@@ -144,6 +144,49 @@ def accessibility_trusted():
     ax.AXIsProcessTrusted.argtypes=[]
     return bool(ax.AXIsProcessTrusted())
 
+
+def notify_running_chrome(data, identity, arguments):
+    """Forward startup arguments to the verified Chrome singleton on macOS."""
+    import errno
+    import socket
+    import tempfile
+    address = (data / 'SingletonSocket').resolve(strict=True)
+    nonce = (data / 'SingletonCookie').readlink()
+    if (address.parent / 'SingletonCookie').readlink() != nonce:
+        raise RuntimeError('Chrome startup socket identity is unavailable.')
+    message = b'\0'.join(os.fsencode(part) for part in ['START', str(data), *arguments])
+    # A short, private alias also supports Chrome's socket paths exceeding
+    # Python's sockaddr_un path limit. It contains no browser/profile data.
+    with tempfile.TemporaryDirectory(prefix='hermes-chrome-ipc-', dir='/tmp') as directory:
+        alias = Path(directory) / 'socket'
+        alias.symlink_to(address)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as channel:
+            channel.settimeout(15)
+            channel.connect(str(alias))
+            # Darwin SOL_LOCAL / LOCAL_PEERPID identifies the connected process.
+            if (channel.getsockopt(0, 0x002) != identity[0]
+                    or not process_alive({'pid': identity[0], 'started': identity[1]})
+                    or (data / 'SingletonCookie').readlink() != nonce
+                    or (address.parent / 'SingletonCookie').readlink() != nonce):
+                raise RuntimeError('Chrome startup socket identity changed.')
+            channel.sendall(message)
+            try:
+                channel.shutdown(socket.SHUT_WR)
+            except OSError as error:
+                # Chrome can acknowledge and close before this half-close.
+                # Its buffered ACK still determines whether startup succeeded.
+                if error.errno != errno.ENOTCONN:
+                    raise
+            reply = b''
+            while len(reply) < 8:
+                part = channel.recv(8 - len(reply))
+                if not part:
+                    break
+                reply += part
+            if reply != b'ACK':
+                raise RuntimeError('Chrome startup was not acknowledged; request was not replayed.')
+
+
 def gui_launch(data,seed_url=None,*,profile_directory='Default'):
     if (not isinstance(profile_directory,str) or not 0<len(profile_directory)<=128
         or not profile_directory.isprintable() or profile_directory in {'.','..','Guest Profile','System Profile'}
@@ -165,12 +208,18 @@ def gui_launch(data,seed_url=None,*,profile_directory='Default'):
                 found.append((p.pid,info['create_time']))
             except psutil.NoSuchProcess:continue
         return found
-    browsers()
-    args=['/usr/bin/open','-n','-g','-a',str(CHROME),'--args',f'--user-data-dir={data}',f'--profile-directory={profile_directory}']
+    running=browsers()
+    args=[str(CHROME/'Contents/MacOS/Google Chrome'),f'--user-data-dir={data}',f'--profile-directory={profile_directory}']
     if data.resolve()!=PERSONAL.resolve():args+=['--remote-debugging-port=0','--no-first-run','--no-default-browser-check']
     if seed_url:args+=['--new-window',seed_url]
-    env={'HOME':str(Path.home()),'PATH':'/usr/bin:/bin','TMPDIR':str(Path.home()/'.hermes/cache/scratch')}
-    subprocess.run(args,env=env,capture_output=True,text=True,timeout=15,check=True)
+    if running:
+        if len(running)!=1:
+            raise RuntimeError('safe_GUI_launch_unavailable: Chrome destination ambiguous')
+        notify_running_chrome(data,running[0],args)
+    else:
+        env={'HOME':str(Path.home()),'PATH':'/usr/bin:/bin','TMPDIR':str(Path.home()/'.hermes/cache/scratch')}
+        subprocess.run(['/usr/bin/open','-g','-a',str(CHROME),'--args',*args[1:]],
+                       env=env,capture_output=True,text=True,timeout=15,check=True)
     deadline=time.monotonic()+8
     while not browsers():
         if time.monotonic()>=deadline:raise RuntimeError('safe_GUI_launch_unavailable: launched Chrome identity unavailable; no replay')
@@ -203,9 +252,9 @@ def close_seed_tab(data,identity,seed_url,title):
     if not identity or not seed_url or not title:
         return False
     if __package__:
-        from .consent import AX
+        from .consent import AX,ConsentError
     else:
-        from consent import AX
+        from consent import AX,ConsentError
     ax=AX()
     ax.deadline=time.monotonic()+3
     def matches():
@@ -258,8 +307,12 @@ def close_seed_tab(data,identity,seed_url,title):
         while time.monotonic()<ax.deadline:
             if endpoint_identity(data)!=identity:
                 return False
-            if not matches():
-                return True
+            try:
+                if not matches():
+                    return True
+            except ConsentError as exc:
+                if str(exc) not in {'consent_ax_read:-25202','consent_ax_read:-25204'}:
+                    raise
             time.sleep(.05)
         return False
     except Exception:

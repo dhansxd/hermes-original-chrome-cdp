@@ -213,6 +213,21 @@ class RelayTests(unittest.TestCase):
         close.assert_called_once_with(session.data,session.identity,
                                       'file:///fixture/owned-start.html',session.seed_title)
 
+    def test_unacknowledged_launch_retains_verified_identity_for_exact_seed_cleanup(self):
+        session = relay.ChromeSession(Path('/fixture'), 'Default')
+        self.addCleanup(session.close)
+        identity = {'pid': 42, 'started': 1, 'endpoint': 'ws://fixture'}
+        with patch('relay.startup.launch', side_effect=RuntimeError('unconfirmed startup')), \
+                patch('relay.startup.endpoint_identity', return_value=identity):
+            with self.assertRaisesRegex(RuntimeError, 'unconfirmed startup'):
+                session._start()
+        self.assertEqual(session.identity, identity)
+        with patch('relay.startup.process_alive', return_value=True), \
+                patch('relay.startup.close_seed_tab', return_value=True) as close:
+            self.assertTrue(session.close())
+        self.assertEqual(close.call_args.args[1], identity)
+        self.assertEqual(close.call_args.args[3], session.seed_title)
+
     def test_disconnected_browser_cleanup_requires_process_exit_proof(self):
         self.session.identity = {'pid': 42, 'started': 1}
         self.wire.closed = True

@@ -74,8 +74,55 @@ successfully, and the external window monitor observed zero remaining windows.
 
 Native Dock monitoring found a transient second application icon during startup.
 The same observation reproduced with the existing 0.4.8 launcher. Direct binary
-forwarding also reproduced it. This leaves the single-Dock-icon startup condition
-open. The profile-routing and window-isolation acceptance results above passed.
+forwarding also reproduced it. The 0.5.0 verification left the single-Dock-icon
+startup condition open. Its profile-routing and window-isolation results passed.
+
+## Single Dock icon — approved 15 November 2026
+
+Use the running original Chrome process for subsequent profile/window requests.
+Replace forced LaunchServices instances with Chrome's local ProcessSingleton
+notification for an already verified browser process. Verify its connected peer
+PID, process creation time, and singleton nonce before sending startup arguments.
+Use normal LaunchServices application startup when Chrome is stopped. Keep the
+existing agent-owned window identification and actual profile-path verification.
+
+Verify the launcher regression, malformed or changed IPC identity, fragmented and
+failed acknowledgements, and exact selected-profile arguments. Monitor actual Dock
+application items during cold, windowless, existing-window, same-profile and
+multi-profile native tests. Retest native Hermes loading, agent isolation, manual
+window preservation and cleanup before publishing this patch.
+
+The history comparison covers d33aa03, ae83c2c, 0334304, 5c71477 and a91caec.
+All contain forced-new-instance startup. The 0.4.8 and 0.5.0 startup files are
+byte-identical. A plain warm LaunchServices experiment ignored the selected-profile
+arguments and opened Chrome's profile picker. That experiment was removed from the
+installed checkout. Verification continues in a separate development worktree.
+
+Version 0.5.1 forwards warm requests through the verified original process's
+ProcessSingleton socket. A private short socket alias supports Chromium's extended
+macOS socket paths. Cold startup uses normal LaunchServices with the selected
+profile arguments. Browser ownership and profile routing continue through the
+existing provider and relay.
+
+Controlled failure testing retains the verified endpoint identity for exact seed
+cleanup. It reproduced a pre-existing post-close AXWindows read returning -25204.
+The same code exists before multi-profile support. A bounded read-only observation
+handles that transient result after the single close action. Regression tests
+reproduce the failure and preserve unconfirmed results for other AX errors.
+
+All 170 unit tests pass. Native four-agent and multi-profile acceptance pass,
+including separate windows, Stop, round trips, saved defaults, exact cleanup,
+manual-page preservation and reload. Cold startup passes with the default and
+another existing profile, following normal quits with zero windows and CDP clients.
+Windowless startup reuses the same original Chrome process. The controlled lost-
+acknowledgement case confirms exact seed cleanup while preserving its peer.
+
+The test machine has Chrome 157.0.8103.51 and one existing pinned Dock entry for
+the original application. Native Dock monitoring observes one Chrome application
+item throughout the tested startup and multi-agent phases. Profile-picker windows
+remain absent from those observations. All 14 native Browser Harness Python files
+retain their distribution RECORD hashes. Clean indexed-package validation and
+secret scans pass.
 
 ## Verification baseline
 

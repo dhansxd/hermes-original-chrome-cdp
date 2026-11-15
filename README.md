@@ -30,7 +30,7 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.5.0 uses documented public Hermes plugin APIs for BrowserProvider,
+Version 0.5.1 uses documented public Hermes plugin APIs for BrowserProvider,
 configuration, session-route context, and CDP supervisor teardown. A regression
 check rejects private Hermes runtime imports. The plugin owns its Chrome startup,
 consent, CDP relay, targets, and cleanup. Hermes manages its native browser driver
@@ -187,10 +187,12 @@ Startup covers Chrome stopped, running without windows, and running with existin
 windows. Production sessions use the original Chrome application and its Dock entry.
 The explicit profile-directory launch selects the requested profile directly.
 
-Native Dock monitoring observed a brief second Chrome application icon during
-startup with the existing LaunchServices launcher. Git comparison confirms that
-launcher matches version 0.4.8. Eliminating this transient duplicate remains an
-open issue for the single-Dock-icon requirement.
+For running Chrome, the plugin forwards explicit profile/window arguments through
+Chrome's local ProcessSingleton socket after checking the connected process ID,
+process creation time, and IPC nonce. Cold startup uses normal macOS LaunchServices.
+The original application owns the agent windows and uses its existing Dock entry.
+Subsequent browsing uses CDP. The startup message follows Chromium's implementation.
+[Chromium ProcessSingleton source](https://github.com/chromium/chromium/blob/main/chrome/browser/process_singleton_posix.cc)
 
 Authentication comes from each user's local Chrome profile. The installation
 configuration consists of the browser backend and an existing profile-directory
@@ -284,7 +286,7 @@ hermes plugins validate .
 hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
 
-The 0.5.0 regression suite contains 151 unit tests. It covers registration, task
+The 0.5.1 regression suite contains 170 unit tests. It covers registration, task
 namespaces, startup and consent identity, input focus, target ownership, transport
 responses, concurrent unload, retryable cleanup, and dependency platform markers.
 Regression cases also cover foreground preservation, late window creation during
@@ -298,6 +300,12 @@ Profile regressions also cover fresh discovery, additions/removals/renames,
 directory replacement, default changes with active agents, independent named
 sessions, repeated selection, round-trip switches, native JSON results and
 Stop arriving during a profile switch.
+
+Startup regressions cover warm-process forwarding, cold LaunchServices arguments,
+connected-peer identity, IPC nonce replacement, long socket paths, fragmented
+acknowledgements, early peer closure, and failed-start seed cleanup. Post-close
+Accessibility verification observes transient macOS reads within its existing
+deadline after the single close action.
 
 For real Chrome acceptance, run this command with the Python environment used by Hermes.
 

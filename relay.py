@@ -170,6 +170,11 @@ class ChromeSession:
                     self.wire.call('Target.setDiscoverTargets', {'discover': True})
             except Exception as exc:
                 self.error = str(exc)
+                if self.seed_url and self.identity is None:
+                    try:
+                        self.identity = startup.endpoint_identity(self.data)
+                    except Exception:
+                        pass  # Cleanup retains the unresolved seed until ownership can be verified.
                 raise
 
     def _inventory(self, wire=None):

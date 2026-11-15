@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import startup
+from consent import ConsentError
 from test_consent_diagnostics import fake_clock
 
 
@@ -145,6 +146,31 @@ class SeedCleanupTests(unittest.TestCase):
         with fake_clock():
             self.assertFalse(self.close())
         self.ax.ax.AXUIElementPerformAction.assert_called_once_with(4,'AXPress')
+
+    def test_transient_post_close_window_read_is_observed_again(self):
+        original = self.ax.attr.side_effect
+        reads = 0
+        def read(node, key):
+            nonlocal reads
+            if node == 0 and key == 'AXWindows':
+                reads += 1
+                if reads == 2:
+                    raise ConsentError('consent_ax_read:-25204')
+            return original(node, key)
+        self.ax.attr.side_effect = read
+        self.assertTrue(self.close())
+        self.assertGreaterEqual(reads, 3)
+        self.ax.ax.AXUIElementPerformAction.assert_called_once_with(4, 'AXPress')
+
+    def test_other_post_close_read_errors_remain_unconfirmed(self):
+        original = self.ax.attr.side_effect
+        def read(node, key):
+            if node == 0 and key == 'AXWindows' and 3 not in self.children[2]:
+                raise ConsentError('consent_ax_read:-25201')
+            return original(node, key)
+        self.ax.attr.side_effect = read
+        self.assertFalse(self.close())
+        self.ax.ax.AXUIElementPerformAction.assert_called_once_with(4, 'AXPress')
 
 
 if __name__ == '__main__':
