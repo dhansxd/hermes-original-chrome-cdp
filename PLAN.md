@@ -1,6 +1,6 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 7, 16 November 2026.
+Revisi PRD 8, 16 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
@@ -15,13 +15,24 @@ penilaian aksen/timbre pengguna. Peristiwa reset kuota akun Flow nyata belum
 diamati. Logika kunjung ulang profil memiliki bukti regresi dan fixture native.
 Gemini serta penerimaan kanal nyata pada CTX-01/PRO-02 tetap terbuka.
 
+**Pemeriksaan cleanup dibuka kembali.** Pengguna melaporkan jendela tersisa setelah
+uji rolling. Inspeksi menemukan pemilih profil Chrome. Jendela tersebut sudah
+ditutup dan inventori native menunjukkan nol jendela. Pengujian sebelumnya
+memastikan target CDP serta sesi provider, sementara jendela native belum masuk
+assertion akhir. Pengujian sekarang membandingkan inventori native sebelum dan
+sesudah cleanup. Pengulangan browser native empat agen serta fixture rolling
+kembali ke nol jendela native. Inspeksi Flow read-only melalui Hermes menjaga
+jendela peer dan kembali ke baseline setelah giliran selesai. Jendela sentinel
+uji kemudian ditutup dan inventori akhir nol. Asal kemunculan awal pemilih profil
+masih perlu atribusi.
+
 Dokumen ini menjadi acuan spesifikasi, status implementasi, pemasangan, verifikasi,
 dan pekerjaan tersisa. Status yang sudah memiliki bukti menjadi titik awal sesi
 berikutnya. Riwayat rinci sebelum PRD tersedia pada bagian sumber bukti.
 
 | Area | Implementasi | Terpasang lokal | Verifikasi dan status |
 | --- | --- | --- | --- |
-| Browser Chrome asli | Baseline dipakai dalam 0.10.1 | Ya, plugin aktif dan provider dipilih | 315 tes otomatis serta uji native browser/rolling lulus. Host browser mempertahankan source baseline. Cleanup akhir turn serta disable memakai nama sesi terkini setelah perpindahan profil. Startup/Dock mengacu source baseline. |
+| Browser Chrome asli | Baseline dipakai dalam 0.10.1 | Ya, plugin aktif dan provider dipilih | 319 tes otomatis lulus. Penerimaan cleanup native dibuka kembali setelah laporan pemilih profil tersisa. Host browser mempertahankan source baseline. Cleanup akhir turn serta disable memakai nama sesi terkini setelah perpindahan profil. Startup/Dock mengacu source baseline. |
 | Inventori/default/profil per sesi | Tersedia pada 0.7.0 | Ya | Penerimaan native empat agen/multiprofil diulang dan lulus. |
 | Panduan `chrome_profiles` | Tersedia pada 0.7.0 | Ya | Schema aturan profil dibaca melalui `tool_describe` pada chat CLI baru. |
 | Pemuat dan lifecycle extension pengguna | List/describe/run/enable/disable/remove | Ya, gateway direload resmi | 33 regresi khusus paket dan uji native enam jendela, disable/remove, serta pekerjaan lintas turn lulus. Paket produksi Gemini/Flow masih terbuka. |
@@ -429,7 +440,11 @@ identitas media dan file asli dapat dikaitkan dengan permintaan asal.
 
 ## 8. Verifikasi integrasi dan distribusi
 
-- [x] **LIF-01** Umur sesi extension teruji pada 0.7.0 untuk akhir turn, operasi
+- [ ] **LIF-01** Pemeriksaan cleanup native dibuka kembali setelah laporan jendela
+  pemilih profil tersisa. Bukti target CDP serta sesi provider dipertahankan.
+  Inventori jendela native kini menjadi assertion akhir uji browser/rolling.
+  Asal kemunculan awal masih perlu atribusi. Umur sesi extension teruji pada
+  0.7.0 untuk akhir turn, operasi
   `running`, Stop, finalisasi, disable dan unload. Uji native menjaga dokumen,
   profil dan direktori artefak saat turn diganti, lalu melepas resource pemilik
   yang tepat. Checkpoint/receipt berada di luar paket dan bertahan setelah cleanup.
@@ -457,6 +472,7 @@ permintaan dan artefak yang dapat diperiksa.
 
 | Temuan | Jenis/status | Tindak lanjut dan pengaruh pada urutan kerja |
 | --- | --- | --- |
+| Pemilih profil ditemukan setelah pengguna melaporkan sisa jendela | Cleanup native dibuka kembali | Jendela sudah ditutup. Probe langsung satu sesi kembali ke nol jendela. Assertion inventori native sudah dipasang. Pengulangan browser/rolling kembali ke nol jendela. Atribusikan kemunculan awal sebelum menyatakan penerimaan penuh. |
 | Dua identitas supervisor native menyisakan reconnect setelah endpoint ditutup | Menunggu upstream sesuai keputusan pengguna | Mengikuti update resmi Hermes. Fondasi extension dapat dikerjakan. |
 | Router Gemini memakai SDK baseline, pilot UI memiliki kontrak sendiri | Perlu implementasi GEM-02/GEM-05 | Sambungkan bukti kuota UI, file, streaming, dan kelanjutan chat pada pemilik sesi yang sama. |
 | Catatan pembatalan Gemini paralel belum menjelaskan hilangnya satu target pra-uji | Perlu verifikasi LIF-03 | Reproduksi terfokus dan atribusi sebelum menetapkan patch. Paralel normal sudah tercatat berhasil. |
@@ -493,6 +509,7 @@ perilaku bersama profil Chrome asli.
 | `tests/test_*.py`, 170 lulus | Regresi plugin 0.5.2. Pemasangan/provider aktif diperiksa kembali saat penyusunan PRD. |
 | `tests/test_*.py`, 192 lulus pada 0.6.0 | Termasuk 22 regresi pemuat paket, identitas, relative import dan pembaruan source. |
 | `tests/test_*.py`, 216 lulus pada 0.7.0 | 33 tes paket dan 13 tes aturan profil, termasuk lifecycle paralel, checkpoint, pending lintas turn, prioritas aturan serta konfigurasi terpisah. |
+| Penguatan cleanup native, 319 tes otomatis lulus | Empat regresi memastikan sisa jendela native menyebabkan gagal, baseline dipertahankan, transisi penutupan diamati, dan error inventori gagal eksplisit. Uji browser serta rolling memeriksa kesamaan inventori native akhir dengan baseline. |
 | `tests/test_*.py`, 315 lulus pada 0.10.1 | Termasuk handoff multi-output, harga native, preservasi hasil sumber, receipt persiapan per job/profil, pemulihan project/unggahan, hidrasi ingredient, serta pilihan suara karakter. |
 | Flow 0.3.0 pada akun nyata dan Hermes chat CLI | Sumber nol kredit berlanjut ke akun tujuan. Video klasik dengan karakter/suara tujuan serta video Agent dengan potret lokal selesai, cocok SHA-256 dan lulus decode penuh. Peer sentinel mempertahankan time origin dan isi selama rolling Hermes. |
 | `live_native.py` dan `live_rolling.py` pada 0.10.1 | Input focus, empat jendela agen terpisah, Stop/reload, hasil fixture A → B → C, preservasi manual/peer dan cleanup pemilik lulus. Browser Harness sesuai RECORD. |

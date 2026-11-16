@@ -8,6 +8,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from native_windows import window_keys, verify_cleanup
 
 import hermes_bootstrap
 
@@ -73,6 +75,7 @@ document.body.insertAdjacentHTML('beforeend','<div id="ready"></div>');
 
 
 def verify():
+    native_windows_before = window_keys()
     source = Path(__file__).resolve().parents[1]
     server = ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -216,6 +219,8 @@ plugins:
                 provider.unload()
                 manager.unload('original-chrome-default')
                 server.shutdown()
+    verify_cleanup(native_windows_before)
+    report['native_windows_returned_to_baseline'] = True
     return report
 
 

@@ -460,6 +460,10 @@ It creates and closes its own test targets. Saved-login verification uses
 the separate first-use check above. Native package hash checking verifies the
 installed harness against its package RECORD.
 
+The browser and rolling suites also compare the native macOS Chrome window
+inventory before and after teardown. Accessibility reads observe that inventory
+without activating Chrome. An extra native window fails cleanup acceptance.
+
 The site-package native test uses external temporary packages, two apps, parent
 and child identities, a simulated Telegram route, and ordinary browsing. It checks
 six separate windows on one profile, repeated calls without navigation, package

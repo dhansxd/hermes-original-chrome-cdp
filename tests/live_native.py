@@ -2,6 +2,8 @@
 import os, sys, json, tempfile, logging, time, threading, concurrent.futures, uuid
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from native_windows import window_keys, verify_cleanup
 logging.basicConfig(level=logging.WARNING)
 import hermes_bootstrap
 if '--require-unmodified-harness' in sys.argv:
@@ -55,6 +57,7 @@ from tools.browser_session_lifecycle import cleanup_profile_browsers
 source=Path(__file__).resolve().parents[1];results=[]
 turns={task:uuid.uuid4().hex for task in ('A','B','C','D')}
 with set_hermes_home_override(home):
+ native_windows_before=window_keys()
  manager=get_plugin_manager();manager._load_plugin(parse_manifest_file(source/'plugin.yaml',source,'user',''))
  from agent.browser_registry import get_provider
  provider=get_provider('original-chrome-default')
@@ -164,6 +167,8 @@ for target in ('disabled','hidden','readonly','visible'):
  finally:
   with set_hermes_home_override(home):provider.finish(completed=True,interrupted=True)
   with set_hermes_home_override(home):cleanup_profile_browsers(str(home))
-  provider.unload();manager.unload('original-chrome-default')
+  assert provider.unload(),'Provider cleanup is incomplete'
+  manager.unload('original-chrome-default')
   server.shutdown()
   print('REMAINING_PROVIDER_SESSIONS',len(provider.sessions),flush=True)
+  verify_cleanup(native_windows_before)
