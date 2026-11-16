@@ -313,6 +313,13 @@ stash, source paket eksternal serta repo pembanding yang relevan.
   Pemeriksaan path/identitas pribadi serta tautan dokumen lokal juga lulus.
 - HEAD dan seluruh 51 file pada tree baseline sebelum dokumentasi dibandingkan
   dengan GitHub dan cocok. Source Hermes tetap bersih pada commit baseline.
+- Sesudah push `ba0982801372b6c4102e894381ccc83959b38cc1`, clone publik baru
+  tanpa credential helper berhasil memulihkan 58 file serta 98 commit. Seluruh
+  isi file cocok dengan checkout asal. Validator Hermes `safe`, 342 tes dan
+  scan secret riwayat lulus dari clone tersebut. Unduhan publik dokumen ini
+  pada SHA itu mengembalikan HTTP 200 dan byte yang sama. Clone memakai
+  environment Hermes pada Mac yang sedang berjalan. Penerimaan pada Mac
+  sesudah reset mengikuti langkah pemulihan di bawah.
 
 Validator yang diarahkan ke seluruh direktori instalasi lama juga membaca file
 diagnostik di luar Git. Pada lokasi itu terdapat diagnostic `caution` untuk
