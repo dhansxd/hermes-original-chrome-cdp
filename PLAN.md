@@ -1,17 +1,19 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 6, 16 November 2026.
+Revisi PRD 7, 16 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-**Karakter dan suara Flow terverifikasi secara teknis pada 0.10.0.** Paket Flow
-0.2.0 membuat karakter dan suara kustom melalui UI, menyimpan identitas native,
-dan memverifikasi binding pada video klasik serta Agent. Kedua MP4 asli berukuran
-720 × 1280, video 5 detik dengan audio AAC, serta lulus hash dan decode penuh.
-Hermes chat CLI menjalankan pembuatan karakter, pemulihan job karakter yang sama,
-dan video Agent melalui `browser_app`. Penilaian aksen/timbre menunggu pengguna.
-Langkah berikutnya adalah rolling akun Flow nyata pada FLO-04, kemudian Gemini.
-Penerimaan kanal nyata pada CTX-01/PRO-02 tetap terbuka.
+**Rolling akun Flow nyata lulus pada paket 0.3.0 dan host 0.10.1.** Sumber yang
+kreditnya habis dilanjutkan ke akun tujuan melalui profil Chrome asli. Jalur
+klasik membawa definisi karakter/suara, membuat serta memverifikasi aset tujuan,
+memulihkan job yang sama, lalu mengunduh MP4 720 × 1280 dengan video lima detik
+dan audio AAC. Hermes chat CLI menjalankan rolling mode Agent dengan gambar
+potret lokal dan menghasilkan MP4 dengan ukuran serta durasi yang sama.
+Hash dan decode penuh kedua file lulus. Sampel suara tujuan tersedia untuk
+penilaian aksen/timbre pengguna. Peristiwa reset kuota akun Flow nyata belum
+diamati. Logika kunjung ulang profil memiliki bukti regresi dan fixture native.
+Gemini serta penerimaan kanal nyata pada CTX-01/PRO-02 tetap terbuka.
 
 Dokumen ini menjadi acuan spesifikasi, status implementasi, pemasangan, verifikasi,
 dan pekerjaan tersisa. Status yang sudah memiliki bukti menjadi titik awal sesi
@@ -19,20 +21,20 @@ berikutnya. Riwayat rinci sebelum PRD tersedia pada bagian sumber bukti.
 
 | Area | Implementasi | Terpasang lokal | Verifikasi dan status |
 | --- | --- | --- | --- |
-| Browser Chrome asli | Baseline dipakai dalam 0.10.0 | Ya, plugin aktif dan provider dipilih | 286 tes otomatis lulus. Regresi native browser umum/multiprofil diulang. Cleanup akhir turn serta disable memakai nama sesi terkini setelah perpindahan profil. Startup/Dock mengacu source baseline. |
+| Browser Chrome asli | Baseline dipakai dalam 0.10.1 | Ya, plugin aktif dan provider dipilih | 315 tes otomatis serta uji native browser/rolling lulus. Host browser mempertahankan source baseline. Cleanup akhir turn serta disable memakai nama sesi terkini setelah perpindahan profil. Startup/Dock mengacu source baseline. |
 | Inventori/default/profil per sesi | Tersedia pada 0.7.0 | Ya | Penerimaan native empat agen/multiprofil diulang dan lulus. |
 | Panduan `chrome_profiles` | Tersedia pada 0.7.0 | Ya | Schema aturan profil dibaca melalui `tool_describe` pada chat CLI baru. |
 | Pemuat dan lifecycle extension pengguna | List/describe/run/enable/disable/remove | Ya, gateway direload resmi | 33 regresi khusus paket dan uji native enam jendela, disable/remove, serta pekerjaan lintas turn lulus. Paket produksi Gemini/Flow masih terbuka. |
 | Profil tetap/acak/per platform/subagent | Implementasi tersedia pada 0.8.0 | Ya | Regresi aturan profil dan uji native pemilihan profil child per paket lulus. Kanal nyata mengikuti item terbuka. |
 | Rolling generik dan handoff | Implementasi tersedia pada 0.8.0 | Ya, gateway direload resmi | 31 regresi rolling lulus. Fixture CDP UI membuktikan A -> B -> C, profil sumber pending bersama peer, source receipt setelah Stop/reload, serta preservasi browser umum/extension lain/manual. |
 | Extension Gemini | Source dan pilot UI mandiri tersedia | Belum sebagai extension plugin | Regresi source 588 lulus, 40 tes live dilewati. Migrasi UI/routing dan penerimaan extension masih terbuka. |
-| Extension Google Flow | Paket `site_apps/flow` 0.2.0 pada host 0.10.0 | Ya, salinan eksternal `browser-apps/flow` | Gambar/video klasik serta Agent diunduh dan didekode. JPEG, Ingredients, dua frame, karakter tersimpan dan suara kustom terverifikasi. Hermes chat CLI menghasilkan video Agent dengan kedua referensi. Rolling akun nyata mengikuti FLO-04. |
+| Extension Google Flow | Paket `site_apps/flow` 0.3.0 pada host 0.10.1 | Ya, salinan eksternal `browser-apps/flow` | Gambar/video klasik serta Agent diunduh dan didekode. JPEG, Ingredients, dua frame, karakter tersimpan dan suara kustom terverifikasi. Hermes chat CLI menghasilkan video Agent dengan kedua referensi. Rolling nyata klasik dan Agent lulus. Reset kuota provider nyata mengikuti FLO-04. |
 
 Status konfigurasi lokal diperiksa pada 16 November 2026. Browser provider bernilai
-`original-chrome-default`, dan plugin tercantum aktif. Gateway sudah reload dengan source 0.10.0
+`original-chrome-default`, dan plugin tercantum aktif. Gateway sudah reload dengan source 0.10.1
 melalui mekanisme resmi Hermes. Respons memuat hook plugin termasuk
 `subagent_start`, serta tool `browser_app`/`chrome_profiles` untuk sesi baru.
-Chat CLI 0.10.0 memuat source host/paket yang diperbarui, membaca schema/panduan
+Chat CLI memuat source host/paket yang diperbarui, membaca schema/panduan
 serta menjalankan karakter dan video Agent. Probe native/checkpoint dari chat CLI
 sesudah reload 0.9.0 tetap menjadi bukti fondasi integrasi.
 Source pembanding Gemini berada pada `957aed5`, Flow mandiri pada `79d810a`.
@@ -401,11 +403,29 @@ identitas media dan file asli dapat dikaitkan dengan permintaan asal.
   binding ulang yang mempertahankan chip serta preview/save tanpa replay.
   URL preview stok sempat terbaca pada editor ketika data suara masih dimuat.
   Readback akhir menunggu sumber audio kustom yang benar.
-- [ ] **FLO-04** Rolling serta kelanjutan proyek pada akun tujuan. Uji konteks,
-  media lokal, referensi tujuan, dan hasil yang sudah diterima pada akun asal.
-  Callback paket tersedia. Penolakan kuota memerlukan bukti UI dari permintaan
-  sumber, dan referensi lokal dibawa ke parameter tujuan. Penerimaan kuota habis,
-  isi ulang serta kelanjutan lintas akun Flow nyata masih terbuka.
+- [ ] **FLO-04** Rolling serta kelanjutan proyek pada akun tujuan.
+  - [x] Kuota sumber nyata habis, lalu Default → profil tujuan pada mode klasik
+    serta Agent. Bukti berasal dari panel akun dan harga native model yang dipilih.
+  - [x] File lokal serta pengaturan dibawa ke proyek tujuan yang identitasnya
+    disimpan sebelum pengeditan judul. Pemulihan mempertahankan proyek tersebut.
+  - [x] Karakter dan suara tujuan dibuat dari definisi sumber yang tersedia,
+    dibaca ulang setelah tersimpan, dan diverifikasi pada ingredient video.
+    Remix native yang diuji belum menghasilkan preset suara kustom yang valid.
+  - [x] Preview/save suara dan pembuatan karakter memiliki receipt persiapan
+    tersendiri di bawah job induk. ID aset persiapan terpisah dari receipt video.
+  - [x] Video klasik tujuan serta video Agent melalui Hermes diunduh, cocok
+    hash/ukuran filenya dan lulus decode penuh. Keduanya 720 × 1280 dengan video
+    lima detik dan audio AAC. Job klasik pulih setelah persiapan terhenti.
+  - [x] Output sumber yang sudah selesai tetap dipertahankan saat sisa jumlah
+    output diteruskan. Cakupan ini diuji dengan regresi terarah. Fixture native
+    menguji A → B → C, source pending, Stop/reload, dan preservasi peer/manual.
+  - [ ] Reset/isi ulang kuota akun Flow nyata, lalu kunjung ulang profil awal.
+    Peristiwa provider ini belum diamati. Regresi generik mencakup perubahan
+    ketersediaan kuota serta profil yang kembali tersedia.
+  Uji video unggahan dengan permintaan perubahan suara ditolak oleh Flow dan
+  menampilkan pemberitahuan refund. Kegagalan provider tanpa identitas hasil
+  tetap memerlukan inspeksi pada job sumber. Penilaian aksen/timbre suara tujuan
+  dilakukan pengguna dari WAV aslinya.
 
 ## 8. Verifikasi integrasi dan distribusi
 
@@ -473,6 +493,9 @@ perilaku bersama profil Chrome asli.
 | `tests/test_*.py`, 170 lulus | Regresi plugin 0.5.2. Pemasangan/provider aktif diperiksa kembali saat penyusunan PRD. |
 | `tests/test_*.py`, 192 lulus pada 0.6.0 | Termasuk 22 regresi pemuat paket, identitas, relative import dan pembaruan source. |
 | `tests/test_*.py`, 216 lulus pada 0.7.0 | 33 tes paket dan 13 tes aturan profil, termasuk lifecycle paralel, checkpoint, pending lintas turn, prioritas aturan serta konfigurasi terpisah. |
+| `tests/test_*.py`, 315 lulus pada 0.10.1 | Termasuk handoff multi-output, harga native, preservasi hasil sumber, receipt persiapan per job/profil, pemulihan project/unggahan, hidrasi ingredient, serta pilihan suara karakter. |
+| Flow 0.3.0 pada akun nyata dan Hermes chat CLI | Sumber nol kredit berlanjut ke akun tujuan. Video klasik dengan karakter/suara tujuan serta video Agent dengan potret lokal selesai, cocok SHA-256 dan lulus decode penuh. Peer sentinel mempertahankan time origin dan isi selama rolling Hermes. |
+| `live_native.py` dan `live_rolling.py` pada 0.10.1 | Input focus, empat jendela agen terpisah, Stop/reload, hasil fixture A → B → C, preservasi manual/peer dan cleanup pemilik lulus. Browser Harness sesuai RECORD. |
 | `tests/test_*.py`, 286 lulus pada 0.10.0 | Regresi bundel serta Flow, termasuk karakter/suara, identitas dan pemulihan job, menu Upload, namespace nama file antar agen, readback suara asinkron dan penggantian editor Agent. |
 | Paket Flow 0.2.0 melalui CDP native | Bukti 0.9.0 untuk gambar/video, JPEG, Ingredients dan dua frame dipertahankan. Pembuatan karakter serta WAV suara kustom dan video klasik dengan kedua referensi lulus pada 0.10.0. Model uji Nano Banana 2.1 dan Omni 1.2 Flash. |
 | Hermes chat CLI dengan Flow 0.2.0 | Karakter tersimpan selesai melalui pemulihan ID yang sama. Video Agent dengan karakter/suara dikirim sekali dan menghasilkan MP4 720 × 1280, video 5 detik dan audio AAC. Hash dan decode penuh independen lulus. Sampel audio tersedia untuk penilaian pengguna. |

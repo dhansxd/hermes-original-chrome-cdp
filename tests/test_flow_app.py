@@ -83,6 +83,7 @@ class FlowAppTests(unittest.TestCase):
         ui.click = Mock()
         ui.read = Mock(return_value=[{'value': 'Native model', 'disabled': False}])
         ui.execute = Mock()
+        ui.wait = Mock()
         ui.model('agent', 'video')
         self.assertEqual(ui.click.call_args.args, ('[role=menuitem]', 'Native model'))
         ui.execute.assert_not_called()
@@ -155,7 +156,7 @@ class FlowAppTests(unittest.TestCase):
             ui.context.profile = 'Default'
             ui.read.return_value = '/project/id'
             finder = Mock()
-            with patch.dict(self.app.upload.__globals__, {'picker': Mock(), 'find_asset': finder}):
+            with patch.dict(self.app.upload.__globals__, {'upload_picker': Mock(), 'find_asset': finder}):
                 result = self.app.upload(ui, directory, str(source))
             self.assertEqual(result['sha256'], digest)
             finder.assert_called_once_with(ui, digest + '.jpg')
@@ -252,7 +253,7 @@ class FlowAppTests(unittest.TestCase):
         references = sys.modules[self.app.bind.__module__]
         ui = Mock()
         ui.snapshot.return_value = {'references': [{'kind': 'voice', 'name': '', 'ready': True, 'disabled': False}]}
-        with patch.object(references, 'voice_binding', return_value='https://flow-content.google/audio/other?token=temp'):
+        with patch.object(references, 'voice_binding', return_value={'source': 'https://flow-content.google/audio/other?token=temp', 'text': ''}):
             with self.assertRaisesRegex(RuntimeError, 'audio ID'):
                 references.verify_binding(ui, {'kind': 'voice'}, {'id': 'wanted'})
 
@@ -333,7 +334,7 @@ class FlowAppTests(unittest.TestCase):
                                 'cdp': cdp, 'js': lambda expression: True, 'wait': lambda seconds: None})
 
                 ui.execute.side_effect = execute
-                with patch.dict(self.app.upload.__globals__, {'picker': Mock()}):
+                with patch.dict(self.app.upload.__globals__, {'upload_picker': Mock()}):
                     self.app.upload(ui, directory, str(source))
                 self.assertEqual(keys.count('Enter'), int(not pointer_opens_chooser))
                 self.assertEqual(len(assignments), 1)
@@ -350,7 +351,7 @@ class FlowAppTests(unittest.TestCase):
                 ui = Mock()
                 ui.context.profile = 'Default'
                 ui.read.side_effect = ['/project/shared', False, True]
-                with patch.dict(self.app.upload.__globals__, {'picker': Mock()}):
+                with patch.dict(self.app.upload.__globals__, {'upload_picker': Mock()}):
                     results.append(self.app.upload(ui, directory, str(source)))
             self.assertEqual(results[0]['sha256'], results[1]['sha256'])
             self.assertNotEqual(results[0]['title'], results[1]['title'])
@@ -435,7 +436,8 @@ class FlowAppTests(unittest.TestCase):
                 patch.object(self.app.entities, 'reference', return_value=None), \
                 patch.object(self.app, 'observe_generation', side_effect=observe), \
                 patch.object(self.app.shutil, 'which', return_value='/tool'):
-            value = self.app.generate(Mock(), ui, 'generate_video', {
+            context = Mock(directory=Path(self.enterContext(tempfile.TemporaryDirectory())), profile='Default')
+            value = self.app.generate(context, ui, 'generate_video', {
                 'prompt': 'A quiet conversation', 'references': [{'kind': 'character', 'title': 'Character'}]})
         self.assertEqual(value['status'], 'running')
         self.assertEqual(marker['reads'], 2)
@@ -455,10 +457,421 @@ class FlowAppTests(unittest.TestCase):
             key = hashlib.sha256(json.dumps(['Default','project','Voice','voice',None]).encode()).hexdigest()
             (folder / ('binding-' + key + '.json')).write_text(json.dumps({
                 'kind': 'voice', 'media_id': 'saved', 'reference': chip}))
-            with patch.object(references, 'voice_binding', return_value='https://flow-content.google/audio/saved'):
+            with patch.object(references, 'voice_binding', return_value={'source': 'https://flow-content.google/audio/saved', 'text': 'Voice'}):
                 value = self.app.bind(ui, 'Voice', 'voice')
             self.assertTrue(value['already_bound'])
             ui.click.assert_not_called()
+
+    def test_handoff_uses_portable_references_remaining_count_and_one_destination(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), profile='Profile 2', job_id='job')
+            context.checkpoint.side_effect = lambda value: (Path(root) / 'checkpoint.json').write_text(json.dumps(value))
+            ui = Mock()
+            ui.read.side_effect = ['https://flow.google.com/', True]
+            reference = {'path': '/local/portrait.jpg', 'kind': 'image', 'slot': 'first'}
+            packet = {'params': {'project': 'source', 'prompt': 'Original scene', 'count': 3},
+                      'remaining': {'references': [reference], 'remaining_count': 1}}
+            with patch.object(self.app, 'ensure', return_value=ui), \
+                    patch.object(self.app, 'create_project', return_value={'url': 'https://flow.google.com/project/target'}) as create:
+                first = self.app.handoff(context, packet)
+                second = self.app.handoff(context, packet)
+            create.assert_called_once()
+            self.assertEqual(first['params'], second['params'])
+            self.assertEqual(first['params']['references'], [reference])
+            self.assertEqual(first['params']['count'], 1)
+            self.assertEqual(first['params']['prompt'], 'Original scene')
+            self.assertEqual(first['params']['project'], 'https://flow.google.com/project/target')
+            self.assertEqual(packet['params']['project'], 'source')
+            self.assertEqual(first['request']['state'], 'not_submitted')
+
+    def test_handoff_preflight_preserves_original_local_references(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), profile='Profile 2', job_id='job')
+            ui = Mock()
+            ui.read.return_value = 'https://flow.google.com/'
+            reference = {'path': '/local/portrait.jpg', 'kind': 'image'}
+            with patch.object(self.app, 'ensure', return_value=ui), \
+                    patch.object(self.app, 'create_project', return_value={'url': 'https://flow.google.com/project/target'}):
+                result = self.app.handoff(context, {'params': {'references': [reference]}})
+            self.assertEqual(result['params']['references'], [reference])
+
+    def test_handoff_resume_uses_destination_preparation_without_source_observation(self):
+        with patch.object(self.app, 'handoff', return_value={'status': 'ok'}) as handoff, \
+                patch.object(self.app, 'observe_generation') as observe:
+            packet = {'params': {'prompt': 'scene'}}
+            self.app.resume(Mock(), {'phase': 'handoff', 'handoff': packet})
+            handoff.assert_called_once()
+            self.assertEqual(handoff.call_args.args[1], packet)
+            observe.assert_not_called()
+
+    def test_interrupted_destination_creation_captures_owned_native_url(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), profile='Profile 2', job_id='job')
+            path = Path(root) / 'checkpoint.json'
+            path.write_text(json.dumps({'job': 'job', 'operation': 'handoff', 'stage': 'create_intent',
+                                       'profile': 'Profile 2', 'before': 'https://flow.google.com/', 'params': {}}))
+            ui = Mock()
+            ui.read.side_effect = ['https://flow.google.com/project/created', 'job']
+            self.app.capture_destination(context, ui)
+            saved = context.checkpoint.call_args.args[0]
+            self.assertEqual(saved['stage'], 'prepared')
+            self.assertEqual(saved['params']['project'], 'https://flow.google.com/project/created')
+            self.assertEqual(self.app.local_state(context)['projects']['Profile 2'], 'https://flow.google.com/project/created')
+            ui.click.assert_not_called()
+
+    def test_unknown_destination_creation_is_preserved_without_navigation_or_recreation(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), profile='Profile 2', job_id='job')
+            (Path(root) / 'checkpoint.json').write_text(json.dumps({
+                'job': 'job', 'operation': 'handoff', 'stage': 'create_intent',
+                'profile': 'Profile 2', 'before': 'https://flow.google.com/', 'params': {}}))
+            ui = Mock()
+            ui.read.side_effect = ['https://flow.google.com/project/other', 'another-job']
+            with self.assertRaisesRegex(RuntimeError, 'original destination'):
+                self.app.capture_destination(context, ui)
+            ui.execute.assert_not_called()
+            ui.click.assert_not_called()
+
+    def test_created_destination_identity_is_checkpointed_before_title_edit(self):
+        context = Mock()
+        ui = Mock()
+        ui.read.side_effect = ['/', 'https://flow.google.com/project/created']
+        ui.fill.side_effect = RuntimeError('title editor changed')
+        checkpoint = {'params': {}, 'stage': 'create_intent'}
+        with patch.object(self.app, 'local_state', return_value={}), patch.object(self.app, 'save_state'):
+            with self.assertRaisesRegex(RuntimeError, 'title editor'):
+                self.app.create_project(context, ui, 'Continued project', checkpoint)
+        self.assertEqual(checkpoint['stage'], 'prepared')
+        self.assertEqual(checkpoint['params']['project'], 'https://flow.google.com/project/created')
+        context.checkpoint.assert_called_once()
+
+    def test_attached_voice_is_reconciled_without_a_binding_receipt(self):
+        references = sys.modules[self.app.bind.__module__]
+        with tempfile.TemporaryDirectory() as root:
+            ui = Mock()
+            ui.context.directory = Path(root)
+            ui.context.profile = 'Default'
+            ui.snapshot.return_value = {'url': 'project', 'references': [
+                {'kind': 'voice', 'name': '', 'ready': True, 'disabled': False}]}
+            with patch.object(references, 'voice_binding', return_value={
+                    'source': 'https://flow-content.google/audio/existing', 'text': 'voice_selection\nWanted voice'}):
+                result = self.app.bind(ui, 'Wanted voice', 'voice')
+            self.assertEqual(result['media_id'], 'existing')
+            self.assertTrue(result['already_bound'])
+            self.assertEqual(len(list((Path(root) / 'references').glob('binding-*.json'))), 1)
+            ui.click.assert_not_called()
+
+    def test_selecting_another_voice_replaces_the_previous_voice(self):
+        references = sys.modules[self.app.bind.__module__]
+        with tempfile.TemporaryDirectory() as root:
+            ui = Mock()
+            ui.context.directory = Path(root)
+            ui.context.profile = 'Default'
+            state = {'url': 'project', 'ingredients': [], 'frames': [], 'references': [
+                {'kind': 'voice', 'name': '', 'ready': True, 'disabled': False}]}
+            ui.snapshot.return_value = state
+            ui.read.side_effect = [['before'], None, False, ['after']]
+            with patch.object(references, 'voice_binding', side_effect=[
+                    {'source': 'https://flow-content.google/audio/old', 'text': 'Old voice'},
+                    {'source': 'https://flow-content.google/audio/new', 'text': 'New voice'}]), \
+                    patch.object(references, 'select_asset') as select:
+                result = self.app.bind(ui, 'New voice', 'voice', expected={'id': 'new'})
+            self.assertEqual(result['media_id'], 'new')
+            select.assert_called_once_with(ui, 'New voice', 'voice')
+
+    def test_quota_preflight_uses_native_price_and_allows_free_generation(self):
+        for balance, quote, operation, refused in (
+                (0, 'Pembuatan akan menggunakan 9 kredit', 'generate_video', True),
+                (8, 'Pembuatan akan menggunakan 9 kredit', 'generate_video', True),
+                (9, 'Pembuatan akan menggunakan 9 kredit', 'generate_video', False),
+                (0, 'Pembuatan akan menggunakan 0 kredit', 'generate_image', False),
+                (1000, 'Generation will use 1,050 credits', 'generate_video', True)):
+            with self.subTest(balance=balance, quote=quote):
+                ui = Mock()
+                ui.read.side_effect = ['editor', 'editor', 'scene']
+                ui.snapshot.return_value = {'url': 'project', 'ingredients': [], 'references': [],
+                                            'frames': [], 'tiles': [], 'notices': []}
+                settings = {'mode': 'classic', 'groups': [], 'models': [],
+                            'duration': None, 'approval': None, 'quote': quote}
+                context = Mock(job_id='job', profile='Default',
+                               directory=Path(self.enterContext(tempfile.TemporaryDirectory())))
+
+                def observe(context, ui, checkpoint):
+                    checkpoint['request_id'] = 'native'
+                    return {'status': 'running'}
+
+                with patch.object(self.app, 'configure', return_value=settings), \
+                        patch.object(self.app, 'account', return_value={'credits': balance}), \
+                        patch.object(self.app, 'observe_generation', side_effect=observe), \
+                        patch.object(self.app.shutil, 'which', return_value='/tool'):
+                    result = self.app.generate(context, ui, operation, {'prompt': 'scene'})
+                if refused:
+                    self.assertEqual(result['status'], 'quota_exhausted')
+                    self.assertFalse(context.checkpoint.call_args.args[0]['submit_intent'])
+                    ui.click.assert_not_called()
+                else:
+                    self.assertEqual(result['status'], 'running')
+                    ui.click.assert_called_once_with('flow-generate-icon-button button')
+
+    def test_partial_quota_refusal_collects_completed_outputs_before_handoff(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root))
+            ui = Mock()
+            ui.snapshot.return_value = {'tiles': [{'kind': 'image', 'id': 'native', 'ready': True}],
+                                        'notices': ['Not enough credits']}
+            ui.read.side_effect = [['Ukuran asli'], '/project/source']
+            checkpoint = {'operation': 'generate_image', 'project': 'source', 'prompt': 'scene',
+                          'kind': 'image', 'count': 3, 'baseline': [], 'notices_before': [],
+                          'settings': {'mode': 'classic'}, 'portable_references': [{'path': '/source/reference.png'}]}
+            file = {'path': '/source/completed.png'}
+            with patch.object(self.app, 'open_output'), patch.object(self.app, 'collect', return_value=file), \
+                    patch.object(self.app, 'verify', return_value=file):
+                result = self.app.observe_generation(context, ui, checkpoint)
+            self.assertEqual(result['status'], 'quota_exhausted')
+            self.assertEqual(result['request']['id'], 'native')
+            self.assertTrue(result['request']['terminal'])
+            self.assertEqual(result['handoff']['remaining_count'], 2)
+            self.assertEqual(result['handoff']['completed'], [file])
+            self.assertIn('/source/completed.png', result['handoff']['files'])
+
+    def test_quota_notice_preserves_pending_source_outputs(self):
+        context = Mock()
+        ui = Mock()
+        ui.snapshot.return_value = {'tiles': [{'kind': 'image', 'id': 'native', 'ready': False}],
+                                    'notices': ['Not enough credits']}
+        checkpoint = {'operation': 'generate_image', 'project': 'source', 'kind': 'image', 'count': 2,
+                      'baseline': [], 'notices_before': [], 'settings': {}}
+        result = self.app.observe_generation(context, ui, checkpoint)
+        self.assertEqual(result['status'], 'running')
+        self.assertEqual(result['request']['id'], 'native')
+        self.assertNotIn('handoff', result)
+
+    def test_video_upload_recovery_uses_native_stem_without_reuploading(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            source = directory / 'clip.mp4'
+            source.write_bytes(b'video')
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            files = directory / 'references'
+            files.mkdir()
+            local = files / (digest + '-owner.mp4')
+            local.write_bytes(source.read_bytes())
+            key = hashlib.sha256(('Default/project/p' + digest).encode()).hexdigest()
+            (files / (key + '.json')).write_text(json.dumps({
+                'version': 2, 'complete': False, 'assignment_intent': True,
+                'path': str(local), 'title': local.name}))
+            ui = Mock()
+            ui.context.profile = 'Default'
+            ui.read.return_value = '/project/p'
+            finder = Mock()
+            with patch.dict(self.app.upload.__globals__, {'upload_picker': Mock(), 'find_asset': finder}):
+                result = self.app.upload(ui, directory, str(source))
+            self.assertEqual(result['title'], local.stem)
+            self.assertEqual(result['filename'], local.name)
+            self.assertEqual(result['path'], str(local))
+            finder.assert_called_once_with(ui, local.stem)
+            ui.click.assert_not_called()
+
+    def test_complete_video_receipt_preserves_the_local_file_extension(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            source = directory / 'clip.mp4'
+            source.write_bytes(b'video')
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            files = directory / 'references'
+            files.mkdir()
+            key = hashlib.sha256(('Default/project/p' + digest).encode()).hexdigest()
+            (files / (key + '.json')).write_text(json.dumps({
+                'complete': True, 'title': digest, 'filename': digest + '.mp4'}))
+            ui = Mock()
+            ui.context.profile = 'Default'
+            ui.read.return_value = '/project/p'
+            result = self.app.upload(ui, directory, str(source))
+            self.assertTrue(result['path'].endswith('.mp4'))
+            self.assertEqual(result['title'], digest)
+            ui.execute.assert_not_called()
+
+    def test_media_binding_waits_for_image_inside_the_new_chip(self):
+        references = sys.modules[self.app.bind.__module__]
+        ui = Mock()
+        references.wait_for_media(ui, 'image')
+        expression = ui.wait.call_args.args[0]
+        self.assertIn('chips.length>0', expression)
+        self.assertIn("e.querySelector('img')", expression)
+        self.assertIn('i?.complete&&i.naturalWidth>0', expression)
+
+
+    def test_switch_to_classic_closes_agent_panel_before_toggling(self):
+        ui = self.app.UI(Mock())
+        ui.snapshot = Mock(return_value={'mode': 'agent'})
+        ui.read = Mock(return_value=True)
+        ui.click = Mock()
+        ui.wait = Mock()
+        ui.mode('classic')
+        self.assertIn('flow-agent-panel', ui.click.call_args_list[0].args[0])
+        self.assertEqual(ui.click.call_args_list[1].args, ('button.agent-mode-chip',))
+        self.assertIn('flow-agent-panel', ui.wait.call_args_list[0].args[0])
+
+    def test_empty_error_retains_exception_type(self):
+        with patch.object(self.app, 'ensure', side_effect=StopIteration):
+            value = self.app.run(Mock(), 'inspect', {})
+        self.assertEqual(value['message'], 'StopIteration')
+        self.assertEqual(value['error']['type'], 'StopIteration')
+
+    def test_voice_metadata_survives_character_voice_link_readback(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), profile='Default')
+            voice = {'kind': 'voice', 'id': 'native', 'project': 'project', 'name': 'Voice',
+                     'base': 'Achird', 'dialogue': 'Sample', 'performance': 'Calm'}
+            self.app.entities.remember(context, voice)
+            self.app.entities.remember(context, {key: voice[key] for key in ('kind', 'id', 'project', 'name')})
+            value = self.app.entities.reference(context, 'voice', 'Voice', 'project')
+            self.assertEqual(self.app.entities.definition(context, value)['base'], 'Achird')
+
+    def test_handoff_requires_creation_definition_for_native_voice(self):
+        result = self.app.handoff(Mock(), {'params': {'references': [{'kind': 'voice', 'title': 'Voice'}]}})
+        self.assertEqual(result['status'], 'needs_inspection')
+        self.assertIn('creation definition', result['message'])
+
+    def test_child_entity_receipt_never_accepts_parent_video_request(self):
+        with tempfile.TemporaryDirectory() as root:
+            parent = Mock(directory=Path(root), profile='Profile 2', job_id='parent')
+            position = {'active_entity': 'voice-0'}
+            child = self.app.preparation.EntityContext(parent, position, 'voice-0')
+            child.checkpoint({'native_id': 'voice-id'})
+            child.accepted('voice-id')
+            parent.accepted.assert_not_called()
+            self.assertEqual(json.loads((child.directory / 'checkpoint.json').read_text())['native_id'], 'voice-id')
+            self.assertEqual(parent.checkpoint.call_args.args[0], position)
+
+    def test_prepared_entity_recovery_clears_stale_active_child_without_creation(self):
+        with tempfile.TemporaryDirectory() as root:
+            parent = Mock(directory=Path(root), profile='Profile 2', job_id='parent')
+            position = {'active_entity': 'voice-0'}
+            child = self.app.preparation.EntityContext(parent, position, 'voice-0')
+            data = {'kind': 'voice', 'id': 'saved', 'name': 'Voice', 'project': 'target'}
+            (child.directory / 'result.json').write_text(json.dumps(data))
+            with patch.object(self.app.entities, 'create_voice') as create:
+                value = self.app.preparation.prepare(parent, position, 'voice-0', 'voice', {})
+            self.assertEqual(value['id'], 'saved')
+            self.assertNotIn('active_entity', position)
+            self.assertEqual(self.app.entities.reference(parent, 'voice', 'Voice', 'target')['id'], 'saved')
+            create.assert_not_called()
+
+    def test_separate_generation_jobs_never_share_prepared_entity_receipts(self):
+        with tempfile.TemporaryDirectory() as root:
+            parent = Mock(directory=Path(root), profile='Profile 2', job_id='first')
+            first = self.app.preparation.EntityContext(parent, {}, 'voice-0')
+            parent.job_id = 'second'
+            second = self.app.preparation.EntityContext(parent, {}, 'voice-0')
+            self.assertNotEqual(first.directory, second.directory)
+            self.assertNotEqual(first.job_id, second.job_id)
+
+    def test_partial_outputs_from_prior_accounts_are_kept_in_next_handoff(self):
+        context = Mock()
+        checkpoint = {'operation': 'generate_video', 'count': 2,
+                      'continued_files': [{'path': '/first.mp4'}], 'files': [{'path': '/second.mp4'}]}
+        value = self.app.quota_rejection(context, checkpoint, 'Native credit refusal')
+        self.assertEqual(value['handoff']['remaining_count'], 1)
+        self.assertEqual(value['handoff']['files'], ['/first.mp4', '/second.mp4'])
+
+    def test_extra_unattributed_outputs_never_trigger_terminal_quota_handoff(self):
+        ui = Mock()
+        ui.snapshot.return_value = {'tiles': [
+            {'kind': 'image', 'id': 'one'}, {'kind': 'image', 'id': 'two'}], 'notices': ['Not enough credits']}
+        value = self.app.observe_generation(Mock(), ui, {'kind': 'image', 'baseline': [], 'count': 1})
+        self.assertEqual(value['status'], 'needs_inspection')
+        self.assertNotIn('handoff', value)
+
+    def test_upload_picker_handles_rights_dialog_that_appears_after_first_probe(self):
+        module = sys.modules[self.app.upload.__module__]
+        ui = Mock()
+        ui.read.return_value = []
+        with patch.object(module, 'acknowledge_upload', side_effect=[False, True]) as acknowledge, \
+                patch.object(module, 'picker', side_effect=[RuntimeError('Modal covers picker'), None]) as picker:
+            module.upload_picker(ui)
+        self.assertEqual(acknowledge.call_count, 2)
+        self.assertEqual(picker.call_count, 2)
+        ui.execute.assert_not_called()
+
+    def test_upload_picker_does_not_hide_an_unrelated_failure(self):
+        module = sys.modules[self.app.upload.__module__]
+        with patch.object(module, 'acknowledge_upload', return_value=False), \
+                patch.object(module, 'picker', side_effect=RuntimeError('Unrelated failure')) as picker:
+            with self.assertRaisesRegex(RuntimeError, 'Unrelated failure'):
+                module.upload_picker(Mock())
+        picker.assert_called_once()
+
+    def test_zero_credit_agent_uses_live_model_price_then_restores_agent(self):
+        ui = Mock()
+        group = lambda value: {'options': [{'value': value, 'selected': True}]}
+        agent = {'mode': 'agent', 'groups': [group('9:16'), group('x1'), group('9:16'), group('x1')],
+                 'models': [{'selector': 'video', 'value': 'Native model'}], 'duration': None, 'approval': '2'}
+        ui.snapshot.return_value = {'url': 'project', 'ingredients': [], 'references': [],
+                                    'frames': [], 'tiles': [], 'notices': []}
+        prompt = 'Create exactly 1 video output(s) now using Native model. The output aspect ratio must be 9:16. scene'
+        ui.read.side_effect = ['editor', 'editor', prompt]
+        context = Mock(directory=Path(self.enterContext(tempfile.TemporaryDirectory())), profile='Default', job_id='job')
+        params = {'mode': 'agent', 'prompt': 'scene'}
+        with patch.object(self.app, 'configure', side_effect=[agent, {'quote': 'Uses 9 credits'}, agent]) as configure, \
+                patch.object(self.app, 'account', return_value={'credits': 0}), \
+                patch.object(self.app.shutil, 'which', return_value='/tool'):
+            value = self.app.generate(context, ui, 'generate_video', params)
+        self.assertEqual(value['status'], 'quota_exhausted')
+        self.assertIn('native classic composer', value['quota']['evidence'])
+        self.assertEqual(configure.call_args.args[1], params)
+        ui.click.assert_not_called()
+
+    def test_portable_character_definition_includes_original_voice_recipe(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), profile='Default')
+            self.app.entities.remember(context, {'kind': 'voice', 'id': 'audio', 'project': 'p',
+                'name': 'Voice', 'base': 'Achird', 'dialogue': 'Sample', 'performance': 'Calm'})
+            value = self.app.entities.definition(context, {'kind': 'character', 'name': 'Actor',
+                'reference': {'path': '/portrait.jpg'}, 'voice': {'name': 'Voice', 'id': 'audio'}})
+            self.assertEqual(value['path'], '/portrait.jpg')
+            self.assertEqual(value['voice_definition']['base'], 'Achird')
+
+    def test_cached_source_quota_still_recovers_saved_source_voice_definition(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), job_id='job', profile='Default')
+            source = 'https://flow.google.com/project/source'
+            self.app.entities.remember(context, {'kind': 'voice', 'id': 'audio', 'project': source,
+                'name': 'Voice', 'base': 'Achird', 'dialogue': 'Sample', 'performance': 'Calm'})
+            context.profile = 'Profile 2'
+            ui = Mock()
+            ui.read.return_value = 'https://flow.google.com/'
+            packet = {'source': {'profile': 'Default'}, 'params': {
+                'project': source, 'references': [{'kind': 'voice', 'title': 'Voice'}]}}
+            with patch.object(self.app, 'ensure', return_value=ui), patch.object(self.app, 'configure'), \
+                    patch.object(self.app, 'create_project', return_value={'url': 'https://flow.google.com/project/target'}), \
+                    patch.object(self.app.preparation, 'references', return_value=[]):
+                value = self.app.handoff(context, packet)
+            self.assertEqual(value['params']['references'][0]['definition']['base'], 'Achird')
+
+    def test_classic_uses_updated_native_quote_after_reference_binding(self):
+        context = Mock(directory=Path(self.enterContext(tempfile.TemporaryDirectory())), profile='Default', job_id='job')
+        ui = Mock()
+        ui.read.side_effect = ['editor', 'https://flow.google.com/project/p', 'editor', 'scene']
+        ui.snapshot.return_value = {'url': 'project', 'ingredients': [], 'references': [],
+                                    'frames': [], 'tiles': [], 'notices': [], 'quote': 'Uses 9 credits'}
+        settings = {'mode': 'classic', 'groups': [], 'models': [], 'duration': None,
+                    'approval': None, 'quote': 'Uses 15 credits'}
+
+        def observe(context, ui, checkpoint):
+            checkpoint['request_id'] = 'native'
+            return {'status': 'running'}
+
+        with patch.object(self.app, 'configure', return_value=settings), \
+                patch.object(self.app, 'account', return_value={'credits': 9}), \
+                patch.object(self.app, 'bind', return_value={'kind': 'image'}), \
+                patch.object(self.app, 'observe_generation', side_effect=observe), \
+                patch.object(self.app.shutil, 'which', return_value='/tool'):
+            value = self.app.generate(context, ui, 'generate_video', {
+                'prompt': 'scene', 'references': [{'kind': 'image', 'title': 'Portrait'}]})
+        self.assertEqual(value['status'], 'running')
+        self.assertEqual(context.checkpoint.call_args.args[0]['quota_quote'], 'Uses 9 credits')
+        ui.click.assert_called_once_with('flow-generate-icon-button button')
 
 
 if __name__ == '__main__':

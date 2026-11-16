@@ -15,10 +15,10 @@ choose the same profile or different profiles, each with their own windows.
 
 Use `browser_app` to discover and run user-owned website extension packages.
 Their Python code and guides live outside the plugin installation and can be
-updated independently. Version 0.10.0 adds saved Flow characters and custom
-voices to the package lifecycle, independent profile policies and durable jobs.
-Classic and Agent image/video generation have original-file acceptance evidence.
-Real-account rolling and the Gemini package follow the open checklist in
+updated independently. Version 0.10.1 bundles Flow 0.3.0 with real-account rolling,
+portable reference files and destination character/voice preparation. Classic and
+Agent rolling both produced original MP4 files, with the Agent test run by Hermes.
+Provider quota-reset acceptance and the Gemini package follow the open checklist in
 [PLAN.md](PLAN.md).
 
 On first package discovery, the bundled Flow template is copied to
@@ -56,7 +56,7 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.10.0 uses documented public Hermes plugin APIs for BrowserProvider,
+Version 0.10.1 uses documented public Hermes plugin APIs for BrowserProvider,
 configuration, session-route context, and CDP supervisor teardown. A regression
 check rejects private Hermes runtime imports. The plugin owns its Chrome startup,
 consent, CDP relay, targets, and cleanup. Hermes manages its native browser driver
@@ -413,7 +413,7 @@ hermes plugins validate .
 hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
 
-The 0.10.0 regression suite covers registration, task
+The 0.10.1 regression suite covers registration, task
 namespaces, startup and consent identity, input focus, target ownership, transport
 responses, concurrent unload, retryable cleanup, and dependency platform markers.
 Regression cases also cover foreground preservation, late window creation during

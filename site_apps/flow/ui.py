@@ -112,9 +112,10 @@ class UI:
             raise ValueError('mode must be classic or agent')
         if self.snapshot()['mode'] == mode:
             return
-        if not self.read("!!document.querySelector('button.agent-mode-chip')?.getClientRects().length"):
+        if self.read("Array.from(document.querySelectorAll('flow-agent-panel')).some(e=>e.getClientRects().length)"):
             self.click('flow-agent-panel button.header-action[aria-label="Tutup"],'
                        'flow-agent-panel button.header-action[aria-label="Close"]')
+            self.wait("!Array.from(document.querySelectorAll('flow-agent-panel')).some(e=>e.getClientRects().length)")
         self.click('button.agent-mode-chip')
         self.wait("document.querySelector('button.agent-mode-chip')?.getAttribute('aria-pressed') === "
                   + json.dumps('true' if mode == 'agent' else 'false'))
@@ -158,11 +159,14 @@ class UI:
             self.read("(() => {document.querySelectorAll('[data-hermes-flow-group]').forEach(e=>e.removeAttribute('data-hermes-flow-group'));return true;})()")
 
     def model(self, mode, kind, value=None):
+        category = 'model' if mode == 'classic' else kind
+        self.wait(f"({SNAPSHOT}).models.some(item=>item.selector==={json.dumps(category)}&&item.value)")
         selected = next(item['value'] for item in self.snapshot()['models']
-                        if item['selector'] == ('model' if mode == 'classic' else kind))
+                        if item['selector'] == category)
         selector = ('flow-prompt-box-settings button[aria-haspopup=menu]' if mode == 'classic'
                     else f'flow-settings-view button.{kind}-model-picker-button')
         self.click(selector)
+        self.wait("Array.from(document.querySelectorAll('[role=menuitem]')).some(e=>e.getClientRects().length)")
         options = self.read("Array.from(document.querySelectorAll('[role=menuitem]')).map(e=>({"
             "value:(e.querySelector('.item-text > .label')?.textContent ?? e.innerText).trim().replace(/^🍌\\s*/,''),"
             "disabled:e.getAttribute('aria-disabled')==='true'}))")

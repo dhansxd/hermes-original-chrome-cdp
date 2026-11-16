@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "flow",
   "name": "Google Flow",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "profile_policy": "rotate_on_limit",
   "operations": {
     "inspect": {
@@ -151,6 +151,49 @@
                     "first",
                     "last"
                   ]
+                },
+                "definition": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "base": {
+                      "type": "string"
+                    },
+                    "dialogue": {
+                      "type": "string"
+                    },
+                    "performance": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "voice": {
+                      "type": "string"
+                    },
+                    "voice_definition": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "base": {
+                          "type": "string"
+                        },
+                        "dialogue": {
+                          "type": "string"
+                        },
+                        "performance": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -229,6 +272,49 @@
                     "first",
                     "last"
                   ]
+                },
+                "definition": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "base": {
+                      "type": "string"
+                    },
+                    "dialogue": {
+                      "type": "string"
+                    },
+                    "performance": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "voice": {
+                      "type": "string"
+                    },
+                    "voice_definition": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "base": {
+                          "type": "string"
+                        },
+                        "dialogue": {
+                          "type": "string"
+                        },
+                        "performance": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }

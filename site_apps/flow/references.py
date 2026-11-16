@@ -1,10 +1,22 @@
 """Native media picker actions and portable local reference files."""
 import hashlib
 import json
+import mimetypes
 import shutil
 import time
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
+
+
+def display_title(filename):
+    media_type = mimetypes.guess_type(filename)[0] or ''
+    return Path(filename).stem if media_type.startswith('video/') else filename
+
+
+def wait_for_media(ui, kind):
+    ui.wait("(() => {const chips=Array.from(document.querySelectorAll('flow-ingredient-bar flow-" + kind
+            + "-ingredient-chip')).filter(e=>e.querySelector('button')?.getClientRects().length);"
+            "return chips.length>0&&chips.every(e=>{const i=e.querySelector('img');return i?.complete&&i.naturalWidth>0;});})()", 60)
 
 
 def picker(ui):
@@ -20,10 +32,36 @@ def picker(ui):
     ui.wait("!!document.querySelector('flow-add-menu-popover-content input.search-input')")
 
 
+def acknowledge_upload(ui):
+    rights = ui.read("Array.from(document.querySelectorAll('[role=dialog]')).some(e=>/Hak untuk menggunakan|Rights to use/.test(e.innerText))")
+    if rights:
+        ui.click('[role=dialog] button', 'Saya setuju' if ui.read(
+            "Array.from(document.querySelectorAll('[role=dialog] button')).some(e=>e.innerText.trim()==='Saya setuju')") else 'I agree')
+        ui.wait("!Array.from(document.querySelectorAll('[role=dialog]')).some(e=>/Hak untuk menggunakan|Rights to use/.test(e.innerText))")
+    return rights
+
+
+def upload_picker(ui):
+    acknowledge_upload(ui)
+    try:
+        picker(ui)
+    except RuntimeError:
+        if not acknowledge_upload(ui):
+            raise
+        picker(ui)
+    labels = ui.read("Array.from(document.querySelectorAll('flow-add-menu-side-nav .side-nav-list-item-title')).map(e=>e.textContent.trim())")
+    all_label = next((label for label in ('Semua', 'All') if label in labels), None)
+    if all_label:
+        ui.click('flow-add-menu-side-nav .side-nav-list-item-title', all_label)
+        ui.wait("Array.from(document.querySelectorAll('flow-add-menu-side-nav [role=tab]')).some(e=>"
+                f"e.querySelector('.side-nav-list-item-title')?.textContent.trim()==={json.dumps(all_label)}&&e.getAttribute('aria-selected')==='true')")
+
+
 def find_asset(ui, title):
     ui.fill('flow-add-menu-popover-content input.search-input', title)
-    expression = "(() => {const matches=Array.from(document.querySelectorAll('flow-add-menu-popover-content button.asset-item'))"
-    expression += f".filter(e=>e.querySelector('.asset-title')?.textContent.trim()==={json.dumps(title)});"
+    expression = "(() => {const es=Array.from(document.querySelectorAll('flow-add-menu-popover-content button.asset-item'));"
+    expression += f"const exact=es.filter(e=>e.querySelector('.asset-title')?.textContent.trim()==={json.dumps(title)});"
+    expression += f"const matches=exact.length?exact:es.filter(e=>e.querySelector('.asset-title')?.textContent.trim()==={json.dumps(display_title(title))});"
     expression += "if(matches.length>1)throw Error('The Flow asset title is ambiguous');"
     expression += "if(matches.length!==1)return false;document.querySelectorAll('[data-hermes-flow-asset]').forEach(e=>e.removeAttribute('data-hermes-flow-asset'));"
     expression += "matches[0].setAttribute('data-hermes-flow-asset','selected');return true;})()"
@@ -57,19 +95,22 @@ def upload(ui, directory, path):
     receipt = files / (key + '.json')
     saved = json.loads(receipt.read_text()) if receipt.exists() else {}
     owner = hashlib.sha256(str(Path(directory).resolve()).encode()).hexdigest()[:12]
-    title = (saved.get('title', digest + source.suffix.lower()) if receipt.exists()
-             else digest + '-' + owner + source.suffix.lower())
-    destination = files / title
+    filename = digest + '-' + owner + source.suffix.lower()
+    if receipt.exists():
+        filename = (saved.get('filename') or Path(saved.get('path', '')).name
+                    or saved.get('title', digest + source.suffix.lower()))
+    destination = files / filename
     if not destination.exists():
         shutil.copyfile(source, destination)
-    value = {'path': str(destination), 'sha256': digest, 'title': destination.name}
+    value = {'path': str(destination), 'sha256': digest, 'filename': destination.name,
+             'title': display_title(destination.name)}
     if receipt.exists():
         if saved.get('complete'):
             return value
         if saved.get('version') != 2 or saved.get('assignment_intent'):
             # A previous call may have already uploaded the file. Reconcile its exact unique title.
-            picker(ui)
-            find_asset(ui, destination.name)
+            upload_picker(ui)
+            find_asset(ui, value['title'])
             receipt.write_text(json.dumps({**value, 'complete': True}))
             ui.execute("press_key('Escape')")
             return value
@@ -104,7 +145,7 @@ finally:
 ''')
     # Rights acknowledgement belongs to this authorized upload when Flow presents it.
     deadline = time.monotonic() + 60
-    picker(ui)
+    upload_picker(ui)
     while True:
         rights = ui.read("Array.from(document.querySelectorAll('[role=dialog]')).some(e=>/Hak untuk menggunakan|Rights to use/.test(e.innerText))")
         if rights:
@@ -114,7 +155,7 @@ finally:
                 raise RuntimeError('The upload rights dialog changed')
             ui.click('[role=dialog] button', agree)
         found = ui.read("Array.from(document.querySelectorAll('flow-add-menu-popover-content button.asset-item'))"
-            f".some(e=>e.querySelector('.asset-title')?.textContent.trim()==={json.dumps(destination.name)} && !/Mengupload|Uploading/.test(e.innerText))")
+            f".some(e=>e.querySelector('.asset-title')?.textContent.trim()==={json.dumps(value['title'])} && !/Mengupload|Uploading/.test(e.innerText))")
         if found:
             break
         if time.monotonic() >= deadline:
@@ -128,21 +169,22 @@ finally:
 def voice_binding(ui):
     return ui.execute('''import json,time
 point=js("(() => {const es=Array.from(document.querySelectorAll('flow-audio-ingredient-chip button')).filter(e=>e.getClientRects().length);if(es.length!==1)throw Error('Voice chip is ambiguous');const e=es[0];e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2];})()")
-cdp('Input.dispatchMouseEvent',type='mouseMoved',x=point[0],y=point[1])
+cdp('Input.dispatchMouseEvent',type='mouseMoved',x=point[0],y=point[1],_response_timeout=30)
 try:
     deadline=time.monotonic()+30
     while True:
         source=js("document.querySelector('flow-audio-ingredient-preview audio')?.src ?? null")
         if source and source.startswith('https://flow-content.google/audio/'):
-            print('FLOW_VALUE='+json.dumps(source))
+            text=js("document.querySelector('flow-audio-ingredient-preview')?.innerText ?? ''")
+            print('FLOW_VALUE='+json.dumps({'source':source,'text':text}))
             break
         if time.monotonic()>=deadline:
             raise RuntimeError('The native voice chip preview identity is unavailable')
         wait(.2)
 finally:
     js("document.querySelector('flow-audio-ingredient-preview audio')?.pause()")
-    cdp('Input.dispatchMouseEvent',type='mouseMoved',x=0,y=0)
-''')
+    cdp('Input.dispatchMouseEvent',type='mouseMoved',x=0,y=0,_response_timeout=30)
+''', 100)
 
 
 def verify_binding(ui, value, expected=None):
@@ -158,11 +200,12 @@ def verify_binding(ui, value, expected=None):
         raise RuntimeError('The selected character/voice chip is unready, incompatible or ambiguous')
     result = {**value, 'ready': True, 'reference': chips[0]}
     if kind == 'voice':
-        source = voice_binding(ui)
+        voice = voice_binding(ui)
+        source = voice['source']
         identifier = unquote(urlsplit(source).path.split('/audio/',1)[1])
         if expected and identifier != expected['id']:
             raise RuntimeError('The native voice chip does not match the saved voice audio ID')
-        result.update(media_id=identifier,source=source.split('?',1)[0])
+        result.update(media_id=identifier,source=source.split('?',1)[0],voice_text=voice['text'])
     elif expected:
         result['character_id'] = expected['id']
     return result
@@ -182,11 +225,19 @@ def bind(ui, title, kind='image', slot=None, expected=None):
         characters = [item for item in state['references'] if item['kind'] == 'character']
         if any(item.get('src') and key(item['src']) == key(wanted['portrait']) for item in characters):
             return verify_binding(ui, {**saved, 'already_bound': True}, wanted)
-    if kind == 'voice' and saved.get('media_id'):
+    if kind == 'voice':
         voices = [item for item in state['references'] if item['kind'] == 'voice']
-        if len(voices) == 1 and voices[0]['name'] == saved['reference']['name']:
-            return verify_binding(ui, {**saved, 'already_bound': True}, expected or {'id': saved['media_id']})
+        if len(voices) == 1 and voices[0]['ready'] and not voices[0]['disabled']:
+            candidate = verify_binding(ui, {**saved, 'title': title, 'kind': kind, 'already_bound': True})
+            wanted = expected.get('id') if expected else saved.get('media_id')
+            if (candidate['media_id'] == wanted if wanted else title in candidate['voice_text'].splitlines()):
+                receipt.write_text(json.dumps(candidate))
+                return candidate
     present = {item['id'] for item in state['ingredients'] if item.get('id') and item['ready']}
+    sources = {item['src'].split('?', 1)[0] for item in state['ingredients'] if item.get('src') and item['ready']}
+    saved_sources = {item['src'].split('?', 1)[0] for item in saved.get('ingredients', []) if item.get('src')}
+    if kind in {'image','video'} and saved_sources and saved_sources <= sources and not slot:
+        return {**saved, 'already_bound': True}
     if saved.get('ids') and set(saved['ids']).issubset(present) and not slot:
         return verify_binding(ui, {**saved, 'already_bound': True}, expected)
     before_ids = present
@@ -218,18 +269,20 @@ def bind(ui, title, kind='image', slot=None, expected=None):
         present = ui.read("Array.from(document.querySelectorAll('flow-ingredient-bar img')).some(e=>e.src.includes(" + json.dumps('/image/' + identifier) + "))")
         if present:
             ui.execute("press_key('Escape')")
-            ui.wait("Array.from(document.querySelectorAll('flow-image-ingredient-chip img')).every(e=>e.complete&&e.naturalWidth>0)", 60)
+            wait_for_media(ui, 'image')
             state = ui.snapshot()
             return {'title': title, 'kind': kind, 'media_id': identifier, 'already_bound': True,
                     'ingredients': state['ingredients'], 'frames': state['frames']}
     if ui.read("!!document.querySelector('flow-add-menu-popover-content')"):
+        ui.wait("(() => {const b=document.querySelector('button.detail-add-to-prompt-btn');if(!b||b.disabled)return false;"
+                "const r=b.getBoundingClientRect();return r.width>0&&r.height>0&&b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()", 60)
         ui.click('button.detail-add-to-prompt-btn')
     tag = {'image':'image','video':'video','character':'character','voice':'audio'}[kind]
     ui.wait(f"!!document.querySelector('flow-{tag}-ingredient-chip')" if not slot
             else f"Array.from(document.querySelectorAll('.frame-trigger'))[{labels.index(desired)}]?.querySelector('img')?.naturalWidth>0", 60)
     state = ui.snapshot()
-    if kind == 'image' and not slot and not all(item['ready'] for item in state['ingredients']):
-        ui.wait("Array.from(document.querySelectorAll('flow-image-ingredient-chip img')).every(e=>e.complete&&e.naturalWidth>0)", 60)
+    if kind in {'image','video','character'} and not slot:
+        wait_for_media(ui, tag)
         state = ui.snapshot()
     after = ui.read("Array.from(document.querySelectorAll('flow-ingredient-bar > *,flow-ingredient-bar img')).map(e=>e.outerHTML)")
     if before == after and not slot:

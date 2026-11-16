@@ -14,21 +14,44 @@ VOICE_FIELDS = {'name': 'voice-name-input', 'dialogue': 'sample-dialogue-input',
 def remember(context, data):
     folder = context.directory / 'entities'
     folder.mkdir(exist_ok=True)
-    value = {**data, 'profile': context.profile}
     path = folder / (data['kind'] + '-' + data['id'] + '.json')
+    previous = json.loads(path.read_text()) if path.exists() else {}
+    if previous.get('profile') != context.profile:
+        previous = {}
+    value = {**previous, **data, 'profile': context.profile}
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(value, ensure_ascii=False))
     temporary.replace(path)
     return value
 
 
-def reference(context, kind, title, project):
+def reference(context, kind, title, project, profile=None):
     if kind not in {'character','voice'}:
         return None
     matches = [json.loads(path.read_text()) for path in (context.directory / 'entities').glob(kind + '-*.json')]
-    matches = [item for item in matches if item['name'] == title and item['profile'] == context.profile
+    matches = [item for item in matches if item['name'] == title and item['profile'] == (profile or context.profile)
                and item['project'] == project]
     return matches[0] if len(matches) == 1 else None
+
+
+def definition(context, entity):
+    if not entity:
+        return None
+    if entity['kind'] == 'voice':
+        keys = ('base', *VOICE_FIELDS)
+        return {key: entity[key] for key in keys} if all(entity.get(key) for key in keys) else None
+    path = entity.get('reference', {}).get('path')
+    if entity['kind'] != 'character' or not path:
+        return None
+    value = {'name': entity['name'], 'path': path, 'description': entity.get('description', '')}
+    voice = entity.get('voice')
+    if voice:
+        value['voice'] = voice['name']
+        if voice.get('id'):
+            saved = context.directory / 'entities' / ('voice-' + voice['id'] + '.json')
+            if saved.exists():
+                value['voice_definition'] = definition(context, json.loads(saved.read_text()))
+    return value
 
 
 def character_state(ui):
@@ -87,7 +110,7 @@ def finish_character(context, ui, checkpoint):
     voice_ready = ("document.querySelector('flow-character-voice-button,flow-character-voice')?.innerText.split('\\n').includes("
                    + json.dumps(params.get('voice')) + ")")
     if params.get('voice') and checkpoint['stage'] in {'verifying','finish_intent'}:
-        ui.wait(voice_ready, 60)
+        ui.wait(voice_ready + " || /Pilih suara|Choose voice|Select voice/.test(document.querySelector('flow-character-voice-button,flow-character-voice')?.innerText ?? '')", 60)
     current = character_state(ui)
     if (current['name'] != params['name'] or current['description'] != params.get('description','')
             or (params.get('voice') and params['voice'] not in current['voice_text'].splitlines())):
@@ -110,7 +133,7 @@ def finish_character(context, ui, checkpoint):
             ui.execute('''import time
 cdp('Network.enable')
 drain_events()
-flow_click('[data-hermes-flow-voice=selected] .asset-title')
+flow_click('button.detail-add-to-prompt-btn', js("document.querySelector('button.detail-add-to-prompt-btn')?.textContent.trim()"))
 pending=set()
 observed=False
 deadline=time.monotonic()+30

@@ -87,16 +87,64 @@ Voice previews are genuine generated audio. Deliver samples to the user for
 accent, timbre and naturalness judgments. File decoding and matching IDs establish
 technical retrieval and binding.
 
-Local reference files can be uploaded again on a destination account. A saved
-character/voice name requires that account's native entity or a portable source
-before it can continue there. Preserve unresolved source jobs and reference evidence.
+## Account rolling and continuation
+
+Flow has its own starting profile and rolling order. Choose them with
+`chrome_profiles`, `app: "flow"`, and the operation's session alias. The host reads
+the current Chrome profile inventory for each rolling round. It retains the
+source job while its provider outcome is unresolved.
+
+Native credit evidence triggers continuation on the next available account. The
+classic composer supplies its current quote after references are attached. At zero
+credits in Agent mode, the extension inspects the same model's native classic quote
+and restores Agent settings before continuing. This is recorded as classic price
+evidence. Free image generation remains available when its native quote is zero.
+
+Each destination gets one checkpointed project for that job. Local image/video
+references are uploaded there. Completed source files remain in the result when
+the destination generates the remaining output count. Resume the same job after
+an interruption during project, voice, character or video preparation.
+
+For saved entities, include an original creation `definition` in each reference.
+The extension also retains definitions from entities created in the same app
+session. A voice definition contains `name`, `base`, `dialogue` and `performance`.
+A character definition contains `name`, local portrait `path`, `description`, and
+optional `voice`. Include `voice_definition` when that voice is custom and is
+carried through the character. An explicit voice reference verifies the separate
+audio ingredient for the generated video.
+
+```json
+{
+  "title": "Saved voice",
+  "kind": "voice",
+  "definition": {
+    "name": "Saved voice",
+    "base": "base-name-from-native-picker",
+    "dialogue": "Exact sample dialogue",
+    "performance": "Original performance direction"
+  }
+}
+```
+
+The destination synthesizes a new voice from that recipe and creates a character
+from the portable portrait. Results expose destination IDs, the preparation method
+and the saved WAV for listener review. A manually created native entity needs its
+creation definition supplied before cross-account preparation can continue.
+Native Remix imported the tested character, while its custom voice remained
+unavailable on the destination account. The tested continuation path uses the
+explicit creation definitions above.
 
 ## Current acceptance scope
 
 Classic and Agent image/video generation/download have real-file evidence. JPEG
 upload, image Ingredients, and video using both first/last Frames are verified.
-Real-account quota handoff remains open in PLAN.md. Character/voice acceptance
-evidence and any current limitations are tracked there.
+Classic and Agent rolling from an exhausted source account to a funded destination
+produced decoded five-second MP4 files. Character/voice preparation resumed within
+the same classic job. Hermes chat CLI ran the Agent rolling test with a local
+portrait reference. A real provider quota-reset event remains open in PLAN.md.
+The generic reset/revisit logic has regression and native fixture coverage.
+Flow rejected a test asking to change speech in an uploaded video and displayed a
+refund notice. Preserve that provider restriction when designing reference inputs.
 Use the native browser
 session for inspection when the extension reports an unavailable control.
 Keep such findings explicit and preserve the original job.

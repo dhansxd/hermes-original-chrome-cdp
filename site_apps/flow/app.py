@@ -8,8 +8,8 @@ from pathlib import Path
 
 from .ui import UI
 from .downloads import collect, verify
-from .references import upload, bind
-from . import entities
+from .references import upload, bind, acknowledge_upload
+from . import entities, preparation
 
 
 ORIGIN = 'https://flow.google.com'
@@ -80,6 +80,7 @@ def account(ui, *, credits=True):
         if email:
             identity = hashlib.sha256(email.group().lower().encode()).hexdigest()
             return {'id': identity, 'evidence': 'Flow account avatar email hash ' + identity, 'credits': None}
+    acknowledge_upload(ui)
     if ui.read("!!document.querySelector('flow-add-menu-popover-content')"):
         ui.execute("press_key('Escape')")
     ui.click('[aria-label="Detail akun"],[aria-label="Account details"]')
@@ -99,9 +100,12 @@ def account(ui, *, credits=True):
 
 def identify(context, operation, params):
     # Probe the destination account before opening account-local project IDs.
+    capture_destination(context, UI(context))
     if operation == 'create_character':
         entities.capture_character(context, UI(context))
-    owner = account(ensure(context, {}), credits=operation in GENERATIONS)
+    preparing = preparation.resume_before_probe(context)
+    ui = UI(context) if preparing else ensure(context, {})
+    owner = account(ui, credits=operation in GENERATIONS and not preparing)
     quota = {'scope': scope(operation)}
     if owner['credits'] is not None and owner['credits'] > 0:
         quota.update(available=True, evidence=f"Flow account panel shows {owner['credits']} credits")
@@ -179,12 +183,16 @@ def configure(ui, params, *, kind=None):
         ui.close_settings(mode)
 
 
-def create_project(context, ui, title):
+def create_project(context, ui, title, checkpoint=None):
     if ui.read('location.pathname') != '/':
         ui.click('button[aria-label="Beranda"],button[aria-label="Home"]')
     ui.click('button.new-project-button')
     ui.wait("/^\\/project\\/[^/]+$/.test(location.pathname)")
     url = ui.read('location.href')
+    if checkpoint is not None:
+        checkpoint['params']['project'] = url
+        checkpoint['stage'] = 'prepared'
+        context.checkpoint(checkpoint)
     saved = local_state(context)
     saved.setdefault('projects', {})[context.profile] = url
     save_state(context, saved)
@@ -194,6 +202,25 @@ def create_project(context, ui, title):
         ui.execute("press_key('Enter')")
     result = ui.snapshot()
     return result
+
+
+def capture_destination(context, ui):
+    path = context.directory / 'checkpoint.json'
+    saved = json.loads(path.read_text()) if path.exists() else {}
+    if (saved.get('job') != context.job_id or saved.get('operation') != 'handoff'
+            or saved.get('profile') != context.profile or saved.get('stage') != 'create_intent'):
+        return
+    current = ui.read('location.href')
+    marker = ui.read('globalThis.__hermesFlowProjectJob ?? null')
+    if (marker != context.job_id or current == saved['before']
+            or not re.fullmatch(r'https://flow\.google\.com/project/[a-zA-Z0-9-]+', current)):
+        raise RuntimeError('Inspect the original destination project creation before creating another project.')
+    saved['params']['project'] = current
+    saved['stage'] = 'prepared'
+    context.checkpoint(saved)
+    state = local_state(context)
+    state.setdefault('projects', {})[context.profile] = current
+    save_state(context, state)
 
 
 def tile_key(tile):
@@ -214,6 +241,21 @@ def open_output(ui, tile, prompt, mode):
     tile['id'] = tile.get('id') or tile['edit_url'].rsplit('/', 1)[-1]
 
 
+def quota_rejection(context, checkpoint, evidence):
+    checkpoint['quota_evidence'] = evidence
+    context.checkpoint(checkpoint)
+    references = checkpoint.get('portable_references', [])
+    completed = checkpoint.get('continued_files', []) + checkpoint.get('files', [])
+    return {'status': 'quota_exhausted',
+            'request': {'state': 'rejected', 'id': checkpoint.get('request_id'), 'terminal': True, 'evidence': evidence},
+            'quota': {'scope': scope(checkpoint['operation']), 'exhausted': True, 'evidence': evidence},
+            'handoff': {'references': references,
+                        'files': [reference['path'] for reference in references if reference.get('path')]
+                                 + [file['path'] for file in completed],
+                        'completed': completed, 'remaining_count': checkpoint['count'] - len(checkpoint.get('files', [])),
+                        'composer': checkpoint.get('composer', {})}}
+
+
 def observe_generation(context, ui, checkpoint):
     state = ui.snapshot()
     baseline = set(checkpoint['baseline'])
@@ -221,6 +263,11 @@ def observe_generation(context, ui, checkpoint):
                and tile_key(tile) and tile_key(tile) not in baseline
                and tile.get('id') not in checkpoint.get('reference_ids', [])]
     previous = {tile_key(tile): tile for tile in checkpoint.get('outputs', [])}
+    if len(outputs) > checkpoint['count']:
+        identifier = checkpoint.get('request_id')
+        request = {'state': 'accepted', 'id': identifier} if identifier else {'state': 'unknown'}
+        return {'status': 'needs_inspection', 'request': request,
+                'message': 'More new native outputs exist than this job requested. Inspect their attribution before continuing.'}
     for tile in outputs:
         key = tile_key(tile)
         known = previous.get(key, {})
@@ -242,15 +289,13 @@ def observe_generation(context, ui, checkpoint):
     new_notices = [text for text in state['notices'] if text not in checkpoint.get('notices_before', [])]
     evidence = next((text for text in new_notices if re.search(
         r'insufficient credits|not enough credits|kredit tidak cukup|kredit Anda (?:telah )?habis', text, re.I)), None)
+    evidence = evidence or checkpoint.get('quota_evidence')
+    if evidence and not outputs:
+        return quota_rejection(context, checkpoint, evidence)
     if evidence:
-        references = checkpoint.get('portable_references', [])
-        return {'status': 'quota_exhausted',
-                'request': {'state': 'rejected', 'id': identifier, 'terminal': True, 'evidence': evidence},
-                'quota': {'scope': scope(checkpoint['operation']), 'exhausted': True, 'evidence': evidence},
-                'handoff': {'references': references,
-                            'files': [reference['path'] for reference in references if reference.get('path')],
-                            'composer': checkpoint.get('composer', {})}}
-    if identifier and len(outputs) == checkpoint['count'] and all(tile['ready'] for tile in outputs):
+        checkpoint['quota_evidence'] = evidence
+        context.checkpoint(checkpoint)
+    if identifier and (len(outputs) == checkpoint['count'] or evidence) and all(tile['ready'] for tile in outputs):
         files = []
         for tile in outputs:
             if not tile.get('id'):
@@ -274,14 +319,17 @@ def observe_generation(context, ui, checkpoint):
             if '/edit/' in ui.read('location.pathname'):
                 ui.click('button.back-button')
                 ui.wait("!location.pathname.includes('/edit/')")
+        checkpoint['files'] = files
+        context.checkpoint(checkpoint)
         if len(files) == checkpoint['count']:
             request['state'] = 'completed'
-            checkpoint['files'] = files
-            context.checkpoint(checkpoint)
-            return {'status': 'ok', 'request': request, 'data': {'files': files, 'settings': checkpoint['settings'],
+            return {'status': 'ok', 'request': request, 'data': {'files': checkpoint.get('continued_files', []) + files, 'settings': checkpoint['settings'],
                     'references': checkpoint.get('references', []),
+                    'transfers': checkpoint.get('transfers', []),
                     'project': checkpoint['project'], 'credits_before': checkpoint['credits_before'],
                     'credits_after': account(ui)['credits']}}
+        if evidence:
+            return quota_rejection(context, checkpoint, evidence)
     return {'status': 'running' if identifier else 'needs_inspection', 'request': request,
             'data': {'project': checkpoint['project'], 'outputs': outputs,
                      'settings': checkpoint['settings'], 'notices': state['notices']},
@@ -295,8 +343,22 @@ def generate(context, ui, operation, params):
         raise ValueError('A non-empty prompt is required')
     if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
         raise RuntimeError('Install FFmpeg and ffprobe on the Hermes process PATH before generating media')
+    path = context.directory / 'checkpoint.json'
+    position = json.loads(path.read_text()) if path.exists() else {}
+    if position.get('job') != context.job_id or position.get('profile') != context.profile or position.get('operation') != 'handoff':
+        position = {}
     settings = selected_settings(configure(ui, params, kind=kind), kind)
     owner = account(ui)
+    quota_quote = settings.get('quote')
+    quota_quote_source = 'selected composer'
+    if settings['mode'] == 'agent' and owner['credits'] == 0:
+        model = next(item['value'] for item in settings['models'] if item['selector'] == kind)
+        try:
+            native = configure(ui, {'mode': 'classic', 'model': model}, kind=kind)
+            quota_quote = native.get('quote')
+            quota_quote_source = 'native classic composer for the selected Agent model'
+        finally:
+            configure(ui, params, kind=kind)
     editor = ("(() => {const es=Array.from(document.querySelectorAll('[contenteditable=true]')).filter(e=>e.getClientRects().length);"
               "if(es.length!==1)throw Error('Flow composer is ambiguous');es[0].setAttribute('data-hermes-flow-editor','active');"
               "return '[data-hermes-flow-editor=active]';})()")
@@ -308,34 +370,58 @@ def generate(context, ui, operation, params):
                   f"The output aspect ratio must be {selected['aspect']}. " + prompt)
     ui.fill(selector, prompt)
     bindings = []
+    portable = []
     for reference in params.get('references', []):
+        reference = dict(reference)
         title = reference.get('title')
         if reference.get('path'):
-            title = upload(ui, context.directory, reference['path'])['title']
+            uploaded = upload(ui, context.directory, reference['path'])
+            title = uploaded['title']
+            reference['path'] = uploaded['path']
         if not title:
             raise ValueError('Each reference requires an uploaded title or local path')
         reference_kind = reference.get('kind','image')
         expected = entities.reference(context, reference_kind, title, ui.read('location.href'))
+        if reference_kind in {'character', 'voice'} and not reference.get('definition'):
+            reference['definition'] = entities.definition(context, expected)
         bindings.append(bind(ui, title, reference_kind, reference.get('slot'), expected))
+        portable.append(reference)
     selector = ui.read(editor)
     actual = ui.read(f"document.querySelector({json.dumps(selector)}).innerText")
     if ' '.join(actual.split()) != ' '.join(prompt.split()):
         raise RuntimeError('The Flow composer did not preserve the requested prompt')
+    if bindings and settings['mode'] == 'classic':
+        ui.settings('classic')
+        try:
+            settings['quote'] = ui.snapshot().get('quote')
+            quota_quote = settings['quote']
+        finally:
+            ui.close_settings('classic')
     state = ui.snapshot()
     if any(not ingredient['ready'] for ingredient in state['ingredients']):
         raise RuntimeError('A composer reference has not finished loading')
-    ui.wait("Array.from(document.querySelectorAll('flow-generate-icon-button button')).some(e=>e.getClientRects().length&&!e.disabled)")
     checkpoint = {'job': context.job_id, 'operation': operation, 'project': state['url'], 'kind': kind,
                   'prompt': prompt, 'settings': settings, 'credits_before': owner['credits'],
                   'references': bindings,
                   'reference_ids': [item['id'] for item in state['ingredients'] if item.get('id')],
                   'composer': {'ingredients': state['ingredients'], 'frames': state['frames'],
                                'references': state['references']},
-                  'portable_references': params.get('references', []),
+                  'portable_references': portable,
+                  'continued_files': position.get('completed', []), 'transfers': position.get('transfers', []),
+                  'quota_quote': quota_quote,
+                  'quota_quote_source': quota_quote_source,
                   'notices_before': state['notices'],
                   'count': settings['count'],
                   'baseline': [tile_key(tile) for tile in state['tiles'] if tile_key(tile)],
-                  'submit_intent': True}
+                  'submit_intent': False}
+    cost = re.search(r'(?<![\d.,])(\d+(?:[.,]\d{3})*)\s+(?:kredit|credits)\b', quota_quote or '', re.I)
+    if cost and owner['credits'] is not None:
+        required = int(re.sub(r'\D', '', cost[1]))
+        if owner['credits'] < required:
+            return quota_rejection(context, checkpoint,
+                f"Flow account panel shows {owner['credits']} credits and its {quota_quote_source} quotes {required} credits")
+    ui.wait("Array.from(document.querySelectorAll('flow-generate-icon-button button')).some(e=>e.getClientRects().length&&!e.disabled)")
+    checkpoint['submit_intent'] = True
     context.checkpoint(checkpoint)
     try:
         ui.click('flow-generate-icon-button button')
@@ -381,11 +467,14 @@ def run(context, operation, params):
             return generate(context, ui, operation, params)
         raise ValueError('Choose an operation listed by browser_app describe')
     except Exception as error:
-        return {'status': 'failed', 'message': str(error),
+        return {'status': 'failed', 'message': str(error) or type(error).__name__,
+                'error': {'type': type(error).__name__, 'message': str(error)},
                 'request': {'state': 'rejected', 'evidence': 'Operation stopped before a generation submit'}}
 
 
 def resume(context, job):
+    if job.get('phase') == 'handoff':
+        return handoff(context, job['handoff'])
     checkpoint = job.get('checkpoint') or {}
     attempt_id = job['attempts'][-1].get('request_id') if job.get('attempts') else None
     owns_checkpoint = checkpoint.get('job') == context.job_id or (
@@ -405,17 +494,58 @@ def resume(context, job):
 def handoff(context, packet):
     remaining = packet.get('remaining', {})
     composer = remaining.get('composer', {})
-    references = remaining.get('references', [])
+    references = remaining.get('references', packet['params'].get('references', []))
     if (composer.get('ingredients') or composer.get('references')
             or any(frame.get('image') for frame in composer.get('frames', []))) and not references:
         return {'status': 'needs_inspection',
                 'message': 'The source composer has native references. Supply their local files to continue them on the destination account.'}
-    if any(not reference.get('path') for reference in references):
+    if any(not reference.get('path') for reference in references if reference.get('kind', 'image') in {'image', 'video'}):
         return {'status': 'needs_inspection',
                 'message': 'The source native reference needs its portable local file on the destination account.'}
-    params = dict(packet['params'])
-    params.pop('project', None)
-    ui = ensure(context, {})
-    project = create_project(context, ui, 'Continued Flow project')
-    params['project'] = project['url']
-    return {'status': 'ok', 'params': params}
+    for reference in references:
+        kind = reference.get('kind', 'image')
+        if kind not in {'character', 'voice'}:
+            continue
+        if not reference.get('definition') and packet.get('source', {}).get('profile'):
+            source_profile = packet['source']['profile']
+            source_project = packet['params'].get('project') or local_state(context).get('projects', {}).get(source_profile)
+            if source_project:
+                source = entities.reference(context, kind, reference['title'], project_url(source_project), source_profile)
+                reference['definition'] = entities.definition(context, source)
+        definition = reference.get('definition') or {}
+        required = ('base', 'dialogue', 'performance') if kind == 'voice' else ('path',)
+        if any(not definition.get(key) for key in required):
+            return {'status': 'needs_inspection',
+                    'message': 'The source ' + kind + ' needs its original portable creation definition on the destination account.'}
+        if kind == 'character':
+            definition['path'] = str(Path(definition['path']).expanduser().resolve(strict=True))
+    capture_destination(context, UI(context))
+    preparing = preparation.resume_before_probe(context)
+    ui = UI(context) if preparing else ensure(context, {})
+    path = context.directory / 'checkpoint.json'
+    saved = json.loads(path.read_text()) if path.exists() else {}
+    if (saved.get('job') != context.job_id or saved.get('operation') != 'handoff'
+            or saved.get('profile') != context.profile):
+        params = {**packet['params'], 'references': references}
+        params.pop('project', None)
+        if 'remaining_count' in remaining:
+            params['count'] = remaining['remaining_count']
+        saved = {'job': context.job_id, 'operation': 'handoff', 'profile': context.profile,
+                 'stage': 'create_intent', 'before': ui.read('location.href'), 'params': params,
+                 'completed': remaining.get('completed', [])}
+        context.checkpoint(saved)
+        ui.read('globalThis.__hermesFlowProjectJob=' + json.dumps(context.job_id))
+        project = create_project(context, ui, 'Continued Flow project', saved)
+        saved['params']['project'] = project['url']
+    if any(reference.get('kind') in {'character', 'voice'} for reference in references):
+        if not saved.get('active_entity') and not saved.get('entities_prepared'):
+            compatible = {'mode': 'classic', 'input_type': 'ingredients'}
+            if saved['params'].get('model'):
+                compatible['model'] = saved['params']['model']
+            configure(ui, compatible, kind='video')
+        saved['transfers'] = preparation.references(context, saved)
+        saved['entities_prepared'] = True
+    saved['stage'] = 'prepared'
+    context.checkpoint(saved)
+    return {'status': 'ok', 'params': saved['params'],
+            'request': {'state': 'not_submitted', 'evidence': 'The destination project and parameters are prepared'}}
