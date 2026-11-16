@@ -168,11 +168,27 @@ Generation is submitted once. Continue a running or uncertain result by passing
 the returned `job` at the tool's top level, using the same operation and session.
 The guide returned by `describe` includes complete call arguments.
 
+For an existing installation, merge updated files from the plugin's
+`site_apps/flow` template into your user-owned Flow package. Preserve local
+customizations. Use `describe` to check the installed package version and guide.
+
 `upload` accepts a local media path and returns a portable copy, content hash and
 unique asset title. `bind_reference` selects that exact title in the native picker
 and verifies the loaded ingredient or frame. Generation can also accept a
 `references` array containing local `path`, `kind`, and optional `slot` values
 `first` or `last`. The current verification coverage is recorded in PLAN.md.
+
+For saved characters, use `create_character` with a local portrait `path`,
+`name`, optional `description`, and optional exact saved `voice` name. For a
+custom voice, first select a compatible Ingredients composer, then call
+`create_voice` with the native `base` name, custom `name`, sample `dialogue`
+and `performance` directions. Its result includes the saved audio identity
+and decoded WAV. Keep the job ID when creation or saving is still uncertain.
+
+Generation references can use an exact `title` with `kind: "character"` or
+`kind: "voice"`. The package verifies the actual character portrait and voice
+audio identity in the composer. Deliver genuine previews to the user to judge
+accent and timbre. Refer to the package guide for the complete operation schemas.
 
 Completed media results include the native request identity, original local file,
 SHA-256, byte count and decoded dimensions/duration. Compare the measured result

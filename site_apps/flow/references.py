@@ -4,6 +4,7 @@ import json
 import shutil
 import time
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 
 def picker(ui):
@@ -52,14 +53,17 @@ def upload(ui, directory, path):
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
     files = Path(directory) / 'references'
     files.mkdir(exist_ok=True)
-    destination = files / (digest + source.suffix.lower())
-    if not destination.exists():
-        shutil.copyfile(source, destination)
     key = hashlib.sha256((ui.context.profile + ui.read('location.pathname') + digest).encode()).hexdigest()
     receipt = files / (key + '.json')
+    saved = json.loads(receipt.read_text()) if receipt.exists() else {}
+    owner = hashlib.sha256(str(Path(directory).resolve()).encode()).hexdigest()[:12]
+    title = (saved.get('title', digest + source.suffix.lower()) if receipt.exists()
+             else digest + '-' + owner + source.suffix.lower())
+    destination = files / title
+    if not destination.exists():
+        shutil.copyfile(source, destination)
     value = {'path': str(destination), 'sha256': digest, 'title': destination.name}
     if receipt.exists():
-        saved = json.loads(receipt.read_text())
         if saved.get('complete'):
             return value
         if saved.get('version') != 2 or saved.get('assignment_intent'):
@@ -79,9 +83,13 @@ cdp('Page.setInterceptFileChooserDialog',enabled=True)
 try:
     flow_click('button[aria-label="Menu tambahkan media"],button[aria-label="Add media menu"]')
     flow_click('[role=menuitem]', 'Upload')
+    wait(.1)
+    chooser=next((e['params'] for e in drain_events() if e.get('method')=='Page.fileChooserOpened'),None)
+    if not chooser and js("(() => {{const e=document.activeElement;return e?.getAttribute('role')==='menuitem'&&e.getClientRects().length&&e.querySelector('.label')?.textContent.trim()==='Upload';}})()"):
+        press_key('Enter')
     deadline=time.monotonic()+10
     while True:
-        chooser=next((e['params'] for e in drain_events() if e.get('method')=='Page.fileChooserOpened'),None)
+        chooser=chooser or next((e['params'] for e in drain_events() if e.get('method')=='Page.fileChooserOpened'),None)
         if chooser:
             state=json.loads(receipt.read_text())
             state['assignment_intent']=True
@@ -117,7 +125,50 @@ finally:
     return value
 
 
-def bind(ui, title, kind='image', slot=None):
+def voice_binding(ui):
+    return ui.execute('''import json,time
+point=js("(() => {const es=Array.from(document.querySelectorAll('flow-audio-ingredient-chip button')).filter(e=>e.getClientRects().length);if(es.length!==1)throw Error('Voice chip is ambiguous');const e=es[0];e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2];})()")
+cdp('Input.dispatchMouseEvent',type='mouseMoved',x=point[0],y=point[1])
+try:
+    deadline=time.monotonic()+30
+    while True:
+        source=js("document.querySelector('flow-audio-ingredient-preview audio')?.src ?? null")
+        if source and source.startswith('https://flow-content.google/audio/'):
+            print('FLOW_VALUE='+json.dumps(source))
+            break
+        if time.monotonic()>=deadline:
+            raise RuntimeError('The native voice chip preview identity is unavailable')
+        wait(.2)
+finally:
+    js("document.querySelector('flow-audio-ingredient-preview audio')?.pause()")
+    cdp('Input.dispatchMouseEvent',type='mouseMoved',x=0,y=0)
+''')
+
+
+def verify_binding(ui, value, expected=None):
+    kind = value['kind']
+    if kind not in {'character','voice'}:
+        return value
+    state = ui.snapshot()
+    chips = [item for item in state['references'] if item['kind'] == kind]
+    if kind == 'character' and expected:
+        key = lambda source: source.split('?',1)[0].split('=',1)[0]
+        chips = [item for item in chips if item['src'] and key(item['src']) == key(expected['portrait'])]
+    if len(chips) != 1 or not chips[0]['ready'] or chips[0]['disabled']:
+        raise RuntimeError('The selected character/voice chip is unready, incompatible or ambiguous')
+    result = {**value, 'ready': True, 'reference': chips[0]}
+    if kind == 'voice':
+        source = voice_binding(ui)
+        identifier = unquote(urlsplit(source).path.split('/audio/',1)[1])
+        if expected and identifier != expected['id']:
+            raise RuntimeError('The native voice chip does not match the saved voice audio ID')
+        result.update(media_id=identifier,source=source.split('?',1)[0])
+    elif expected:
+        result['character_id'] = expected['id']
+    return result
+
+
+def bind(ui, title, kind='image', slot=None, expected=None):
     if kind not in {'image','video','character','voice'}:
         raise ValueError('Reference kind must be image, video, character or voice')
     state = ui.snapshot()
@@ -125,9 +176,19 @@ def bind(ui, title, kind='image', slot=None):
     receipt = ui.context.directory / 'references' / ('binding-' + key + '.json')
     receipt.parent.mkdir(exist_ok=True)
     saved = json.loads(receipt.read_text()) if receipt.exists() else {}
+    if kind == 'character' and saved.get('reference'):
+        wanted = expected or {'portrait': saved['reference']['src'], 'id': saved.get('character_id')}
+        key = lambda source: source.split('?',1)[0].split('=',1)[0]
+        characters = [item for item in state['references'] if item['kind'] == 'character']
+        if any(item.get('src') and key(item['src']) == key(wanted['portrait']) for item in characters):
+            return verify_binding(ui, {**saved, 'already_bound': True}, wanted)
+    if kind == 'voice' and saved.get('media_id'):
+        voices = [item for item in state['references'] if item['kind'] == 'voice']
+        if len(voices) == 1 and voices[0]['name'] == saved['reference']['name']:
+            return verify_binding(ui, {**saved, 'already_bound': True}, expected or {'id': saved['media_id']})
     present = {item['id'] for item in state['ingredients'] if item.get('id') and item['ready']}
     if saved.get('ids') and set(saved['ids']).issubset(present) and not slot:
-        return {**saved, 'already_bound': True}
+        return verify_binding(ui, {**saved, 'already_bound': True}, expected)
     before_ids = present
     before = ui.read("Array.from(document.querySelectorAll('flow-ingredient-bar > *,flow-ingredient-bar img')).map(e=>e.outerHTML)")
     if slot:
@@ -177,5 +238,6 @@ def bind(ui, title, kind='image', slot=None):
              'ids': [item['id'] for item in state['ingredients'] if item.get('id') and item['id'] not in before_ids]}
     if slot:
         value['frame'] = state['frames'][index]['image']
+    value = verify_binding(ui, value, expected)
     receipt.write_text(json.dumps(value))
     return value

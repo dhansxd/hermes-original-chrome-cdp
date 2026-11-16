@@ -58,7 +58,34 @@ Use `upload` with a local `path`, then `bind_reference` with the returned exact
 `title` and `kind`. Images can use `slot: "first"` or `slot: "last"` in classic
 Frames mode. The native picker and loaded ingredient/frame are checked.
 Generation also accepts a `references` array containing local `path`, `kind` and
-optional `slot`. It uploads and binds after filling the prompt.
+optional `slot`, or the exact native `title` for an existing asset. It uploads
+and binds after filling the prompt. Character portraits and voice audio IDs are
+checked in the actual chips. Completed results include the reference evidence.
+
+## Saved characters and voices
+
+Select classic video Ingredients with a compatible model, such as an available
+Omni Flash model, before opening the native Voices picker. Use `create_voice`
+with `base` from that picker, a unique `name`, exact sample `dialogue`, and
+`performance` directions. It generates one preview, saves one custom voice and
+returns its native audio ID, saved fields and decoded WAV. Retain the returned
+job when preview/save is uncertain. Resume that job to retrieve the same draft
+or saved voice.
+
+Use `create_character` with a local image `path`, `name`, optional `description`
+and optional exact saved `voice` name. The operation uploads the portrait,
+creates one native character, saves its fields and reads them back from its
+character URL. Recovery uses that same character ID.
+
+Pass saved entities to generation as `{"title":"Saved name","kind":"character"}`
+and `{"title":"Saved voice name","kind":"voice"}`. Explicitly bind the voice
+when it is required. A character's voice label alone does not verify an audio
+ingredient. Repeated binding verifies existing native identity before another
+gesture. Use only the reference types enabled by the current mode/model.
+
+Voice previews are genuine generated audio. Deliver samples to the user for
+accent, timbre and naturalness judgments. File decoding and matching IDs establish
+technical retrieval and binding.
 
 Local reference files can be uploaded again on a destination account. A saved
 character/voice name requires that account's native entity or a portable source
@@ -68,7 +95,8 @@ before it can continue there. Preserve unresolved source jobs and reference evid
 
 Classic and Agent image/video generation/download have real-file evidence. JPEG
 upload, image Ingredients, and video using both first/last Frames are verified.
-Character/voice acceptance and real-account quota handoff remain open in PLAN.md.
+Real-account quota handoff remains open in PLAN.md. Character/voice acceptance
+evidence and any current limitations are tracked there.
 Use the native browser
 session for inspection when the extension reports an unavailable control.
 Keep such findings explicit and preserve the original job.

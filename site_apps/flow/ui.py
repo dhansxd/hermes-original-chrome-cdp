@@ -29,6 +29,16 @@ SNAPSHOT = r'''(() => {
     ingredients:Array.from(document.querySelectorAll('flow-ingredient-bar img')).filter(visible).map(e=>({
       id:e.getAttribute('data-media-id') ?? e.src.match(/\/image\/([a-f0-9-]+)/)?.[1] ?? null,
       src:e.currentSrc || e.src,ready:e.complete && e.naturalWidth>0})),
+    references:Array.from(document.querySelectorAll('flow-ingredient-bar flow-ingredient-chip')).map(e=>{
+      const types=['image','video','character','audio'];
+      const type=types.find(t=>e.querySelector('flow-'+t+'-ingredient-chip'));
+      const button=e.querySelector('button'),img=e.querySelector('img');
+      if(!type || !button || !visible(button))return null;
+      const disabled=button.disabled||button.getAttribute('aria-disabled')==='true'||button.classList.contains('disabled');
+      return {kind:type==='audio'?'voice':type,name:label(e),src:img?.currentSrc || img?.src || null,
+        id:img?.src.match(/\/(?:image|video)\/([a-f0-9-]+)/)?.[1] ?? null,
+        ready:button.getAttribute('aria-busy')!=='true'&&(type==='audio'||!!(img?.complete&&img?.naturalWidth)),disabled};
+    }).filter(Boolean),
     frames:Array.from(document.querySelectorAll('.frame-trigger')).filter(visible).map(e=>({text:label(e),
       image:e.querySelector('img')?.currentSrc ?? null})),
     tiles:Array.from(document.querySelectorAll('flow-image-tile,flow-video-tile')).map(e=>({

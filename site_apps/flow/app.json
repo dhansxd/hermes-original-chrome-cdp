@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "flow",
   "name": "Google Flow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "profile_policy": "rotate_on_limit",
   "operations": {
     "inspect": {
@@ -283,6 +283,62 @@
               "first",
               "last"
             ]
+          }
+        }
+      }
+    },
+    "create_voice": {
+      "description": "Synthesize and save a custom voice from a native base voice, then return the exact saved audio and fields. Resume the same job after an uncertain preview/save.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "base",
+          "name",
+          "dialogue",
+          "performance"
+        ],
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "base": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "dialogue": {
+            "type": "string"
+          },
+          "performance": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "create_character": {
+      "description": "Create a saved native character from a local image, set its name/personality and optional voice, and read back the saved native identity. Resume the same job after interrupted creation.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "name",
+          "path"
+        ],
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "voice": {
+            "type": "string"
           }
         }
       }

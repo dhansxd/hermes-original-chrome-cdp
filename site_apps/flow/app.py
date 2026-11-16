@@ -3,13 +3,13 @@ import hashlib
 import json
 import re
 import shutil
-import subprocess
 import time
 from pathlib import Path
 
 from .ui import UI
-from .downloads import collect
+from .downloads import collect, verify
 from .references import upload, bind
+from . import entities
 
 
 ORIGIN = 'https://flow.google.com'
@@ -25,6 +25,8 @@ SETTINGS = {'project','mode','kind','model','aspect','count','duration','resolut
 PARAMETERS = {'inspect': {'project','mode','kind'}, 'create_project': {'title'},
               'configure': SETTINGS, 'upload': {'project','path'},
               'bind_reference': {'project','title','kind','slot'},
+              'create_voice': {'project','base','name','dialogue','performance'},
+              'create_character': {'project','path','name','description','voice'},
               'generate_image': SETTINGS | {'prompt','references'},
               'generate_video': SETTINGS | {'prompt','references'}}
 
@@ -97,6 +99,8 @@ def account(ui, *, credits=True):
 
 def identify(context, operation, params):
     # Probe the destination account before opening account-local project IDs.
+    if operation == 'create_character':
+        entities.capture_character(context, UI(context))
     owner = account(ensure(context, {}), credits=operation in GENERATIONS)
     quota = {'scope': scope(operation)}
     if owner['credits'] is not None and owner['credits'] > 0:
@@ -266,17 +270,7 @@ def observe_generation(context, ui, checkpoint):
             file = collect(ui, context.directory, tile['id'], action)
             if file.get('pending'):
                 return {'status': 'running', 'request': request, 'data': {'download': file}}
-            decode = subprocess.run(['ffmpeg', '-v', 'error', '-i', file['path'], '-f', 'null', '-'],
-                                    capture_output=True, text=True, timeout=60)
-            if decode.returncode:
-                raise RuntimeError('The downloaded original did not decode: ' + decode.stderr)
-            probe = subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-show_format', '-of', 'json', file['path']],
-                                   capture_output=True, text=True, check=True, timeout=20)
-            metadata = json.loads(probe.stdout)
-            file['media'] = {'duration': metadata.get('format', {}).get('duration'),
-                'streams': [{key: stream[key] for key in ('codec_type','codec_name','width','height','duration') if key in stream}
-                            for stream in metadata['streams']]}
-            files.append(file)
+            files.append(verify(file))
             if '/edit/' in ui.read('location.pathname'):
                 ui.click('button.back-button')
                 ui.wait("!location.pathname.includes('/edit/')")
@@ -285,6 +279,7 @@ def observe_generation(context, ui, checkpoint):
             checkpoint['files'] = files
             context.checkpoint(checkpoint)
             return {'status': 'ok', 'request': request, 'data': {'files': files, 'settings': checkpoint['settings'],
+                    'references': checkpoint.get('references', []),
                     'project': checkpoint['project'], 'credits_before': checkpoint['credits_before'],
                     'credits_after': account(ui)['credits']}}
     return {'status': 'running' if identifier else 'needs_inspection', 'request': request,
@@ -302,9 +297,10 @@ def generate(context, ui, operation, params):
         raise RuntimeError('Install FFmpeg and ffprobe on the Hermes process PATH before generating media')
     settings = selected_settings(configure(ui, params, kind=kind), kind)
     owner = account(ui)
-    selector = ui.read("(() => {const es=Array.from(document.querySelectorAll('[contenteditable=true]')).filter(e=>e.getClientRects().length);"
-                       "if(es.length!==1)throw Error('Flow composer is ambiguous');es[0].setAttribute('data-hermes-flow-editor','active');"
-                       "return '[data-hermes-flow-editor=active]';})()")
+    editor = ("(() => {const es=Array.from(document.querySelectorAll('[contenteditable=true]')).filter(e=>e.getClientRects().length);"
+              "if(es.length!==1)throw Error('Flow composer is ambiguous');es[0].setAttribute('data-hermes-flow-editor','active');"
+              "return '[data-hermes-flow-editor=active]';})()")
+    selector = ui.read(editor)
     if settings['mode'] == 'agent':
         selected = settings['selected']
         model = next(item['value'] for item in settings['models'] if item['selector'] == kind)
@@ -318,7 +314,10 @@ def generate(context, ui, operation, params):
             title = upload(ui, context.directory, reference['path'])['title']
         if not title:
             raise ValueError('Each reference requires an uploaded title or local path')
-        bindings.append(bind(ui, title, reference.get('kind','image'), reference.get('slot')))
+        reference_kind = reference.get('kind','image')
+        expected = entities.reference(context, reference_kind, title, ui.read('location.href'))
+        bindings.append(bind(ui, title, reference_kind, reference.get('slot'), expected))
+    selector = ui.read(editor)
     actual = ui.read(f"document.querySelector({json.dumps(selector)}).innerText")
     if ' '.join(actual.split()) != ' '.join(prompt.split()):
         raise RuntimeError('The Flow composer did not preserve the requested prompt')
@@ -330,7 +329,8 @@ def generate(context, ui, operation, params):
                   'prompt': prompt, 'settings': settings, 'credits_before': owner['credits'],
                   'references': bindings,
                   'reference_ids': [item['id'] for item in state['ingredients'] if item.get('id')],
-                  'composer': {'ingredients': state['ingredients'], 'frames': state['frames']},
+                  'composer': {'ingredients': state['ingredients'], 'frames': state['frames'],
+                               'references': state['references']},
                   'portable_references': params.get('references', []),
                   'notices_before': state['notices'],
                   'count': settings['count'],
@@ -370,7 +370,13 @@ def run(context, operation, params):
         if operation == 'upload':
             return not_submitted(upload(ui, context.directory, params['path']))
         if operation == 'bind_reference':
-            return not_submitted(bind(ui, params['title'], params.get('kind','image'), params.get('slot')))
+            kind = params.get('kind','image')
+            expected = entities.reference(context, kind, params['title'], ui.read('location.href'))
+            return not_submitted(bind(ui, params['title'], kind, params.get('slot'), expected))
+        if operation == 'create_voice':
+            return entities.create_voice(context, ui, params)
+        if operation == 'create_character':
+            return entities.create_character(context, ui, params)
         if operation in GENERATIONS:
             return generate(context, ui, operation, params)
         raise ValueError('Choose an operation listed by browser_app describe')
@@ -384,6 +390,10 @@ def resume(context, job):
     attempt_id = job['attempts'][-1].get('request_id') if job.get('attempts') else None
     owns_checkpoint = checkpoint.get('job') == context.job_id or (
         attempt_id is not None and attempt_id == checkpoint.get('request_id'))
+    if owns_checkpoint and checkpoint.get('operation') == 'create_voice':
+        return entities.save_voice(context, ensure(context, {'project': checkpoint['project']}), checkpoint)
+    if owns_checkpoint and checkpoint.get('operation') == 'create_character':
+        return entities.finish_character(context, UI(context), checkpoint)
     if checkpoint.get('submit_intent') and owns_checkpoint:
         checkpoint.setdefault('count', job['params'].get('count', 1))
         ui = ensure(context, {'project': checkpoint['project']})
@@ -396,7 +406,8 @@ def handoff(context, packet):
     remaining = packet.get('remaining', {})
     composer = remaining.get('composer', {})
     references = remaining.get('references', [])
-    if (composer.get('ingredients') or any(frame.get('image') for frame in composer.get('frames', []))) and not references:
+    if (composer.get('ingredients') or composer.get('references')
+            or any(frame.get('image') for frame in composer.get('frames', []))) and not references:
         return {'status': 'needs_inspection',
                 'message': 'The source composer has native references. Supply their local files to continue them on the destination account.'}
     if any(not reference.get('path') for reference in references):
