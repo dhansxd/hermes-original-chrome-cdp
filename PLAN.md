@@ -1,8 +1,14 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 11, 16 November 2026.
+Revisi PRD 12, 16 November 2026.
 
 ## 1. Status dan langkah berikutnya
+
+**Pengembangan lanjutan dijeda untuk persiapan reset Mac pengguna.** Permintaan
+terakhir adalah menyimpan kode, kebutuhan, keputusan, hasil dan pekerjaan tertunda
+di GitHub. [HANDOFF.md](HANDOFF.md) menjadi titik masuk pemulihan setelah reset.
+Implementasi Gemini, fitur Flow berikutnya dan produksi konten menunggu arahan
+pengguna untuk melanjutkan. Checklist di bawah mempertahankan status buktinya.
 
 **Perbaikan startup satu jendela per sesi tersedia pada host 0.10.3.** Pengguna meminta
 jendela awal untuk izin CDP dan pemeriksaan profil dipakai langsung sebagai
@@ -96,7 +102,7 @@ berikutnya. Riwayat rinci sebelum PRD tersedia pada bagian sumber bukti.
 | Browser Chrome asli | Host 0.10.3 | Ya, plugin aktif dan provider dipilih | 342 tes otomatis lulus. Startup cold/windowless/warm serta enam identitas pada profil sama/campuran memakai satu jendela awal per sesi. Stop, cleanup dan pemeriksaan event macOS lulus. |
 | Inventori/default/profil per sesi | Tersedia pada 0.7.0 | Ya | Penerimaan native empat agen/multiprofil diulang dan lulus. |
 | Panduan `chrome_profiles` | Tersedia pada 0.7.0 | Ya | Schema aturan profil dibaca melalui `tool_describe` pada chat CLI baru. |
-| Pemuat dan lifecycle extension pengguna | List/describe/run/enable/disable/remove | Ya, gateway direload resmi | 33 regresi khusus paket dan uji native enam jendela, disable/remove, serta pekerjaan lintas turn lulus. Paket produksi Gemini/Flow masih terbuka. |
+| Pemuat dan lifecycle extension pengguna | List/describe/run/enable/disable/remove | Ya, gateway direload resmi | 33 regresi khusus paket dan uji native enam jendela, disable/remove, serta pekerjaan lintas turn lulus. Template Flow 0.3.0 tersedia. Template Gemini masih terbuka. |
 | Profil tetap/acak/per platform/subagent | Implementasi tersedia pada 0.8.0 | Ya | Regresi aturan profil dan uji native pemilihan profil child per paket lulus. Kanal nyata mengikuti item terbuka. |
 | Rolling generik dan handoff | Implementasi tersedia pada 0.8.0 | Ya, gateway direload resmi | 31 regresi rolling lulus. Fixture CDP UI membuktikan A -> B -> C, profil sumber pending bersama peer, source receipt setelah Stop/reload, serta preservasi browser umum/extension lain/manual. |
 | Extension Gemini | Source dan pilot UI mandiri tersedia | Belum sebagai extension plugin | Regresi source 588 lulus, 40 tes live dilewati. Migrasi UI/routing dan penerimaan extension masih terbuka. |
@@ -579,6 +585,9 @@ ikon Google Chrome, dengan nol error baca. Inventori Chrome akhir nol. Pemeriksa
 log sejak awal penerimaan mencatat nol event AboutThisMac dari Chrome.
 
 ## 10. Urutan implementasi
+
+Urutan ini dipertahankan sebagai rencana setelah pengguna melanjutkan proyek.
+Status jeda dan panduan pemulihan tercatat pada [HANDOFF.md](HANDOFF.md).
 
 1. **Fondasi extension** — EXT-01 sampai EXT-04 dan CTX-01. Buktikan paket fixture
    eksternal, katalog, bantuan, pembaruan, serta konteks browser pemiliknya.

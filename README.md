@@ -4,6 +4,10 @@ Use your installed, signed-in Google Chrome as the browser backend for Hermes Ag
 Choose **Original Chrome · CDP** in Hermes's Browser Automation picker, then use the
 native `browser_exec` tool and browser helpers.
 
+The [project handoff](HANDOFF.md) records the maintainer's requirements, verified
+baseline, open work and recovery steps for a fresh Mac installation. Further
+feature development is paused at the maintainer's request.
+
 The plugin connects through Chrome DevTools Protocol (CDP). Each agent session gets
 its own Chrome window and owned tabs in the selected existing profile. Saved website
 sign-ins come from that Chrome profile. Separate agents can work alongside manual

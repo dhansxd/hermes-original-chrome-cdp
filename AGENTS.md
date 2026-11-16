@@ -1,8 +1,11 @@
 # Contributor instructions
 
+- Read HANDOFF.md for the reset-recovery handoff and the current development pause.
 - Read PLAN.md for the agreed scope and verification baseline.
 - Read and apply the user's coding guidelines before modifying code.
 - Make the smallest change that addresses an observed issue or requested feature.
+- State material assumptions and concrete success criteria. Reuse existing code
+  and keep planning and verification proportional to the change.
 - Preserve native Hermes provider registration and browser_exec behavior.
 - Keep changes within this plugin. Preserve Hermes core and managed dependencies.
 - Protect other agents' and manual Chrome targets during every test and cleanup.
