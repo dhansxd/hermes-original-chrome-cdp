@@ -3,7 +3,7 @@ import os, sys, json, tempfile, logging, time, threading, concurrent.futures, uu
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from native_windows import window_keys, verify_cleanup
+from native_windows import window_keys, verify_cleanup, verify_no_chrome_about_events
 logging.basicConfig(level=logging.WARNING)
 import hermes_bootstrap
 if '--require-unmodified-harness' in sys.argv:
@@ -57,6 +57,7 @@ from tools.browser_session_lifecycle import cleanup_profile_browsers
 source=Path(__file__).resolve().parents[1];results=[]
 turns={task:uuid.uuid4().hex for task in ('A','B','C','D')}
 with set_hermes_home_override(home):
+ shortcut_check_started=time.time()
  native_windows_before=window_keys()
  manager=get_plugin_manager();manager._load_plugin(parse_manifest_file(source/'plugin.yaml',source,'user',''))
  from agent.browser_registry import get_provider
@@ -83,7 +84,7 @@ with set_hermes_home_override(home):
   for session in sessions:
    windows={observer.call('Browser.getWindowForTarget',{'targetId':target['targetId']})['windowId']
             for target in session._inventory() if target.get('type')=='page'}
-   assert windows,'Agent has no Chrome window'
+   assert len(windows)==1,('Expected one initial Chrome window per agent',windows)
    assert all(windows.isdisjoint(peer) for peer in agent_windows),'Agents share a Chrome window'
    agent_windows.append(windows)
   manual_windows={observer.call('Browser.getWindowForTarget',{'targetId':target})['windowId'] for target in manual_before}
@@ -172,3 +173,4 @@ for target in ('disabled','hidden','readonly','visible'):
   server.shutdown()
   print('REMAINING_PROVIDER_SESSIONS',len(provider.sessions),flush=True)
   verify_cleanup(native_windows_before)
+ verify_no_chrome_about_events(shortcut_check_started)

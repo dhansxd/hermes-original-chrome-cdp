@@ -15,7 +15,7 @@ choose the same profile or different profiles, each with their own windows.
 
 Use `browser_app` to discover and run user-owned website extension packages.
 Their Python code and guides live outside the plugin installation and can be
-updated independently. Version 0.10.2 bundles Flow 0.3.0 with real-account rolling,
+updated independently. Version 0.10.3 bundles Flow 0.3.0 with real-account rolling,
 portable reference files and destination character/voice preparation. Classic and
 Agent rolling both produced original MP4 files, with the Agent test run by Hermes.
 Provider quota-reset acceptance and the Gemini package follow the open checklist in
@@ -56,7 +56,7 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.10.2 uses documented public Hermes plugin APIs for BrowserProvider,
+Version 0.10.3 uses documented public Hermes plugin APIs for BrowserProvider,
 configuration, session-route context, and CDP supervisor teardown. A regression
 check rejects private Hermes runtime imports. The plugin owns its Chrome startup,
 consent, CDP relay, targets, and cleanup. Hermes manages its native browser driver
@@ -314,6 +314,11 @@ Startup covers Chrome stopped, running without windows, and running with existin
 windows. Production sessions use the original Chrome application and its Dock entry.
 The explicit profile-directory launch selects the requested profile directly.
 
+Each session opens one initial window. After consent and profile verification,
+the relay hands that same blank page to the native driver's first bootstrap
+request. The handoff is consumed once. Later target requests create additional
+owned windows according to the existing session ownership rules.
+
 For running Chrome, the plugin forwards explicit profile/window arguments through
 Chrome's local ProcessSingleton socket after checking the connected process ID,
 process creation time, and IPC nonce. Cold startup uses normal macOS LaunchServices.
@@ -345,6 +350,12 @@ CDP window-activation requests are acknowledged while Chrome keeps its current
 foreground window. Native helpers select and operate on their owned CDP targets
 in the background. New targets use separate agent-owned windows in the selected
 profile.
+
+For keyboard events, the relay omits a mirrored native keycode when the helper
+copies the Windows keycode into the macOS-native field. DOM key/code, modifiers,
+text and editor commands retain their values. Explicit distinct native keycodes
+are forwarded. This avoids Cocoa menu fallback for that malformed encoding.
+[Chromium keyboard dispatch](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/content/browser/devtools/protocol/input_handler.cc)
 
 ## Update and lifecycle
 
@@ -420,7 +431,7 @@ hermes plugins validate .
 hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
 
-The 0.10.2 regression suite covers registration, task
+The 0.10.3 regression suite covers registration, task
 namespaces, startup and consent identity, input focus, target ownership, transport
 responses, concurrent unload, retryable cleanup, and dependency platform markers.
 Regression cases also cover foreground preservation, late window creation during
@@ -475,9 +486,10 @@ without activating Chrome. An extra native window fails cleanup acceptance.
 The parallel suite uses six distinct native Hermes task/conversation identities
 and one shared site package on local fixture pages. It exercises a shared profile
 and two mixed profiles, concurrent input, individual Stop/completion, peer/manual
-preservation and native window cleanup. Additional targets read back their actual
-profile directory after both profiles are active. Its report includes the actual
-window count per owner, including startup and native harness working windows.
+preservation and native window cleanup. It requires one initial window per session
+and six added native windows for six owners. Additional targets read back their
+actual profile directory after both profiles are active. The browser and parallel
+suites also check macOS logs for unexpected About This Mac events from Chrome.
 
 The site-package native test uses external temporary packages, two apps, parent
 and child identities, a simulated Telegram route, and ordinary browsing. It checks

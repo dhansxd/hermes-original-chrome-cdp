@@ -2,7 +2,7 @@
 
 Only target discovery, target creation and browser-wide commands need mediation.
 Page CDP (DOM, Runtime, Input, screenshots, frames, etc.) passes through unchanged,
-except window activation requests, which preserve the user's foreground window.
+except window activation and mirrored native keyboard codes on shared macOS Chrome.
 This separates cooperative browser sessions; it is not a Python or web security sandbox.
 """
 import concurrent.futures
@@ -104,6 +104,7 @@ class ChromeSession:
         self.closed = False
         self.owned = set()
         self.context = None
+        self.initial_target = None
         self.seed_dir = None
         self.seed_url = None
         self.seed_title = None
@@ -166,8 +167,14 @@ class ChromeSession:
                     if not actual or Path(actual).resolve() != self.data / self.profile:
                         raise RuntimeError('Chrome opened a different profile; no browsing was performed.')
                     self.wire.call('Page.navigate', {'url': 'about:blank'}, sid)
+                    deadline = time.monotonic() + 6
+                    while self.wire.call('Target.getTargetInfo', {'targetId': target})['targetInfo'].get('url') != 'about:blank':
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError('The startup page has not finished its initial navigation.')
+                        time.sleep(.05)
                     self.wire.call('Target.detachFromTarget', {'sessionId': sid})
                     self.wire.call('Target.setDiscoverTargets', {'discover': True})
+                    self.initial_target = target
             except Exception as exc:
                 self.error = str(exc)
                 if self.seed_url and self.identity is None:
@@ -279,8 +286,18 @@ class ChromeSession:
                 # after acquiring it so no window can appear after the final inventory.
                 if self.closed:
                     raise RuntimeError('Browser session is closed.')
-                if self.seed_url and any(t.get('url') == self.seed_url for t in self._inventory()):
+                targets = self._inventory()
+                if self.seed_url and any(t.get('url') == self.seed_url for t in targets):
                     raise RuntimeError('Inspect the original pending profile window before creating another window.')
+                # The named native driver requests its first dedicated page here.
+                # This endpoint already owns an exclusive, verified startup page.
+                initial, self.initial_target = self.initial_target, None
+                if (params.get('url') == 'about:blank' and not params.get('newWindow')
+                        and set(params) <= {'url', 'background', 'browserContextId', 'newWindow'}
+                        and any(t['targetId'] == initial and t.get('type') == 'page'
+                                and t.get('url') == 'about:blank' and t.get('browserContextId') == self.context
+                                for t in targets)):
+                    return {'targetId': initial}
                 creation = dict(params, newWindow=True, background=True)
                 if self.context:
                     creation['browserContextId'] = self.context
@@ -344,6 +361,11 @@ class ChromeSession:
             return self.wire.call(method, params)
         if not sid:
             raise RuntimeError('This command requires an owned page attachment.')
+        if (method == 'Input.dispatchKeyEvent' and 'nativeVirtualKeyCode' in params
+                and params['nativeVirtualKeyCode'] == params.get('windowsVirtualKeyCode')):
+            # The native helper mirrors Win32 codes into this macOS-only field.
+            # Omit that encoding so unhandled page keys cannot reach Cocoa menus.
+            params = {key: value for key, value in params.items() if key != 'nativeVirtualKeyCode'}
         if method == 'Page.bringToFront':
             return {}
         # The native client owns the operation deadline. A resource download or

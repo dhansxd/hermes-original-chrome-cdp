@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_apps import Fixture, package
-from native_windows import window_keys, verify_cleanup
+from native_windows import window_keys, verify_cleanup, verify_no_chrome_about_events
 from profiles import get_profile
 from relay import ChromeSession
 from startup import PERSONAL
@@ -29,6 +29,7 @@ AGENTS = tuple('agent-' + str(index) for index in range(6))
 
 
 def verify():
+    started = time.time()
     before = window_keys()
     source = Path(__file__).resolve().parents[1]
     server = ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
@@ -136,12 +137,14 @@ plugins:
                         target_windows = {manual.wire.call('Browser.getWindowForTarget', {'targetId': target})['windowId']
                                           for target in owned}
                         print('PARALLEL_OWNER_WINDOWS', phase, task, len(owned), sorted(target_windows), flush=True)
-                        assert target_windows, (phase, task, sorted(owned))
+                        assert len(owned) == len(target_windows) == 1, (phase, task, sorted(owned), target_windows)
                         targets.append(owned)
                         windows.append(target_windows)
                     manual_window = manual.wire.call('Browser.getWindowForTarget', {'targetId': manual_target})['windowId']
                     assert all(manual_window not in window for window in windows)
                     assert all(left.isdisjoint(right) for index, left in enumerate(windows) for right in windows[index + 1:])
+                    actual_windows = window_keys()
+                    assert manual_before <= actual_windows and len(actual_windows - manual_before) == 6, actual_windows
 
                     for iteration in range(2):
                         def write(task):
@@ -225,6 +228,8 @@ print('OWNED_PROFILE_READBACK_PASS')
                     finally:
                         server.shutdown()
                         verify_cleanup(before)
+    verify_no_chrome_about_events(started)
+    report['no_chrome_about_this_mac_events'] = True
     report['native_windows_returned_to_baseline'] = True
     return report
 

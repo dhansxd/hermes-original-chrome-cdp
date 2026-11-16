@@ -73,6 +73,79 @@ class RelayTests(unittest.TestCase):
             'url': 'about:blank', 'newWindow': True, 'background': True, 'browserContextId': 'original-profile'})
         self.assertIn('new', self.session.owned)
 
+    def test_mirrored_native_keyboard_codes_are_normalized_without_mutating_the_request(self):
+        for kind in ('rawKeyDown', 'keyDown', 'char', 'keyUp'):
+            with self.subTest(kind=kind):
+                params = {'type': kind, 'key': 'a', 'code': 'KeyA', 'modifiers': 4,
+                          'windowsVirtualKeyCode': 65, 'nativeVirtualKeyCode': 65}
+                expected = {key: value for key, value in params.items() if key != 'nativeVirtualKeyCode'}
+                self.command('Input.dispatchKeyEvent', params, 'page-sid')
+                self.wire.call.assert_called_with('Input.dispatchKeyEvent', expected, 'page-sid', timeout=None)
+                self.assertEqual(params['nativeVirtualKeyCode'], 65)
+
+    def test_explicit_native_and_renderer_keyboard_encodings_are_preserved(self):
+        for codes in ({'windowsVirtualKeyCode': 65, 'nativeVirtualKeyCode': 0},
+                      {'windowsVirtualKeyCode': 65}, {'nativeVirtualKeyCode': 0}, {}):
+            with self.subTest(codes=codes):
+                params = {'type': 'keyDown', 'key': 'a', 'code': 'KeyA', **codes}
+                self.command('Input.dispatchKeyEvent', params, 'page-sid')
+                self.wire.call.assert_called_with('Input.dispatchKeyEvent', params, 'page-sid', timeout=None)
+
+    def test_keyboard_normalization_requires_an_owned_page_attachment(self):
+        params = {'type': 'keyUp', 'key': 'a', 'modifiers': 4,
+                  'windowsVirtualKeyCode': 65, 'nativeVirtualKeyCode': 65}
+        with self.assertRaisesRegex(RuntimeError, 'does not belong'):
+            self.session.command(self.other, 'Input.dispatchKeyEvent', params, 'page-sid')
+        self.assertFalse(any(c.args[0] == 'Input.dispatchKeyEvent' for c in self.wire.call.call_args_list))
+
+    def startup_page(self):
+        self.session.initial_target = 'owned'
+        next(t for t in self.targets if t['targetId'] == 'owned')['url'] = 'about:blank'
+
+    def test_initial_blank_creation_hands_off_the_owned_startup_page(self):
+        self.startup_page()
+        result = self.command('Target.createTarget', {'url': 'about:blank', 'background': True})
+        self.assertEqual(result, {'targetId': 'owned'})
+        self.assertIsNone(self.session.initial_target)
+        self.assertFalse(any(c.args[0] == 'Target.createTarget' for c in self.wire.call.call_args_list))
+
+    def test_startup_page_handoff_is_consumed_once(self):
+        self.startup_page()
+        self.assertEqual(self.command('Target.createTarget', {'url': 'about:blank'}), {'targetId': 'owned'})
+        self.assertEqual(self.command('Target.createTarget', {'url': 'about:blank'}), {'targetId': 'new'})
+        self.assertEqual(sum(c.args[0] == 'Target.createTarget' for c in self.wire.call.call_args_list), 1)
+
+    def test_navigated_or_missing_startup_page_is_not_reused(self):
+        for target in ('owned', 'missing'):
+            with self.subTest(target=target):
+                self.session.initial_target = target
+                self.assertEqual(self.command('Target.createTarget', {'url': 'about:blank'}), {'targetId': 'new'})
+                self.assertIsNone(self.session.initial_target)
+
+    def test_explicit_target_options_do_not_claim_the_startup_page(self):
+        for params in ({'newWindow': True}, {'hidden': True}, {'forTab': True},
+                       {'width': 800}, {'url': 'https://fixture.invalid/requested'}):
+            with self.subTest(params=params):
+                self.startup_page()
+                self.assertEqual(self.command('Target.createTarget', {'url': 'about:blank', **params}),
+                                 {'targetId': 'new'})
+                self.assertIsNone(self.session.initial_target)
+
+    def test_concurrent_initial_creates_handoff_the_startup_page_once(self):
+        self.startup_page()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(self.command, 'Target.createTarget', {'url': 'about:blank'})
+                       for _ in range(2)]
+            targets = {future.result()['targetId'] for future in futures}
+        self.assertEqual(targets, {'owned', 'new'})
+        self.assertEqual(sum(c.args[0] == 'Target.createTarget' for c in self.wire.call.call_args_list), 1)
+
+    def test_startup_handoff_cleanup_preserves_the_manual_page(self):
+        self.startup_page()
+        self.command('Target.createTarget', {'url': 'about:blank'})
+        self.assertTrue(self.session.close())
+        self.assertEqual([t['targetId'] for t in self.targets], ['manual'])
+
     def profile_refusal(self):
         self.session.identity = {'pid': 42, 'started': 1, 'endpoint': 'ws://fixture'}
         self.session.seed_url = 'file:///fixture/unique-seed.html'
