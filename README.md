@@ -15,7 +15,7 @@ choose the same profile or different profiles, each with their own windows.
 
 Use `browser_app` to discover and run user-owned website extension packages.
 Their Python code and guides live outside the plugin installation and can be
-updated independently. Version 0.10.1 bundles Flow 0.3.0 with real-account rolling,
+updated independently. Version 0.10.2 bundles Flow 0.3.0 with real-account rolling,
 portable reference files and destination character/voice preparation. Classic and
 Agent rolling both produced original MP4 files, with the Agent test run by Hermes.
 Provider quota-reset acceptance and the Gemini package follow the open checklist in
@@ -56,7 +56,7 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.10.1 uses documented public Hermes plugin APIs for BrowserProvider,
+Version 0.10.2 uses documented public Hermes plugin APIs for BrowserProvider,
 configuration, session-route context, and CDP supervisor teardown. A regression
 check rejects private Hermes runtime imports. The plugin owns its Chrome startup,
 consent, CDP relay, targets, and cleanup. Hermes manages its native browser driver
@@ -321,6 +321,13 @@ The original application owns the agent windows and uses its existing Dock entry
 Subsequent browsing uses CDP. The startup message follows Chromium's implementation.
 [Chromium ProcessSingleton source](https://github.com/chromium/chromium/blob/main/chrome/browser/process_singleton_posix.cc)
 
+Chrome can reject creation through a persistent profile's context ID after another
+profile becomes last-used. On that specific pre-creation refusal, the relay uses
+the same verified singleton to open an owned window in the explicitly selected
+profile, then resumes CDP operations. The session's unique startup page identifies
+the new window and retains it for cleanup if creation is interrupted.
+[Chromium browser-context resolution](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/browser/devtools/devtools_browser_context_manager.cc)
+
 Authentication comes from each user's local Chrome profile. The installation
 configuration consists of the browser backend and an existing profile-directory
 name. Profile paths are resolved from the macOS user's home directory at runtime.
@@ -413,7 +420,7 @@ hermes plugins validate .
 hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
 
-The 0.10.1 regression suite covers registration, task
+The 0.10.2 regression suite covers registration, task
 namespaces, startup and consent identity, input focus, target ownership, transport
 responses, concurrent unload, retryable cleanup, and dependency platform markers.
 Regression cases also cover foreground preservation, late window creation during
@@ -447,6 +454,7 @@ python tests/live_native.py --check-native-focus --require-unmodified-harness
 python tests/live_profiles.py
 python tests/live_apps.py
 python tests/live_rolling.py
+python tests/live_parallel.py
 ```
 
 The multi-profile native test requires two existing Chrome profiles. It uses local
@@ -463,6 +471,13 @@ installed harness against its package RECORD.
 The browser and rolling suites also compare the native macOS Chrome window
 inventory before and after teardown. Accessibility reads observe that inventory
 without activating Chrome. An extra native window fails cleanup acceptance.
+
+The parallel suite uses six distinct native Hermes task/conversation identities
+and one shared site package on local fixture pages. It exercises a shared profile
+and two mixed profiles, concurrent input, individual Stop/completion, peer/manual
+preservation and native window cleanup. Additional targets read back their actual
+profile directory after both profiles are active. Its report includes the actual
+window count per owner, including startup and native harness working windows.
 
 The site-package native test uses external temporary packages, two apps, parent
 and child identities, a simulated Telegram route, and ordinary browsing. It checks

@@ -1,6 +1,6 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 9, 16 November 2026.
+Revisi PRD 10, 16 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
@@ -14,6 +14,23 @@ Hash dan decode penuh kedua file lulus. Sampel suara tujuan tersedia untuk
 penilaian aksen/timbre pengguna. Peristiwa reset kuota akun Flow nyata belum
 diamati. Logika kunjung ulang profil memiliki bukti regresi dan fixture native.
 Gemini serta penerimaan kanal nyata pada CTX-01/PRO-02 tetap terbuka.
+
+**LIF-02 lulus melalui enam identitas task/conversation native Hermes.** Fixture
+lokal memakai satu source extension, enam sesi pada satu profil, lalu susunan
+tiga sesi per profil pada dua profil asli. Setiap sesi mempunyai kelompok jendela
+terpisah. Harness saat uji membuat dua jendela per sesi, sehingga totalnya dua
+belas jendela agen. Input paralel, Stop, penyelesaian, pembuatan target tambahan,
+pembacaan direktori profil aktual, preservasi peer/manual, dan cleanup kembali
+ke baseline lulus pada dua pengulangan lengkap. Uji ini memanggil registry/tool
+native secara langsung.
+
+Uji menemukan kegagalan pembuatan target setelah profil aktif terakhir berubah.
+Pemaksaan ID konteks profil sudah ada sejak commit `d33aa03`. Patch host 0.10.2
+memakai pembukaan profil eksplisit melalui singleton Chrome yang telah
+terverifikasi ketika CDP menolak ID tersebut sebelum membuat target. Sembilan
+regresi khusus ditambahkan. Pemeriksaan awal fixture juga disesuaikan dengan
+jumlah jendela harness aktual, payload akhir turn yang memuat `turn_id`, dan
+penantian isi direktori profil hingga Chrome selesai mengisinya.
 
 **Klarifikasi cleanup diterima.** Pengguna mengklarifikasi bahwa layar kedua yang
 terhubung ke laptop membeku sehingga gambar Chrome masih terlihat. Klarifikasi
@@ -31,19 +48,22 @@ berikutnya. Riwayat rinci sebelum PRD tersedia pada bagian sumber bukti.
 
 | Area | Implementasi | Terpasang lokal | Verifikasi dan status |
 | --- | --- | --- | --- |
-| Browser Chrome asli | Baseline dipakai dalam 0.10.1 | Ya, plugin aktif dan provider dipilih | 319 tes otomatis lulus. Cleanup native kembali lulus setelah pengulangan uji dan klarifikasi pengguna tentang layar kedua yang membeku. Host browser mempertahankan source baseline. Cleanup akhir turn serta disable memakai nama sesi terkini setelah perpindahan profil. Startup/Dock mengacu source baseline. |
+| Browser Chrome asli | Host 0.10.2 | Ya, plugin aktif dan provider dipilih | 328 tes otomatis lulus. Enam identitas native pada profil sama/campuran menjaga kelompok jendela masing-masing. Pembuatan target setelah pergantian profil aktif terakhir serta cleanup native kembali ke baseline lulus. |
 | Inventori/default/profil per sesi | Tersedia pada 0.7.0 | Ya | Penerimaan native empat agen/multiprofil diulang dan lulus. |
 | Panduan `chrome_profiles` | Tersedia pada 0.7.0 | Ya | Schema aturan profil dibaca melalui `tool_describe` pada chat CLI baru. |
 | Pemuat dan lifecycle extension pengguna | List/describe/run/enable/disable/remove | Ya, gateway direload resmi | 33 regresi khusus paket dan uji native enam jendela, disable/remove, serta pekerjaan lintas turn lulus. Paket produksi Gemini/Flow masih terbuka. |
 | Profil tetap/acak/per platform/subagent | Implementasi tersedia pada 0.8.0 | Ya | Regresi aturan profil dan uji native pemilihan profil child per paket lulus. Kanal nyata mengikuti item terbuka. |
 | Rolling generik dan handoff | Implementasi tersedia pada 0.8.0 | Ya, gateway direload resmi | 31 regresi rolling lulus. Fixture CDP UI membuktikan A -> B -> C, profil sumber pending bersama peer, source receipt setelah Stop/reload, serta preservasi browser umum/extension lain/manual. |
 | Extension Gemini | Source dan pilot UI mandiri tersedia | Belum sebagai extension plugin | Regresi source 588 lulus, 40 tes live dilewati. Migrasi UI/routing dan penerimaan extension masih terbuka. |
-| Extension Google Flow | Paket `site_apps/flow` 0.3.0 pada host 0.10.1 | Ya, salinan eksternal `browser-apps/flow` | Gambar/video klasik serta Agent diunduh dan didekode. JPEG, Ingredients, dua frame, karakter tersimpan dan suara kustom terverifikasi. Hermes chat CLI menghasilkan video Agent dengan kedua referensi. Rolling nyata klasik dan Agent lulus. Reset kuota provider nyata mengikuti FLO-04. |
+| Extension Google Flow | Paket `site_apps/flow` 0.3.0 pada host 0.10.2 | Ya, salinan eksternal `browser-apps/flow` cocok dengan template | Produksi gambar/video dan rolling klasik/Agent mempunyai bukti host 0.10.1. Inspeksi klasik melalui Hermes pada 0.10.2 lulus dan menjaga jendela peer. Reset kuota provider nyata mengikuti FLO-04. |
 
 Status konfigurasi lokal diperiksa pada 16 November 2026. Browser provider bernilai
-`original-chrome-default`, dan plugin tercantum aktif. Gateway sudah reload dengan source 0.10.1
+`original-chrome-default`, dan plugin tercantum aktif pada versi 0.10.2.
+Gateway sudah reload dengan source 0.10.2
 melalui mekanisme resmi Hermes. Respons memuat hook plugin termasuk
 `subagent_start`, serta tool `browser_app`/`chrome_profiles` untuk sesi baru.
+Chat CLI setelah reload berhasil menginspeksi UI Flow klasik. Pengukuran induk
+memastikan jendela peer tetap berisi `KEEP` dan inventori native akhir nol.
 Chat CLI memuat source host/paket yang diperbarui, membaca schema/panduan
 serta menjalankan karakter dan video Agent. Probe native/checkpoint dari chat CLI
 sesudah reload 0.9.0 tetap menjadi bukti fondasi integrasi.
@@ -447,8 +467,12 @@ identitas media dan file asli dapat dikaitkan dengan permintaan asal.
   `running`, Stop, finalisasi, disable dan unload. Uji native menjaga dokumen,
   profil dan direktori artefak saat turn diganti, lalu melepas resource pemilik
   yang tepat. Checkpoint/receipt berada di luar paket dan bertahan setelah cleanup.
-- [ ] **LIF-02** Enam agen pada profil sama serta profil campuran. Uji source
-  paket bersama, jendela berbeda, operasi paralel, dan cleanup pemilik yang tepat.
+- [x] **LIF-02** Enam identitas task/conversation native pada profil sama serta
+  profil campuran lulus melalui `tests/live_parallel.py`. Satu source paket
+  digunakan bersama. Dua putaran input paralel, pembuatan target tambahan pada
+  profil yang benar, Stop satu pemilik, akhir turn pemilik lain, preservasi
+  dokumen/input/artefak peer dan fixture manual, serta inventori native akhir
+  kembali ke baseline lulus. Masing-masing memiliki dua jendela saat uji.
 - [ ] **LIF-03** Browser umum, Flow, Gemini dan jendela manual berjalan bersama.
   Uji perpindahan profil serta penghentian satu operasi saat peer masih aktif.
 - [ ] **LIF-04** Regresi startup cold/windowless/warm, profil langsung dan satu
@@ -472,6 +496,7 @@ permintaan dan artefak yang dapat diperiksa.
 | Temuan | Jenis/status | Tindak lanjut dan pengaruh pada urutan kerja |
 | --- | --- | --- |
 | Laporan sisa jendela setelah uji | Diklarifikasi pengguna sebagai tampilan layar kedua yang membeku | Pemeriksaan terakhir nol jendela native. Pengulangan browser/rolling dan inspeksi Hermes lulus. Assertion inventori native menjadi bagian pengujian cleanup. |
+| CDP menolak konteks profil asli setelah profil aktif terakhir berubah | Diperbaiki pada host 0.10.2 | Direproduksi pada dua profil dengan kode yang sudah ada sejak `d33aa03`. Pembukaan profil eksplisit memakai singleton terverifikasi. Sembilan regresi dan uji native enam identitas lulus. |
 | Dua identitas supervisor native menyisakan reconnect setelah endpoint ditutup | Menunggu upstream sesuai keputusan pengguna | Mengikuti update resmi Hermes. Fondasi extension dapat dikerjakan. |
 | Router Gemini memakai SDK baseline, pilot UI memiliki kontrak sendiri | Perlu implementasi GEM-02/GEM-05 | Sambungkan bukti kuota UI, file, streaming, dan kelanjutan chat pada pemilik sesi yang sama. |
 | Catatan pembatalan Gemini paralel belum menjelaskan hilangnya satu target pra-uji | Perlu verifikasi LIF-03 | Reproduksi terfokus dan atribusi sebelum menetapkan patch. Paralel normal sudah tercatat berhasil. |
@@ -487,6 +512,11 @@ Observer juga mencatat 84 error pembacaan AX dan dua pembacaan Dock tidak lengka
 Bukti itu tetap dilaporkan beserta batas observasinya. Proses yang berakhir sebelum
 cleanup selesai dapat meninggalkan target. Login serta storage situs mengikuti
 perilaku bersama profil Chrome asli.
+
+Pengulangan enam identitas, regresi native, dan inspeksi Hermes pada 0.10.2
+disertai 4.667 pembacaan Dock valid. Seluruhnya menunjukkan satu ikon Google
+Chrome, dengan nol error pembacaan. Pengujian startup cold/windowless/warm
+lengkap untuk rilis tetap mengikuti LIF-04.
 
 ## 10. Urutan implementasi
 
@@ -508,6 +538,10 @@ perilaku bersama profil Chrome asli.
 | `tests/test_*.py`, 170 lulus | Regresi plugin 0.5.2. Pemasangan/provider aktif diperiksa kembali saat penyusunan PRD. |
 | `tests/test_*.py`, 192 lulus pada 0.6.0 | Termasuk 22 regresi pemuat paket, identitas, relative import dan pembaruan source. |
 | `tests/test_*.py`, 216 lulus pada 0.7.0 | 33 tes paket dan 13 tes aturan profil, termasuk lifecycle paralel, checkpoint, pending lintas turn, prioritas aturan serta konfigurasi terpisah. |
+| Host 0.10.2, 328 tes otomatis lulus | Sembilan regresi tambahan mencakup penolakan konteks profil lama, singleton/profil terverifikasi, kepemilikan target, outcome tak pasti, batas jendela, dan preservasi error CDP lain. |
+| `live_parallel.py`, dua pengulangan lengkap pada 0.10.2 | Enam identitas native berbagi source paket, satu profil lalu dua profil dengan susunan 3+3, dua putaran input, target tambahan dengan readback profil aktual, Stop/akhir turn dan preservasi peer/manual. Dua belas jendela agen per fase, cleanup kembali ke baseline. |
+| Empat suite native dan inspeksi Flow melalui Hermes pada 0.10.2 | Browser umum, profil, extension dan rolling lulus. Empat belas file Browser Harness cocok dengan RECORD. Inspeksi klasik memakai tool `browser_app`, status `ok`. Jendela peer dipertahankan dan inventori akhir nol. Sebanyak 4.667 sampel Dock menunjukkan satu ikon, nol error baca. |
+| Ekspor distribusi bersih 0.10.2 | Validasi plugin Hermes menyatakan security scan safe dan tanpa core override. Gitleaks serta pemeriksaan identitas pribadi pada source ekspor lulus. |
 | Penguatan cleanup native, 319 tes otomatis lulus | Empat regresi memastikan sisa jendela native menyebabkan gagal, baseline dipertahankan, transisi penutupan diamati, dan error inventori gagal eksplisit. Uji browser serta rolling memeriksa kesamaan inventori native akhir dengan baseline. |
 | `tests/test_*.py`, 315 lulus pada 0.10.1 | Termasuk handoff multi-output, harga native, preservasi hasil sumber, receipt persiapan per job/profil, pemulihan project/unggahan, hidrasi ingredient, serta pilihan suara karakter. |
 | Flow 0.3.0 pada akun nyata dan Hermes chat CLI | Sumber nol kredit berlanjut ke akun tujuan. Video klasik dengan karakter/suara tujuan serta video Agent dengan potret lokal selesai, cocok SHA-256 dan lulus decode penuh. Peer sentinel mempertahankan time origin dan isi selama rolling Hermes. |

@@ -180,7 +180,9 @@ class ChromeSession:
     def _inventory(self, wire=None):
         infos = (wire or self.wire).call('Target.getTargets')['targetInfos']
         with self.lock:
-            # Follow positive opener provenance, never names, URLs or the active window.
+            self.owned.update(t['targetId'] for t in infos if t.get('type') == 'page'
+                              and self.seed_url and t.get('url') == self.seed_url)
+            # Follow opener provenance after claiming this session's unique seed.
             for _ in range(len(infos)):
                 added = {t['targetId'] for t in infos if t.get('type') == 'page'
                          and t.get('browserContextId') == self.context and t.get('openerId') in self.owned}
@@ -188,6 +190,47 @@ class ChromeSession:
                     break
                 self.owned.update(added)
             return [t for t in infos if t['targetId'] in self.owned]
+
+    def _create_profile_target(self, params):
+        """Open a page in the selected persistent profile through Chrome's own singleton."""
+        if not self.seed_url or startup.endpoint_identity(self.data) != self.identity:
+            raise RuntimeError('Chrome identity changed before profile window creation.')
+        if (self.profile_identity is not None
+                and get_profile(self.profile, self.data).identity != self.profile_identity):
+            raise RuntimeError('The selected Chrome profile was replaced before window creation.')
+        arguments = [str(startup.CHROME / 'Contents/MacOS/Google Chrome'),
+                     f'--user-data-dir={self.data}', f'--profile-directory={self.profile}',
+                     '--new-window', self.seed_url]
+        startup.notify_running_chrome(self.data, (self.identity['pid'], self.identity['started']), arguments)
+        deadline = time.monotonic() + 20
+        while True:
+            matches = [t for t in self._inventory() if t.get('url') == self.seed_url]
+            if matches:
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError('The requested profile window is unresolved. Inspect this session before creating another window.')
+            time.sleep(.05)
+        if len(matches) != 1 or matches[0].get('browserContextId') != self.context:
+            raise RuntimeError('Chrome opened a different or ambiguous profile window.')
+        target = matches[0]['targetId']
+        attached = self.wire.call('Target.attachToTarget', {'targetId': target, 'flatten': True})['sessionId']
+        try:
+            self.wire.call('Page.navigate', {'url': params.get('url') or 'about:blank'}, attached)
+            while any(t['targetId'] == target and t.get('url') == self.seed_url for t in self._inventory()):
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('The new profile window has not finished its initial navigation.')
+                time.sleep(.05)
+        finally:
+            self.wire.call('Target.detachFromTarget', {'sessionId': attached})
+        bounds = {key: params[key] for key in ('left', 'top', 'width', 'height') if key in params}
+        if bounds or 'windowState' in params:
+            window = self.wire.call('Browser.getWindowForTarget', {'targetId': target})['windowId']
+            if bounds:
+                self.wire.call('Browser.setWindowBounds', {'windowId': window, 'bounds': bounds})
+            if 'windowState' in params:
+                self.wire.call('Browser.setWindowBounds', {'windowId': window,
+                               'bounds': {'windowState': params['windowState']}})
+        return {'targetId': target}
 
     def _event(self, message):
         method, params = message.get('method'), message.get('params', {})
@@ -236,10 +279,21 @@ class ChromeSession:
                 # after acquiring it so no window can appear after the final inventory.
                 if self.closed:
                     raise RuntimeError('Browser session is closed.')
+                if self.seed_url and any(t.get('url') == self.seed_url for t in self._inventory()):
+                    raise RuntimeError('Inspect the original pending profile window before creating another window.')
                 creation = dict(params, newWindow=True, background=True)
                 if self.context:
                     creation['browserContextId'] = self.context
-                result = self.wire.call(method, creation)
+                try:
+                    result = self.wire.call(method, creation)
+                except CDPError as error:
+                    # Chromium resolves persistent context IDs against the last-used profile.
+                    # This exact refusal precedes creation, so the native profile launch is safe.
+                    if (not self.context or error.error.get('code') != -32000
+                            or error.error.get('message') != 'Failed to find browser context with id ' + self.context
+                            or any(params.get(key) for key in ('forTab', 'hidden', 'enableBeginFrameControl'))):
+                        raise
+                    result = self._create_profile_target(params)
                 with self.lock:
                     self.owned.add(result['targetId'])
                 return result

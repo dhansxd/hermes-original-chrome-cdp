@@ -73,6 +73,132 @@ class RelayTests(unittest.TestCase):
             'url': 'about:blank', 'newWindow': True, 'background': True, 'browserContextId': 'original-profile'})
         self.assertIn('new', self.session.owned)
 
+    def profile_refusal(self):
+        self.session.identity = {'pid': 42, 'started': 1, 'endpoint': 'ws://fixture'}
+        self.session.seed_url = 'file:///fixture/unique-seed.html'
+        original = self.wire.call.side_effect
+
+        def call(method, params=None, sid=None, **kwargs):
+            if method == 'Target.createTarget':
+                raise relay.CDPError({'code': -32000,
+                    'message': 'Failed to find browser context with id original-profile'})
+            if method == 'Page.navigate':
+                next(t for t in self.targets if t['targetId'] == 'native-new')['url'] = params['url']
+            return original(method, params, sid, **kwargs)
+
+        self.wire.call.side_effect = call
+
+        def launch(*args):
+            self.targets.append(dict(self.info('native-new'), url=self.session.seed_url))
+        return launch
+
+    def test_context_refusal_opens_exact_profile_window_and_owns_it(self):
+        launch = self.profile_refusal()
+        with patch('relay.startup.endpoint_identity', return_value=self.session.identity), \
+                patch('relay.startup.notify_running_chrome', side_effect=launch) as notify:
+            result = self.command('Target.createTarget', {'url': 'https://fixture.invalid/requested'})
+        self.assertEqual(result, {'targetId': 'native-new'})
+        self.assertIn('native-new', self.session.owned)
+        arguments = notify.call_args.args[2]
+        self.assertIn('--profile-directory=Default', arguments)
+        self.assertEqual(arguments[-2:], ['--new-window', self.session.seed_url])
+        self.assertEqual(notify.call_args.args[1], (42, 1))
+        self.assertEqual(next(t for t in self.targets if t['targetId'] == 'native-new')['url'],
+                         'https://fixture.invalid/requested')
+
+    def test_other_native_errors_do_not_launch_profile_windows(self):
+        self.profile_refusal()
+        original = self.wire.call.side_effect
+
+        def call(method, *args, **kwargs):
+            if method == 'Target.createTarget':
+                raise relay.CDPError({'code': -32000, 'message': 'Different error'})
+            return original(method, *args, **kwargs)
+
+        self.wire.call.side_effect = call
+        with patch('relay.startup.notify_running_chrome') as notify:
+            with self.assertRaisesRegex(relay.CDPError, 'Different error'):
+                self.command('Target.createTarget')
+        notify.assert_not_called()
+
+    def test_changed_browser_identity_is_rejected_before_window_launch(self):
+        self.profile_refusal()
+        with patch('relay.startup.endpoint_identity', return_value={'pid': 99}), \
+                patch('relay.startup.notify_running_chrome') as notify:
+            with self.assertRaisesRegex(RuntimeError, 'identity changed'):
+                self.command('Target.createTarget')
+        notify.assert_not_called()
+
+    def test_pending_profile_window_is_discovered_without_another_create(self):
+        self.profile_refusal()
+        self.targets.append(dict(self.info('pending'), url=self.session.seed_url))
+        with patch('relay.startup.notify_running_chrome') as notify:
+            with self.assertRaisesRegex(RuntimeError, 'original pending'):
+                self.command('Target.createTarget')
+        self.assertIn('pending', self.session.owned)
+        notify.assert_not_called()
+        self.assertFalse(any(c.args[0] == 'Target.createTarget' for c in self.wire.call.call_args_list))
+
+    def test_unacknowledged_profile_window_is_retained_for_cleanup(self):
+        launch = self.profile_refusal()
+
+        def uncertain(*args):
+            launch(*args)
+            raise RuntimeError('Acknowledgement lost')
+
+        with patch('relay.startup.endpoint_identity', return_value=self.session.identity), \
+                patch('relay.startup.notify_running_chrome', side_effect=uncertain) as notify:
+            with self.assertRaisesRegex(RuntimeError, 'Acknowledgement lost'):
+                self.command('Target.createTarget')
+            self.assertIn('native-new', {t['targetId'] for t in self.command('Target.getTargets')['targetInfos']})
+            with self.assertRaisesRegex(RuntimeError, 'original pending'):
+                self.command('Target.createTarget')
+        self.assertEqual(notify.call_count, 1)
+        self.assertTrue(self.session.close())
+        self.assertEqual([t['targetId'] for t in self.targets], ['manual'])
+
+    def test_different_profile_window_is_owned_for_cleanup_before_rejection(self):
+        self.profile_refusal()
+
+        def different(*args):
+            self.targets.append(dict(self.info('native-new', context='different-profile'), url=self.session.seed_url))
+
+        with patch('relay.startup.endpoint_identity', return_value=self.session.identity), \
+                patch('relay.startup.notify_running_chrome', side_effect=different):
+            with self.assertRaisesRegex(RuntimeError, 'different or ambiguous'):
+                self.command('Target.createTarget')
+        self.assertIn('native-new', self.session.owned)
+        self.assertFalse(any(c.args[0] == 'Page.navigate' for c in self.wire.call.call_args_list))
+
+    def test_profile_window_bounds_and_state_are_applied_to_the_owned_window(self):
+        launch = self.profile_refusal()
+        with patch('relay.startup.endpoint_identity', return_value=self.session.identity), \
+                patch('relay.startup.notify_running_chrome', side_effect=launch):
+            self.command('Target.createTarget', {'url': 'about:blank', 'width': 800,
+                                                'height': 600, 'windowState': 'minimized'})
+        bounds = [c.args[1] for c in self.wire.call.call_args_list if c.args[0] == 'Browser.setWindowBounds']
+        self.assertEqual(bounds, [
+            {'windowId': 'window-native-new', 'bounds': {'width': 800, 'height': 600}},
+            {'windowId': 'window-native-new', 'bounds': {'windowState': 'minimized'}}])
+
+    def test_profile_replacement_is_rejected_before_native_window_creation(self):
+        self.profile_refusal()
+        self.session.profile_identity = ('original',)
+        with patch('relay.startup.endpoint_identity', return_value=self.session.identity), \
+                patch('relay.get_profile', return_value=Mock(identity=('replacement',))), \
+                patch('relay.startup.notify_running_chrome') as notify:
+            with self.assertRaisesRegex(RuntimeError, 'profile was replaced'):
+                self.command('Target.createTarget')
+        notify.assert_not_called()
+
+    def test_special_target_modes_preserve_the_original_protocol_error(self):
+        self.profile_refusal()
+        with patch('relay.startup.notify_running_chrome') as notify:
+            for field in ('hidden', 'forTab', 'enableBeginFrameControl'):
+                with self.assertRaises(relay.CDPError):
+                    self.command('Target.createTarget', {field: True})
+        notify.assert_not_called()
+
     def test_owned_window_activation_preserves_manual_focus(self):
         self.assertEqual(self.command('Target.activateTarget', {'targetId': 'owned'}), {})
         self.assertEqual(self.command('Page.bringToFront', sid='page-sid'), {})
