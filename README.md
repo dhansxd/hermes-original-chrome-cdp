@@ -197,6 +197,11 @@ report that they apply to future browsing.
 
 ## User-owned website extensions
 
+The Gemini Web package provides a first `inspect` operation. Select its Chrome
+profile with `chrome_profiles` using `app: gemini`, then run `inspect` with the
+same session name. It reports the active account indicator, model label,
+visible controls, and usage notices shown on Gemini. Read its [package guide](site_apps/gemini/SKILL.md).
+
 The `browser_app` tool accepts `list`, `describe`, `run`, `enable`, `disable`, and
 `remove`. Package discovery and
 help read files without executing package code or opening Chrome. An operation

@@ -102,10 +102,10 @@ berikutnya. Riwayat rinci sebelum PRD tersedia pada bagian sumber bukti.
 | Browser Chrome asli | Host 0.10.3 | Ya, plugin aktif dan provider dipilih | 342 tes otomatis lulus. Startup cold/windowless/warm serta enam identitas pada profil sama/campuran memakai satu jendela awal per sesi. Stop, cleanup dan pemeriksaan event macOS lulus. |
 | Inventori/default/profil per sesi | Tersedia pada 0.7.0 | Ya | Penerimaan native empat agen/multiprofil diulang dan lulus. |
 | Panduan `chrome_profiles` | Tersedia pada 0.7.0 | Ya | Schema aturan profil dibaca melalui `tool_describe` pada chat CLI baru. |
-| Pemuat dan lifecycle extension pengguna | List/describe/run/enable/disable/remove | Ya, gateway direload resmi | 33 regresi khusus paket dan uji native enam jendela, disable/remove, serta pekerjaan lintas turn lulus. Template Flow 0.3.0 tersedia. Template Gemini masih terbuka. |
+| Pemuat dan lifecycle extension pengguna | List/describe/run/enable/disable/remove | Ya, gateway direload resmi | 33 regresi khusus paket dan uji native enam jendela, disable/remove, serta pekerjaan lintas turn lulus. Template Flow 0.3.0 dan Gemini `inspect` tersedia. |
 | Profil tetap/acak/per platform/subagent | Implementasi tersedia pada 0.8.0 | Ya | Regresi aturan profil dan uji native pemilihan profil child per paket lulus. Kanal nyata mengikuti item terbuka. |
 | Rolling generik dan handoff | Implementasi tersedia pada 0.8.0 | Ya, gateway direload resmi | 31 regresi rolling lulus. Fixture CDP UI membuktikan A -> B -> C, profil sumber pending bersama peer, source receipt setelah Stop/reload, serta preservasi browser umum/extension lain/manual. |
-| Extension Gemini | Source dan pilot UI mandiri tersedia | Belum sebagai extension plugin | Regresi source 588 lulus, 40 tes live dilewati. Migrasi UI/routing dan penerimaan extension masih terbuka. |
+| Extension Gemini | Paket `site_apps/gemini` 0.1.0 dengan operasi `inspect` | Lingkungan uji | Katalog dan pemilihan profil diuji melalui `browser_app`. Chat dan kelanjutan pekerjaan mengikuti GEM-01 sampai GEM-05. |
 | Extension Google Flow | Paket `site_apps/flow` 0.3.0 pada host 0.10.3 | Ya, salinan eksternal `browser-apps/flow` cocok dengan template | Produksi gambar/video dan rolling klasik/Agent mempunyai bukti host 0.10.1. Inspeksi klasik → Agent → klasik melalui Hermes pada 0.10.3 lulus dalam satu jendela kerja dan dokumen yang sama. Peer dipertahankan. Reset kuota provider nyata mengikuti FLO-04. |
 
 Status konfigurasi lokal diperiksa pada 16 November 2026. Browser provider bernilai
@@ -288,7 +288,7 @@ Nama Flow/Gemini menjadi data paket dan preset awal.
   yang sudah tersedia. Uji instalasi baru, update host, dan direktori pilihan.
   Bagian direktori default/pilihan dan pemuatan eksternal lulus pada 0.6.0.
   Template Flow tersedia pada 0.9.0, dengan regresi instalasi baru, edit pengguna,
-  symlink serta tombstone disable/remove. Template Gemini masih terbuka.
+  symlink serta tombstone disable/remove. Template Gemini kini memuat `inspect`.
 - [x] **EXT-02** Penemuan/validasi `app.json`, operasi dan versi kontrak. Paket
   baru serta metadata/entry point yang keliru tercakup pada `tests/test_browser_apps.py`.
 - [x] **EXT-03** Pemuatan `app.py`, namespace/context per pemilik, dan pembaruan
@@ -373,8 +373,12 @@ Implementasi callback UI produksi pada Gemini/Flow mengikuti GEM/FLO.
 
 ## 6. Rolling kuota dan kelanjutan pekerjaan
 
-Flow dan Gemini mendeklarasikan `rotate_on_limit` pada paket awal. Pengendali umum
-plugin menjalankan keputusan rolling berdasarkan bukti yang dikembalikan paket.
+Flow mendeklarasikan `rotate_on_limit`. Pengendali umum plugin menjalankan
+keputusan rolling berdasarkan bukti yang dikembalikan paket. Untuk Gemini,
+agent memilih sendiri apakah menunggu reset atau meminta kelanjutan dengan
+profil tujuan eksplisit. Tahap `inspect` melaporkan petunjuk akun dan kuota yang
+terlihat. Kelanjutan eksplisit mengikuti GEM-05.
+
 Kandidat default mencakup seluruh profil yang dapat mengakses layanan, dalam urutan
 alami direktori. Profil awal atau urutan pilihan pengguna dapat dikonfigurasi.
 
@@ -447,8 +451,9 @@ opsi yang tersedia pada akun.
   diminta. Uji gambar masukan dan hasil nyata.
 - [ ] **GEM-04** Generate video serta pengambilan file asli milik turn tersebut.
   Uji file, metadata media, dan kepemilikan sesi hingga unduhan selesai.
-- [ ] **GEM-05** Rolling UI dan handoff memakai pengendali umum. Uji penolakan
-  kuota yang dipetakan ke hasil helper serta kelanjutan lintas akun.
+- [ ] **GEM-05** Laporkan bukti limit UI dan waktu reset yang ditampilkan. Simpan
+  status pekerjaan, lalu lanjutkan lintas akun setelah agent menentukan profil
+  tujuan. Uji pemulihan permintaan yang belum pasti pada akun asal.
 
 Source mandiri juga memiliki musik, temporary chat, dan tahapan Research. Cakupan
 migrasinya dicatat per operasi ketika diimplementasikan. Daftar operasi paket
