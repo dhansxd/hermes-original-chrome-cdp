@@ -24,9 +24,13 @@ expression = '(' + snapshot + ')(' + json.dumps(origin) + ')'
 deadline = time.monotonic() + 8
 while True:
     state = js(expression)
-    if state['page'] not in ('waiting', 'redirected') or time.monotonic() >= deadline:
+    # Gemini can render the composer before the model picker has a readable label.
+    if state['page'] == 'signed_out' or (state['page'] == 'ready' and state['model']):
         break
-    time.sleep(0.25)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        break
+    time.sleep(min(0.25, remaining))
 
 account = state['account']
 email = account.pop('email', None)

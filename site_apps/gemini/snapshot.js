@@ -16,12 +16,19 @@
         getComputedStyle(node).visibility === 'visible' && !node.closest('[aria-hidden="true"]');
     const all = (selector) => Array.from(document.querySelectorAll(selector)).filter(visible);
     const clean = (value, limit = 100) => (value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
-    const text = (node) => {
+    const labelContent = (node) => {
         const copy = node.cloneNode(true);
         copy.querySelectorAll('svg, mat-icon, [aria-hidden="true"]').forEach((child) => child.remove());
-        return clean(copy.textContent) || clean(node.getAttribute('aria-label')) || null;
+        return clean(copy.textContent);
     };
-    const control = (selector, readLabel) => {
+    const text = (node) => labelContent(node) || clean(node.getAttribute('aria-label')) || null;
+    const modelLabel = (node) => {
+        const aria = clean(node.getAttribute('aria-label'), Infinity);
+        const current = aria.match(/(?:^|,\s*)(?:currently|saat ini)\s+(.+)$/i)?.[1];
+        const label = current ? clean(current) : labelContent(node);
+        return label && !/^(?:select|pilih) model$/i.test(label) ? label : null;
+    };
+    const control = (key, selector) => {
         const nodes = all(selector);
         if (nodes.length !== 1) {
             return {status: nodes.length ? 'ambiguous' : 'not_observed'};
@@ -29,7 +36,7 @@
         const node = nodes[0];
         const disabled = node.matches(':disabled, [aria-disabled="true"]');
         const state = {status: disabled ? 'disabled' : 'visible'};
-        if (readLabel) state.label = text(node);
+        if (key !== 'composer') state.label = key === 'model_picker' ? modelLabel(node) : text(node);
         return state;
     };
 
@@ -70,11 +77,8 @@
             '[aria-label="Create music"], [aria-label="Buat musik"]'
     };
     result.controls = Object.fromEntries(Object.entries(known)
-        .map(([key, selector]) => [key, control(selector, key !== 'composer')]));
-    const {status, label} = result.controls.model_picker;
-    if ((status === 'visible' || status === 'disabled') && label && !/^(?:select|pilih) model$/i.test(label)) {
-        result.model = label;
-    }
+        .map(([key, selector]) => [key, control(key, selector)]));
+    result.model = result.controls.model_picker.label ?? null;
 
     // Limit notices are advisory. Read only the status UI, never chat responses or draft text.
     const noticeSelector = '[role="alert"], [role="status"], mat-snack-bar-container, [data-test-id*="limit-banner"]';

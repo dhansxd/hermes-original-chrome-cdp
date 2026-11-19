@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "gemini",
   "name": "Gemini Web",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "operations": {
     "inspect": {
       "description": "Open or inspect Gemini Web in the selected Chrome profile. Read the active account, model, visible controls, and any displayed usage-limit or reset information.",

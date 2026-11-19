@@ -74,8 +74,36 @@ class GeminiAppTests(ChromeFixture):
 
     def test_inspection_keeps_an_open_gemini_chat_document(self):
         self.js.side_effect = [{'origin': 'https://gemini.google.com', 'path': '/u/0/app/fixture-chat'},
-                               {'page': 'ready', 'account': {'status': 'unknown'}, 'model': None}]
-        self.assertTrue(self.call(browser_apps.APP_TOOL, action='run', operation='inspect')['success'])
+                               {'page': 'ready', 'account': {'status': 'unknown'}, 'model': None},
+                               {'page': 'ready', 'account': {'status': 'unknown'}, 'model': 'Hydrogen Tinggi'}]
+        with patch('time.sleep') as sleep:
+            result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect')
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['data']['model'], 'Hydrogen Tinggi')
+        self.assertEqual(self.js.call_count, 3)
+        self.dispatch.assert_called_once()
+        sleep.assert_called_once_with(0.25)
+        self.navigate.assert_not_called()
+
+    def test_returns_ready_without_a_readable_model_at_the_deadline(self):
+        state = {'page': 'ready', 'account': {'status': 'unknown'}, 'model': None,
+                 'controls': {'model_picker': {'status': 'visible', 'label': None}}}
+        self.js.side_effect = [{'origin': 'https://gemini.google.com', 'path': '/app'},
+                               state, state]
+        with patch('time.monotonic', side_effect=[0.0, 7.75, 8.0]), patch('time.sleep') as sleep:
+            result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect')
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['data'], state)
+        sleep.assert_called_once_with(0.25)
+
+    def test_signed_out_does_not_wait_for_a_model(self):
+        state = {'page': 'signed_out', 'account': {'status': 'signed_out'}, 'model': None}
+        self.js.side_effect = [{'origin': 'https://gemini.google.com', 'path': '/app'}, state]
+        with patch('time.sleep') as sleep:
+            result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect')
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['data'], state)
+        sleep.assert_not_called()
         self.navigate.assert_not_called()
 
     def test_profile_cannot_be_changed_through_inspect_parameters(self):
