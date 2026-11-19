@@ -141,6 +141,60 @@ class ProfileRuleTests(ChromeFixture):
                 self.assertFalse(result['success'])
                 self.assertEqual(self.settings, {'profile_directory': 'Default'})
 
+    def test_rule_changes_wait_for_the_current_profile_cleanup(self):
+        self.assertTrue(self.control('set_rule', mode='fixed', profile='Profile 2')['success'])
+        _, name = self.selected()
+        info = self.provider.create_session('bu-named-' + name + '@fixture-home')
+        session = self.provider.sessions[info['bb_session_id']]
+        snapshot = self.settings.copy()
+
+        with patch.object(session, 'close', return_value=False):
+            self.assertFalse(self.control('set_rule', mode='fixed', profile='Profile 10')['success'])
+            self.assertFalse(self.control('clear_rule')['success'])
+            self.assertEqual(self.settings, snapshot)
+            active = self.provider.profile_choices[self.provider.profile_routes[name]]
+            self.assertEqual(active.profile.id, 'Profile 2')
+            self.assertIn(name, self.provider.owners)
+        self.assertTrue(self.control('clear_rule')['success'])
+        self.assertEqual(self.selected()[0], 'Default')
+
+    def test_failed_config_write_keeps_the_previous_profile_with_a_fresh_name(self):
+        _, old = self.selected()
+        info = self.provider.create_session('bu-named-' + old + '@fixture-home')
+        with patch.object(self.provider.rules, 'set_setting', side_effect=PermissionError('fixture denial')):
+            result = self.control('set_rule', profile='Profile 2')
+        self.assertFalse(result['success'])
+        self.assertEqual(self.settings, {'profile_directory': 'Default'})
+        self.assertNotIn(info['bb_session_id'], self.provider.sessions)
+        self.assertEqual(self.provider.create_session('bu-named-' + old)['bb_session_id'], 'unloaded')
+        selected, fresh = self.selected()
+        self.assertEqual(selected, 'Default')
+        self.assertNotEqual(fresh, old)
+
+    def test_saved_fixed_rule_rejects_reused_profile_id_on_a_new_turn(self):
+        self.assertTrue(self.control('set_rule', mode='fixed', profile='Profile 2')['success'])
+        key = self.provider.rules.key('', 'session', 'chat-A', 'work')
+        old_identity = self.settings[key]['identity']
+        (self.data / 'Profile 2').rename(self.data / 'retired')
+        (self.data / 'Profile 2').mkdir()
+        self.provider.ended(session_id='chat-A', task_id='A', turn_id='turn')
+
+        blocked, _ = self.prepare(task='B', turn='next')
+        self.assertEqual(blocked['action'], 'block')
+        self.assertIn('was replaced', blocked['message'])
+        self.assertEqual(self.settings[key]['identity'], old_identity)
+        self.assertTrue(self.control('set_rule', task='B', turn='next', profile='Profile 2')['success'])
+        self.assertEqual(self.selected(task='B', turn='next')[0], 'Profile 2')
+        self.assertNotEqual(self.settings[key]['identity'], old_identity)
+
+    def test_legacy_fixed_rule_can_be_read_then_saved_with_identity(self):
+        key = self.provider.rules.key('', 'session', 'chat-A', 'work')
+        self.settings[key] = {'mode': 'fixed', 'profile': 'Profile 2'}
+        self.assertEqual(self.selected()[0], 'Profile 2')
+        self.assertNotIn('identity', self.settings[key])
+        self.assertTrue(self.control('set_rule', profile='Profile 2')['success'])
+        self.assertEqual(self.settings[key]['identity'], list(plugin.get_profile('Profile 2', self.data).identity))
+
     def test_pending_result_keeps_its_source_profile(self):
         _, name = self.selected(app='flow')
         self.provider.profile_choices[self.provider.profile_routes[name]].pending = True

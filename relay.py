@@ -28,6 +28,9 @@ else:
     from profiles import get_profile
 
 
+DISCONNECTED = 'Chrome CDP disconnected. The previous browser command was not replayed.'
+
+
 class CDPError(RuntimeError):
     def __init__(self, error):
         self.error = error
@@ -64,20 +67,24 @@ class Connection:
                 self.closed = True
                 pending, self.pending = self.pending, {}
             for future in pending.values():
-                future.set_exception(ConnectionError('Chrome CDP disconnected; command was not replayed.'))
+                future.set_exception(ConnectionError(DISCONNECTED))
 
     def call(self, method, params=None, session=None, timeout=30):
         future = concurrent.futures.Future()
         with self.lock:
             if self.closed:
-                raise ConnectionError('Chrome CDP disconnected.')
+                raise ConnectionError(DISCONNECTED)
             self.counter += 1
             identifier = self.counter
             self.pending[identifier] = future
             message = {'id': identifier, 'method': method, 'params': params or {}}
             if session:
                 message['sessionId'] = session
-            self.ws.send(json.dumps(message))
+            try:
+                self.ws.send(json.dumps(message))
+            except (ConnectionClosed, OSError) as exc:
+                self.pending.pop(identifier, None)
+                raise ConnectionError(DISCONNECTED) from exc
         try:
             result = future.result(timeout)
         finally:
@@ -100,6 +107,7 @@ class ChromeSession:
         self.lock = threading.RLock()
         self.start_lock = threading.Lock()
         self.wire = None
+        self.ready = False
         self.error = None
         self.closed = False
         self.owned = set()
@@ -121,6 +129,10 @@ class ChromeSession:
         self.thread.start()
         self.url = f'ws://127.0.0.1:{self.server.socket.getsockname()[1]}{self.path}'
 
+    @property
+    def disconnected(self):
+        return self.ready and self.wire.closed
+
     def _start(self):
         with self.start_lock:
             if self.closed:
@@ -128,6 +140,8 @@ class ChromeSession:
             if self.error:
                 raise RuntimeError(self.error)
             if self.wire:
+                if self.wire.closed:
+                    raise ConnectionError(DISCONNECTED)
                 return
             try:
                 with consent_guard(self.data, timeout=60):
@@ -175,6 +189,7 @@ class ChromeSession:
                     self.wire.call('Target.detachFromTarget', {'sessionId': sid})
                     self.wire.call('Target.setDiscoverTargets', {'discover': True})
                     self.initial_target = target
+                    self.ready = True
             except Exception as exc:
                 self.error = str(exc)
                 if self.seed_url and self.identity is None:

@@ -188,6 +188,13 @@ removals and display-name changes. A removed or replaced profile produces a
 selection diagnostic so the caller can choose an available profile from the fresh
 inventory.
 
+Saving a `fixed` rule binds it to the current profile directory. If Chrome
+replaces that directory, select the intended profile and save the rule again.
+Older rules still use their saved directory ID. Re-save them to bind the
+directory identity. Changes that switch an active browser session are saved
+after cleanup succeeds. Changes deferred by an in-progress site operation
+report that they apply to future browsing.
+
 ## User-owned website extensions
 
 The `browser_app` tool accepts `list`, `describe`, `run`, `enable`, `disable`, and
@@ -408,6 +415,11 @@ that task-local route during each browser call and closes the matching browser n
 when Stop arrives. Finalized native names lose admission, and replacement turns use
 different names to keep delayed calls scoped to their original turn.
 
+For ordinary browsing, a disconnected Chrome session first reports the interruption
+and retires its exact native name once cleanup is confirmed. A subsequent
+`browser_exec` call can open a new window in the selected profile. Check the
+site state after an interrupted click or submission before issuing it again.
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -420,6 +432,7 @@ different names to keep delayed calls scoped to their original turn.
 | Private URL rejected | Review Hermes's normal private-URL permission setting for the intended destination |
 | Plugin configured after removal | Select Local in the native Browser Automation picker and apply the reported reload |
 | Cleanup unconfirmed | Inspect the identified session before retrying cleanup, preserving other agents' and manual tabs |
+| Chrome disconnected while browsing | Wait for the previous session to be retired, then call `browser_exec` again to open a new window |
 
 Chrome or an operating-system permission can reject a connection. Report a failing
 case with plugin, Hermes, Chrome, and macOS versions, the startup state, and a

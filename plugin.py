@@ -16,14 +16,14 @@ from agent.browser_provider import BrowserProvider
 
 if __package__:
     from .input_guard import prepare_code
-    from .relay import ChromeSession
+    from .relay import ChromeSession, DISCONNECTED
     from .startup import CHROME, PERSONAL
     from .profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
     from .browser_apps import APP_TOOL, AppHost, SCHEMA, app_identifier
     from .profile_rules import ProfileRules
 else:
     from input_guard import prepare_code
-    from relay import ChromeSession
+    from relay import ChromeSession, DISCONNECTED
     from startup import CHROME, PERSONAL
     from profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
     from browser_apps import APP_TOOL, AppHost, SCHEMA, app_identifier
@@ -225,13 +225,27 @@ class ChromeProvider(BrowserProvider):
                 name = choice.browser_name
                 if name in self.finishing:
                     return {'action': 'block', 'message': 'Original Chrome session is closing.'}
-                self.owners[name] = owner
-                result['args']['session'] = name
-        return result
+                # A pending site operation owns its original document. Ordinary browsing
+                # can start a new window after the exact old session has been retired.
+                if app_id or not any(session.disconnected
+                                     for session in self.sessions.values()
+                                     if session.cache_key.split('@', 1)[0] == 'bu-named-' + name):
+                    self.owners[name] = owner
+                    result['args']['session'] = name
+                    return result
+                choice.switching = True
+            else:
+                return result
+        try:
+            self._replace_browser(base, choice, choice.profile)
+        except (OSError, ValueError, RuntimeError, KeyError) as error:
+            return {'action': 'block', 'message': DISCONNECTED + ' ' + str(error)}
+        return {'action': 'block', 'message': DISCONNECTED +
+                ' Call browser_exec again to open a new window. Verify the result of any interrupted action.'}
 
-    def choose_profile(self, choice):
+    def choose_profile(self, choice, *, proposed=None):
         rule, _ = self.rules.resolve(choice.app_id, choice.owner, choice.alias,
-                                     choice.platform, self.parents.get(choice.owner[1]))
+                                     choice.platform, self.parents.get(choice.owner[1]), proposed=proposed)
         if rule['mode'] == 'random':
             available = list_profiles(self.data)
             if not available:
@@ -239,8 +253,8 @@ class ChromeProvider(BrowserProvider):
             return random.choice(available)
         directory = rule.get('profile') if rule['mode'] == 'fixed' else self.get_setting('profile_directory')
         profile = get_profile(directory, self.data)
-        if rule.get('identity') and profile.identity != rule['identity']:
-            raise RuntimeError('The inherited Chrome profile was replaced. Select it again.')
+        if rule.get('identity') is not None and profile.identity != tuple(rule['identity']):
+            raise RuntimeError('The profile in this Chrome rule was replaced. Select and save it again.')
         return profile
 
     def child_started(self, parent_session_id='', child_session_id='', child_role='', **kwargs):
@@ -255,6 +269,7 @@ class ChromeProvider(BrowserProvider):
     def profiles(self, args, task_id='', session_id='', **kwargs):
         """Manage this caller's profile choice and the plugin's default."""
         base = args.get('session')
+        rule_change = None
         try:
             with self.lock:
                 choice = self.profile_choices.get(base)
@@ -291,14 +306,17 @@ class ChromeProvider(BrowserProvider):
                         if rule['mode'] == 'fixed':
                             if not args.get('profile'):
                                 raise ValueError('A fixed profile rule needs a Chrome directory ID.')
-                            rule['profile'] = get_profile(args.get('profile'), self.data).id
-                    saved = self.rules.change(choice.app_id, scope, target,
-                                              choice.alias if scope == 'session' else '', rule)
+                            selected = get_profile(args.get('profile'), self.data)
+                            rule.update(profile=selected.id, identity=list(selected.identity))
+                    rule_change = self.rules.prepare_change(choice.app_id, scope, target,
+                                                            choice.alias if scope == 'session' else '', rule)
                     if scope == 'default' or target != targets.get(scope):
-                        return {'success': True, 'rule': saved, 'applied_to_current_session': False}
-                    profile = self.choose_profile(choice)
+                        return {'success': True, 'rule': self.rules.apply(rule_change),
+                                'applied_to_current_session': False}
+                    profile = self.choose_profile(choice, proposed=rule_change)
                     if choice.pending:
-                        return {'success': True, 'rule': saved, 'applied_to_current_session': False,
+                        return {'success': True, 'rule': self.rules.apply(rule_change),
+                                'applied_to_current_session': False,
                                 'pending_source_profile': choice.profile.id}
                 elif action in {'select', 'set_default'}:
                     if not args.get('profile'):
@@ -309,7 +327,7 @@ class ChromeProvider(BrowserProvider):
                 if action == 'set_default':
                     if choice.app_id:
                         self.rules.change(choice.app_id, 'default', '*', '',
-                                          {'mode': 'fixed', 'profile': profile.id})
+                                          {'mode': 'fixed', 'profile': profile.id, 'identity': list(profile.identity)})
                         return {'success': True, 'app': choice.app_id, 'default_profile': profile.id}
                     if self.set_setting is None:
                         raise RuntimeError('The plugin configuration writer is unavailable.')
@@ -318,33 +336,46 @@ class ChromeProvider(BrowserProvider):
                         self.rules.change('', 'default', '*', '', None)
                     return {'success': True, 'default_profile': profile.id}
                 if choice.profile and choice.profile.id == profile.id and choice.profile.identity == profile.identity:
+                    if rule_change is not None:
+                        self.rules.apply(rule_change)
                     choice.profile = profile
                     return {'success': True, 'session': base, 'selected_profile': profile.id}
                 if choice.pending:
                     raise RuntimeError('This app is still observing a result in its source profile. '
                                        'Finish that result or stop its session before switching this alias.')
                 choice.switching = True
-                previous = choice.browser_name
-            try:
-                if previous:
-                    self.finish(session_name=previous, interrupted=True, keep_profile=True)
-                with self.lock:
-                    if self.unloading or choice.finished or self.profile_choices.get(base) is not choice:
-                        raise RuntimeError('The calling browser session has finished.')
-                    if previous in self.owners:
-                        raise RuntimeError('Previous browser cleanup is pending. Retry this profile selection.')
-                    name = base if previous is None else base + '-' + uuid.uuid4().hex[:12]
-                    choice.profile = profile
-                    choice.browser_name = name
-                    self.profile_routes[name] = base
-            finally:
-                with self.lock:
-                    choice.switching = False
-                if choice.finished:
-                    self.forget_profiles(session_name=base)
+            self._replace_browser(base, choice, profile, rule_change=rule_change)
             return {'success': True, 'session': base, 'selected_profile': profile.id}
         except (OSError, ValueError, RuntimeError, KeyError) as error:
             return {'success': False, 'error': str(error)}
+
+    def _replace_browser(self, base, choice, profile, *, rule_change=None):
+        """Retire the old native name outside the provider's lock before handing out a new one."""
+        previous = choice.browser_name
+        try:
+            if previous:
+                self.finish(session_name=previous, interrupted=True, keep_profile=True)
+            with self.lock:
+                if self.unloading or choice.finished or self.profile_choices.get(base) is not choice:
+                    raise RuntimeError('The calling browser session has finished.')
+                if previous in self.owners:
+                    raise RuntimeError('Previous browser cleanup is pending. Retry after it completes.')
+                if previous is not None:
+                    # The native cache may still have the retired name if saving fails.
+                    choice.browser_name = base + '-' + uuid.uuid4().hex[:12]
+                    self.profile_routes[choice.browser_name] = base
+                profile = verify_profile(profile, self.data)
+                if rule_change is not None:
+                    self.rules.apply(rule_change)
+                choice.profile = profile
+                if previous is None:
+                    choice.browser_name = base
+                    self.profile_routes[base] = base
+        finally:
+            with self.lock:
+                choice.switching = False
+            if choice.finished:
+                self.forget_profiles(session_name=base)
 
     def forget_profiles(self, task_id=None, session_id=None, session_name=None):
         with self.lock:
@@ -358,10 +389,16 @@ class ChromeProvider(BrowserProvider):
             self.profile_routes = {name: base for name, base in self.profile_routes.items() if base not in forgotten}
 
     def finish(self, task_id=None, session_id=None, completed=False, failed=False, interrupted=False,
-               session_name=None, keep_profile=False, **kwargs):
+               session_name=None, keep_profile=False, expected_turn=None, **kwargs):
         with self.lock:
             if not (completed or failed or interrupted) or (self.waiting.get(session_id) and not interrupted):
                 return
+            if expected_turn is not None:
+                choice = self.profile_choices.get(session_name)
+                if (choice is None or choice.turn_id != expected_turn
+                        or (choice.pending and not interrupted)):
+                    return
+                session_name = choice.browser_name or session_name
             if not keep_profile:
                 for base, choice in self.profile_choices.items():
                     if ((task_id is None or choice.owner[0] == task_id)
@@ -403,15 +440,16 @@ class ChromeProvider(BrowserProvider):
             with self.lock:
                 self.parents.pop(session_id, None)
 
-    def ended(self, session_id=None, task_id=None, interrupted=False, **kwargs):
+    def ended(self, session_id=None, task_id=None, turn_id=None, interrupted=False, **kwargs):
         if not session_id:
             return
         with self.lock:
-            names = [choice.browser_name or base for base, choice in self.profile_choices.items()
+            turns = [(base, choice.turn_id) for base, choice in self.profile_choices.items()
                      if choice.owner[1] == session_id and (task_id is None or choice.owner[0] == task_id)
+                     and (turn_id is None or choice.turn_id == turn_id)
                      and (interrupted or not choice.pending)]
-        for name in names:
-            self.finish(session_name=name, completed=True, interrupted=interrupted)
+        for base, expected in turns:
+            self.finish(session_name=base, expected_turn=expected, completed=True, interrupted=interrupted)
 
     def stopped(self, session_key='', **kwargs):
         """Match Hermes's Stop route to the browser names admitted in that context."""

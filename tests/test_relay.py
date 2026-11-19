@@ -435,6 +435,19 @@ class RelayTests(unittest.TestCase):
         with patch('relay.startup.process_alive', return_value=False):
             self.assertTrue(self.session.close())
 
+    def test_disconnected_relay_refuses_to_relaunch_or_replay_a_call(self):
+        self.session.ready = True
+        self.session.identity = {'pid': 42, 'started': 1}
+        self.wire.closed = True
+        with patch('relay.startup.launch') as launch, \
+                patch('relay.startup.process_alive', return_value=False):
+            self.assertTrue(self.session.disconnected)
+            with self.assertRaisesRegex(ConnectionError, 'was not replayed'):
+                self.command('Runtime.evaluate', {'expression': 'document.title'}, 'page-sid')
+            launch.assert_not_called()
+            self.wire.call.assert_not_called()
+            self.assertTrue(self.session.close())
+
     def test_native_seed_cleanup_failure_still_stops_local_endpoint(self):
         session = relay.ChromeSession(Path('/fixture'), 'Default')
         self.addCleanup(session.close)

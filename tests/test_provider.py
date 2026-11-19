@@ -125,6 +125,58 @@ class ProviderTests(unittest.TestCase):
             self.assertNotIn(old, provider.owners)
             self.assertIn(replacements[0], provider.owners)
 
+    def test_late_turn_end_closes_only_the_ended_turn(self):
+        provider = plugin.ChromeProvider()
+        self.addCleanup(provider.unload)
+        old, replacement = (
+            provider.prepare_call('browser_exec', {}, 'A', session_id='chat',
+                                  turn_id=turn, config=self.config())['args']['session']
+            for turn in ('old', 'replacement')
+        )
+        previous_info = provider.create_session('bu-named-' + old + '@fixture-home')
+        replacement_info = provider.create_session('bu-named-' + replacement + '@fixture-home')
+        with patch('tools.browser_supervisor.SUPERVISOR_REGISTRY.stop') as stop:
+            provider.ended(session_id='chat', task_id='A', turn_id='old', interrupted=True)
+        stop.assert_called_once_with('bu-named-' + old + '@fixture-home')
+        self.assertNotIn(previous_info['bb_session_id'], provider.sessions)
+        self.assertIn(replacement_info['bb_session_id'], provider.sessions)
+        self.assertIn(replacement, provider.owners)
+
+    def test_disconnected_session_retires_exact_name_before_replacement(self):
+        provider = plugin.ChromeProvider()
+        self.addCleanup(provider.unload)
+
+        def prepare(task):
+            return provider.prepare_call('browser_exec', {}, task, session_id='chat',
+                                         turn_id='turn', config=self.config())
+
+        old = prepare('A')['args']['session']
+        peer = prepare('B')['args']['session']
+        old_id = provider.create_session('bu-named-' + old + '@fixture-home')['bb_session_id']
+        peer_id = provider.create_session('bu-named-' + peer + '@fixture-home')['bb_session_id']
+        session = provider.sessions[old_id]
+        session.identity = {'pid': 42, 'started': 1}
+        session.wire = Mock(closed=True)
+        session.ready = True
+        session.owned.add('old-target')
+        with patch('relay.startup.process_alive', side_effect=[True, False]), \
+                patch('relay.startup.launch') as launch:
+            pending = prepare('A')
+            self.assertEqual(pending['action'], 'block')
+            self.assertIn('cleanup is pending', pending['message'])
+            self.assertIn(old, provider.owners)
+            retired = prepare('A')
+            self.assertEqual(retired['action'], 'block')
+            self.assertIn('was not replayed', retired['message'])
+            self.assertNotIn(old_id, provider.sessions)
+            self.assertEqual(provider.create_session('bu-named-' + old)['bb_session_id'], 'unloaded')
+            new = prepare('A')['args']['session']
+            self.assertNotEqual(new, old)
+            info = provider.create_session('bu-named-' + new + '@fixture-home')
+            self.assertEqual(provider.sessions[info['bb_session_id']].profile, session.profile)
+            self.assertFalse(provider.sessions[peer_id].closed)
+            launch.assert_not_called()
+
     def test_finalized_native_session_stays_retired_after_replacement_is_admitted(self):
         from tools import browser_session
         provider = plugin.ChromeProvider()
