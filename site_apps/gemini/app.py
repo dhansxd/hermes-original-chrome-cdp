@@ -5,11 +5,12 @@ import json
 import re
 from pathlib import Path
 
-from . import reply
+from . import controls, reply
 
 
 ORIGIN = 'https://gemini.google.com'
-SNAPSHOT = (Path(__file__).parent / 'snapshot.js').read_text(encoding='utf-8')
+_SNAPSHOT = (Path(__file__).parent / 'snapshot.js').read_text(encoding='utf-8')
+SNAPSHOT = f'(origin) => ({_SNAPSHOT})(origin, {json.dumps(controls.SELECTORS)})'
 RESULT_MARKER = 'GEMINI_INSPECT='
 CHAT_PATH = r'/(?:u/\d+/)?app/([a-zA-Z0-9-]+)/?'
 
@@ -37,6 +38,24 @@ elif not base or ({fresh!r} and route['path'].rstrip('/') != home):
 
 
 def run(context, operation, params):
+    if operation == 'open_chat':
+        if set(params) - {'chat'}:
+            raise ValueError('Gemini open_chat accepts only an optional chat ID.')
+        chat = chat_id(params['chat']) if 'chat' in params else None
+        return controls.execute(context, ORIGIN, operation, chat, navigation=navigation(chat))
+    if operation in {'click', 'type_prompt', 'select_model'}:
+        field = {'click': 'control', 'type_prompt': 'text', 'select_model': 'model'}[operation]
+        value = params.get(field)
+        if set(params) != {field} or not isinstance(value, str) or not value.strip():
+            raise ValueError(f'Gemini {operation} requires a nonempty {field}.')
+        if operation == 'click' and value not in controls.CLICKABLE:
+            return {'status': 'needs_inspection', 'data': {'reason': 'unmapped_control'},
+                    'message': 'Use this browser session to locate the requested control.'}
+        return controls.execute(context, ORIGIN, operation, value.strip())
+    if operation == 'read_result':
+        if params:
+            raise ValueError('Gemini read_result takes no parameters.')
+        return controls.execute(context, ORIGIN, operation)
     if operation == 'reply':
         if 'continuation' in params:
             return managed_reply(context, params)

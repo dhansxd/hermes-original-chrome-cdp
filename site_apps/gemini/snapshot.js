@@ -1,4 +1,4 @@
-(origin) => {
+(origin, known) => {
     const account = {status: 'unknown'};
     const result = {page: 'redirected', account, chat_id: null, model: null, controls: {},
         quota: {status: 'unknown', notices: []}};
@@ -63,21 +63,6 @@
         account.status = 'signed_out';
     }
 
-    const known = {
-        composer: '[role="textbox"][contenteditable="true"]',
-        model_picker: '[data-test-id="bard-mode-menu-button"], ' +
-            'button[aria-label^="Select model"], button[aria-label^="Pilih model"]',
-        tools_menu: 'button[aria-haspopup="menu"]:has(mat-icon[fonticon="plus"]), ' +
-            'button[aria-label="Tools"], button[aria-label="Alat"]',
-        send: 'button[aria-label="Send message"], button[aria-label="Kirim pesan"]',
-        create_image: 'gem-menu-item:has(mat-icon[fonticon="image_create"]), ' +
-            '[aria-label="Create image"], [aria-label="Buat gambar"]',
-        create_video: 'gem-menu-item:has(mat-icon[fonticon="movie"]), ' +
-            '[aria-label="Create video"], [aria-label="Buat video"]',
-        deep_research: 'gem-menu-item:has(mat-icon[fonticon="deep_research"]), [aria-label="Deep Research"]',
-        create_music: 'gem-menu-item:has(mat-icon[fonticon="music"]), ' +
-            '[aria-label="Create music"], [aria-label="Buat musik"]'
-    };
     result.controls = Object.fromEntries(Object.entries(known)
         .map(([key, selector]) => [key, control(key, selector)]));
     result.model = result.controls.model_picker.label ?? null;

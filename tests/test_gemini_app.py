@@ -25,6 +25,7 @@ class GeminiAppTests(ChromeFixture):
         self.navigate = Mock()
         self.click = Mock()
         self.type_text = Mock()
+        self.press_key = Mock()
         self.host = browser_apps.AppHost(self.provider, settings.get, self.dispatch, lambda code: code,
                                          lambda: self.data / 'plugin-data',
                                          bundled_source=Path(browser_apps.__file__).parent / 'site_apps')
@@ -35,7 +36,8 @@ class GeminiAppTests(ChromeFixture):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             exec(args['code'], {'js': self.js, 'goto_url': self.navigate,
-                                'click_at_xy': self.click, 'type_text': self.type_text})
+                                'click_at_xy': self.click, 'type_text': self.type_text,
+                                'press_key': self.press_key})
         return {'success': True, 'output': output.getvalue()}
 
     def call(self, tool, **args):
@@ -53,12 +55,122 @@ class GeminiAppTests(ChromeFixture):
         listing = json.loads(self.host.handle({'action': 'list'}))
         entry = next(app for app in listing['apps'] if app['id'] == 'gemini')
         self.assertTrue(entry['enabled'])
-        self.assertEqual(entry['operations'], ['inspect', 'reply'])
+        self.assertEqual(entry['operations'], [
+            'open_chat', 'type_prompt', 'click', 'select_model', 'read_result', 'inspect', 'reply',
+        ])
         details = json.loads(self.host.handle({'action': 'describe', 'app': 'gemini'}))
         self.assertIn('Choose an existing Chrome profile', details['guide'])
         self.assertEqual(details['app']['handoff_mode'], 'manual')
         self.assertEqual(details['app']['rolling_parameters'], {'reply': 'continuation'})
         self.dispatch.assert_not_called()
+
+    def test_open_chat_returns_only_the_confirmed_chat_id(self):
+        self.js.side_effect = [
+            {'origin': 'null', 'path': 'blank'},
+            {'reason': 'ready', 'chat_id': 'c_fixture-chat'},
+        ]
+        result = self.call(browser_apps.APP_TOOL, action='run', operation='open_chat',
+                           params={'chat': 'c_fixture-chat'})
+        self.assertEqual(result['data'], {'chat_id': 'c_fixture-chat'})
+        self.navigate.assert_called_once_with('https://gemini.google.com/app/fixture-chat')
+        self.dispatch.assert_called_once()
+
+    def test_send_click_uses_one_owned_native_call(self):
+        self.js.return_value = {'reason': 'ready', 'point': [62, 37]}
+        result = self.call(browser_apps.APP_TOOL, action='run', operation='click',
+                           params={'control': 'send'})
+        self.assertEqual(result['data'], {'control': 'send', 'clicked': True})
+        self.click.assert_called_once_with(62, 37)
+        self.navigate.assert_not_called()
+        self.dispatch.assert_called_once()
+
+    def test_blocked_control_keeps_the_native_fallback_session(self):
+        self.js.return_value = {'reason': 'obscured'}
+        result = self.call(browser_apps.APP_TOOL, action='run', operation='click',
+                           params={'control': 'send'})
+        self.assertEqual(result['status'], 'needs_inspection')
+        self.assertEqual(result['data'], {'control': 'send', 'reason': 'obscured'})
+        self.click.assert_not_called()
+        with patch.dict(os.environ, {}, clear=True):
+            fallback = self.provider.prepare_call(
+                'browser_exec', {'session': result['session']}, 'agent', session_id='chat',
+                turn_id='turn', config=self.config)
+        self.assertEqual(fallback['args']['session'], result['session'])
+
+    def test_unmapped_control_returns_fallback_without_browser_snapshot(self):
+        result = self.call(browser_apps.APP_TOOL, action='run', operation='click',
+                           params={'control': 'unmapped'})
+        self.assertEqual(result['status'], 'needs_inspection')
+        self.assertEqual(result['data']['reason'], 'unmapped_control')
+        self.assertIn('session', result)
+        self.dispatch.assert_not_called()
+
+    def test_tool_click_uses_an_already_open_menu(self):
+        self.js.side_effect = [
+            {'reason': 'missing'},
+            {'reason': 'ready', 'expanded': True},
+            {'reason': 'ready', 'expanded': False, 'point': [15, 20]},
+            {'reason': 'ready', 'point': [35, 40]},
+        ]
+        result = self.call(browser_apps.APP_TOOL, action='run', operation='click',
+                           params={'control': 'deep_research'})
+        self.assertTrue(result['success'], result)
+        self.assertEqual([entry.args for entry in self.click.call_args_list], [(15, 20), (35, 40)])
+        self.dispatch.assert_called_once()
+
+    def test_nested_menu_only_uses_the_keyboard_on_its_focused_trigger(self):
+        more = {'reason': 'ready', 'expanded': False, 'point': [15, 20],
+                'document': 123, 'chat_id': None}
+        for focused in [{**more, 'focused': True}, {**more, 'focused': False}]:
+            with self.subTest(focused=focused['focused']):
+                self.press_key.reset_mock()
+                self.js.side_effect = [
+                    {'reason': 'missing'}, {'reason': 'ready', 'expanded': True}, more,
+                    {'reason': 'missing'}, focused, {'reason': 'ready', 'point': [35, 40]},
+                ]
+                with patch('time.monotonic', side_effect=[0, 1, 2]):
+                    result = self.call(browser_apps.APP_TOOL, action='run', operation='click',
+                                       params={'control': 'deep_research'})
+                self.assertTrue(result['success'], result)
+                if focused['focused']:
+                    self.press_key.assert_called_once_with('ArrowRight')
+                else:
+                    self.press_key.assert_not_called()
+
+    def test_type_prompt_verifies_focus_and_preserves_send(self):
+        ready = {'reason': 'ready', 'point': [10, 20], 'value': '', 'document': 10, 'chat_id': 'c_fixture'}
+        self.js.side_effect = [ready, {**ready, 'focused': True}, {**ready, 'value': 'Fixture prompt'}]
+        result = self.call(browser_apps.APP_TOOL, action='run', operation='type_prompt',
+                           params={'text': 'Fixture prompt'})
+        self.assertTrue(result['success'], result)
+        self.click.assert_called_once_with(10, 20)
+        self.type_text.assert_called_once_with('Fixture prompt')
+
+    def test_type_prompt_leaves_an_existing_draft_unmodified(self):
+        self.js.return_value = {'reason': 'ready', 'value': 'Previous draft'}
+        result = self.call(browser_apps.APP_TOOL, action='run', operation='type_prompt',
+                           params={'text': 'Fixture prompt'})
+        self.assertEqual(result['data']['reason'], 'existing_draft')
+        self.click.assert_not_called()
+        self.type_text.assert_not_called()
+
+    def test_select_model_opens_picker_and_clicks_the_exact_option(self):
+        self.js.side_effect = [
+            {'reason': 'missing'},
+            {'reason': 'ready', 'expanded': False, 'point': [22, 26]},
+            {'reason': 'ready', 'point': [24, 55]},
+        ]
+        result = self.call(browser_apps.APP_TOOL, action='run', operation='select_model',
+                           params={'model': 'Fixture model'})
+        self.assertTrue(result['success'], result)
+        self.assertIn('Fixture model', self.js.call_args.args[0])
+        self.assertEqual([entry.args for entry in self.click.call_args_list], [(22, 26), (24, 55)])
+
+    def test_read_result_reports_generation_in_progress_without_clicking(self):
+        self.js.return_value = {'reason': 'running', 'chat_id': 'c_fixture'}
+        result = self.call(browser_apps.APP_TOOL, action='run', operation='read_result')
+        self.assertEqual((result['status'], result['data']), ('running', {'chat_id': 'c_fixture'}))
+        self.click.assert_not_called()
 
     def test_uses_selected_profile_and_reports_only_masked_account(self):
         self.assertTrue(self.call(plugin.PROFILE_TOOL, action='select', profile='Profile 2')['success'])

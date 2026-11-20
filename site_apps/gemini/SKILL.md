@@ -1,9 +1,34 @@
-# Inspect Gemini Web
+# Gemini Web controls
 
 Read the current operations with `browser_app` action `describe` and app `gemini`.
 Choose an existing Chrome profile using `chrome_profiles` with `app: gemini`.
-Use the same named `session` for `browser_app` and call `operation: inspect`.
-The host gives this package its own Chrome window in the chosen profile.
+Use the same named `session` for each related `browser_app` call. Start with
+`open_chat` and pass `chat` when opening an existing conversation. Chrome opens
+Gemini in the selected profile.
+
+Call the mapped action directly when you know which control to use.
+
+| Operation | Action |
+| --- | --- |
+| `open_chat` | Open Gemini Web or an existing conversation by ID |
+| `type_prompt` | Fill the empty composer without submitting |
+| `click` | Use a named control such as `create_image`, `deep_research`, or `send` |
+| `select_model` | Click the model matching the visible label |
+| `read_result` | Read the latest visible text response or report that it is still running |
+
+For example, select a mapped tool in the open chat using:
+
+```json
+{"action":"run","app":"gemini","operation":"click","session":"work","params":{"control":"create_image"}}
+```
+
+The action returns only its result. If a control is unmapped, hidden behind a
+banner, or otherwise unavailable, the result is `needs_inspection`. Pass its
+returned `session` to native `browser_exec` in the same turn. Inspect the relevant
+DOM or use a screenshot if needed, then continue with the same browser window.
+If a Send action is unconfirmed, check the chat before trying it again.
+
+## Inspect the current page
 
 `inspect` opens Gemini when needed, then reads the chat ID, account indicator,
 active model label and known visible controls. Pass `params: {"chat": "c_CHAT_ID"}`

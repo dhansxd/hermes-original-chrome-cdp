@@ -2,11 +2,55 @@
   "api_version": 1,
   "id": "gemini",
   "name": "Gemini Web",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "profile_policy": "rotate_on_limit",
   "handoff_mode": "manual",
   "rolling_parameters": {"reply": "continuation"},
   "operations": {
+    "open_chat": {
+      "description": "Open Gemini Web or an existing conversation by ID in this Chrome session. Return only the current chat ID.",
+      "parameters": {
+        "type": "object",
+        "properties": {"chat": {"type": "string", "description": "Optional existing Gemini conversation ID."}},
+        "additionalProperties": false
+      }
+    },
+    "type_prompt": {
+      "description": "Type text into the empty Gemini composer. This action leaves the prompt as a draft.",
+      "parameters": {
+        "type": "object",
+        "properties": {"text": {"type": "string", "minLength": 1}},
+        "required": ["text"],
+        "additionalProperties": false
+      }
+    },
+    "click": {
+      "description": "Click a mapped Gemini control. Tool choices can open the Tools menu. A Send click reports that input was dispatched.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "control": {
+            "type": "string",
+            "enum": ["model_picker", "tools_menu", "create_image", "create_video", "deep_research", "create_music", "send"]
+          }
+        },
+        "required": ["control"],
+        "additionalProperties": false
+      }
+    },
+    "select_model": {
+      "description": "Open the Gemini model picker if needed and click the option matching its exact visible label.",
+      "parameters": {
+        "type": "object",
+        "properties": {"model": {"type": "string", "minLength": 1}},
+        "required": ["model"],
+        "additionalProperties": false
+      }
+    },
+    "read_result": {
+      "description": "Return the latest visible text response in this Gemini chat, up to 4,000 characters. Return running while Gemini is responding.",
+      "parameters": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
     "inspect": {
       "description": "Inspect Gemini Web or open an existing chat in the selected Chrome profile. Return the chat ID, active account, model, visible controls, and any displayed usage-limit or reset information.",
       "parameters": {

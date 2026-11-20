@@ -204,10 +204,11 @@ report that they apply to future browsing.
 
 ## User-owned website extensions
 
-The Gemini Web package provides a first `inspect` operation. Select its Chrome
-profile with `chrome_profiles` using `app: gemini`, then run `inspect` with the
-same session name. It reports the active account indicator, model label,
-visible controls, and usage notices shown on Gemini. Read its [package guide](site_apps/gemini/SKILL.md).
+The Gemini Web package provides mapped actions for opening a conversation,
+entering a prompt, selecting a tool or model, sending, and reading the result.
+Use the package's named session for related actions. If a control needs inspection,
+pass the session returned by `browser_app` to native `browser_exec` in the same
+turn. See the [Gemini package guide](site_apps/gemini/SKILL.md).
 
 The `browser_app` tool accepts `list`, `describe`, `run`, `enable`, `disable`, and
 `remove`. Package discovery and
