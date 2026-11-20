@@ -13,6 +13,11 @@ from . import entities, preparation
 
 
 ORIGIN = 'https://flow.google.com'
+PROJECT_URL = re.compile(r'https://flow\.google\.com/project/[a-zA-Z0-9-]+')
+ACCOUNT_READY = """!!document.querySelector('[aria-label="Detail akun"],[aria-label="Account details"]')"""
+PROJECT_READY = """Array.from(document.querySelectorAll(
+    'button.agent-mode-chip, button.settings-trigger-button, flow-agent-panel'
+)).some(node => node.getClientRects().length && getComputedStyle(node).visibility === 'visible')"""
 GENERATIONS = {'generate_image': 'image', 'generate_video': 'video'}
 GROUPS = {
     'aspect': ('Rasio aspek', 'Aspect ratio'),
@@ -48,43 +53,68 @@ def save_state(context, value):
 
 
 def project_url(value):
-    if re.fullmatch(r'[a-zA-Z0-9-]+', value):
-        return ORIGIN + '/project/' + value
-    if re.fullmatch(r'https://flow\.google\.com/project/[a-zA-Z0-9-]+', value):
-        return value
+    if isinstance(value, str):
+        if re.fullmatch(r'[a-zA-Z0-9-]+', value):
+            return ORIGIN + '/project/' + value
+        if PROJECT_URL.fullmatch(value):
+            return value
     raise ValueError('project must be a Flow project ID or its canonical project URL')
 
 
-def ensure(context, params):
+def observed_project(url):
+    route = re.split(r'[?#]', url, maxsplit=1)[0].removesuffix('/')
+    return route if PROJECT_URL.fullmatch(route) else None
+
+
+def ensure(context, params, *, inspect_only=False):
+    if inspect_only:
+        if (set(params) - PARAMETERS['inspect']
+                or params.get('mode', 'classic') not in ('classic', 'agent')
+                or params.get('kind', 'video') not in ('image', 'video')):
+            raise ValueError('Use the inspection parameters listed by browser_app describe.')
+
     ui = UI(context)
     current = ui.read('location.href')
     saved = local_state(context)
-    target = params.get('project') or saved.get('projects', {}).get(context.profile)
+    selected = params.get('project')
+    opened = current
+    if inspect_only:
+        if 'project' in params:
+            selected = project_url(selected)
+        opened = observed_project(current)
+    target = selected or (opened if inspect_only else None) or saved.get('projects', {}).get(context.profile)
     if target:
         target = project_url(target)
+        if target != opened:
+            ui.execute(f'goto_url({target!r})')
     elif not current.startswith(ORIGIN + '/'):
-        target = ORIGIN + '/'
-    if target and current != target:
-        ui.execute(f'goto_url({target!r})')
-    ui.wait("!!document.querySelector('[aria-label=\"Detail akun\"],[aria-label=\"Account details\"]')", 30)
-    if params.get('project'):
-        saved.setdefault('projects', {})[context.profile] = project_url(params['project'])
+        ui.execute(f'goto_url({ORIGIN + "/"!r})')
+    ready = ACCOUNT_READY
+    if inspect_only and target:
+        route = r"((location.origin + location.pathname).replace(/\/$/, ''))"
+        ready = f"{route} === {json.dumps(target)} && ({ready}) && ({PROJECT_READY})"
+    ui.wait(ready, 30)
+    if selected and not inspect_only:
+        saved.setdefault('projects', {})[context.profile] = target
         save_state(context, saved)
     return ui
 
 
-def account(ui, *, credits=True):
+def account(ui, *, credits=True, inspect_only=False):
     if not credits:
         label = ui.read("document.querySelector('a[href*=\"accounts.google.com/SignOutOptions\"]')?.getAttribute('aria-label') ?? ''")
         email = re.search(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}', label)
         if email:
             identity = hashlib.sha256(email.group().lower().encode()).hexdigest()
             return {'id': identity, 'evidence': 'Flow account avatar email hash ' + identity, 'credits': None}
-    acknowledge_upload(ui)
-    if ui.read("!!document.querySelector('flow-add-menu-popover-content')"):
-        ui.execute("press_key('Escape')")
-    ui.click('[aria-label="Detail akun"],[aria-label="Account details"]')
-    ui.wait("!!document.querySelector('flow-account-panel')")
+    if not inspect_only:
+        acknowledge_upload(ui)
+        if ui.read("!!document.querySelector('flow-add-menu-popover-content')"):
+            ui.execute("press_key('Escape')")
+    panel_open = inspect_only and ui.read("!!document.querySelector('flow-account-panel')?.getClientRects().length")
+    if not panel_open:
+        ui.click('[aria-label="Detail akun"],[aria-label="Account details"]')
+        ui.wait("!!document.querySelector('flow-account-panel')")
     try:
         value = ui.read("document.querySelector('flow-account-panel').innerText")
         email = re.search(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}', value)
@@ -95,10 +125,15 @@ def account(ui, *, credits=True):
         return {'id': identity, 'evidence': 'Flow account panel email hash ' + identity,
                 'credits': int(re.sub(r'\D', '', credits.group(1))) if credits else None}
     finally:
-        ui.click('flow-account-panel button.close-btn')
+        if not panel_open:
+            ui.click('flow-account-panel button.close-btn')
 
 
 def identify(context, operation, params):
+    if operation == 'inspect':
+        ui = ensure(context, params, inspect_only=True)
+        return {'status': 'ok', 'account': account(ui, credits=False, inspect_only=True),
+                'quota': {'scope': scope(operation)}}
     # Probe the destination account before opening account-local project IDs.
     capture_destination(context, UI(context))
     if operation == 'create_character':
@@ -181,6 +216,28 @@ def configure(ui, params, *, kind=None):
         return result
     finally:
         ui.close_settings(mode)
+
+
+def inspect(context, params):
+    ui = ensure(context, params, inspect_only=True)
+    state = ui.snapshot()
+    project = observed_project(state['url'])
+    if 'project' in params:
+        if project != project_url(params['project']):
+            raise RuntimeError('The requested Flow project could not be confirmed in the selected Chrome profile.')
+        saved = local_state(context)
+        saved.setdefault('projects', {})[context.profile] = project
+        save_state(context, saved)
+    if project is None:
+        return {'url': state['url'], 'project_id': None, 'account': account(ui, inspect_only=True)}
+
+    state['project_id'] = project.rsplit('/', 1)[1]
+    if 'mode' in params and params['mode'] != state['mode']:
+        state['requested_mode'] = params['mode']
+    if 'kind' in params:
+        state['models'] = [model for model in state['models']
+                           if model['selector'] in ('model', params['kind'])]
+    return state
 
 
 def create_project(context, ui, title, checkpoint=None):
@@ -444,13 +501,11 @@ def run(context, operation, params):
             raise ValueError('Unknown Flow operation or parameter. Read browser_app describe for the current schema.')
         if operation in GENERATIONS and params.get('kind', GENERATIONS[operation]) != GENERATIONS[operation]:
             raise ValueError('kind must match the generate_image or generate_video operation')
+        if operation == 'inspect':
+            return not_submitted(inspect(context, params))
         ui = ensure(context, params)
         if operation == 'create_project':
             return not_submitted(create_project(context, ui, params.get('title')))
-        if operation == 'inspect':
-            if '/project/' not in ui.read('location.pathname'):
-                return not_submitted({'url': ui.read('location.href'), 'account': account(ui)})
-            return not_submitted(configure(ui, params))
         if operation == 'configure':
             return not_submitted(configure(ui, params, kind=params.get('kind')))
         if operation == 'upload':

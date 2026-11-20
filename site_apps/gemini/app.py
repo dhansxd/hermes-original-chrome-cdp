@@ -1,22 +1,34 @@
 """Inspect Gemini Web through the caller's existing Hermes browser context."""
 
 import json
+import re
 from pathlib import Path
 
 
 ORIGIN = 'https://gemini.google.com'
 SNAPSHOT = (Path(__file__).parent / 'snapshot.js').read_text(encoding='utf-8')
 RESULT_MARKER = 'GEMINI_INSPECT='
+CHAT_PATH = r'/(?:u/\d+/)?app/([a-zA-Z0-9-]+)/?'
 
 
 def run(context, operation, params):
-    if operation != 'inspect' or params != {}:
-        raise ValueError('Gemini inspect accepts no parameters.')
+    if operation != 'inspect' or set(params) - {'chat'}:
+        raise ValueError('Gemini inspect accepts only an optional chat ID.')
+    chat = params.get('chat')
+    if 'chat' in params:
+        if not isinstance(chat, str) or not re.fullmatch(r'(?:c_)?[a-zA-Z0-9-]+', chat):
+            raise ValueError('Gemini chat must be a conversation ID.')
+        chat = 'c_' + chat.removeprefix('c_')
 
     code = f'''import hashlib, json, re, time
 origin = {ORIGIN!r}
+chat = {chat!r}
 route = js("({{origin: location.origin, path: location.pathname}})")
-if route['origin'] != origin or not re.match(r'^/(?:u/\\d+/)?app(?:/|$)', route['path']):
+if chat:
+    opened = re.fullmatch({CHAT_PATH!r}, route['path'])
+    if route['origin'] != origin or not opened or 'c_' + opened[1] != chat:
+        goto_url(origin + '/app/' + chat[2:])
+elif route['origin'] != origin or not re.match(r'^/(?:u/\\d+/)?app(?:/|$)', route['path']):
     goto_url(origin + '/app')
 
 snapshot = {SNAPSHOT!r}
@@ -25,7 +37,9 @@ deadline = time.monotonic() + 8
 while True:
     state = js(expression)
     # Gemini can render the composer before the model picker has a readable label.
-    if state['page'] == 'signed_out' or (state['page'] == 'ready' and state['model']):
+    if state['page'] == 'signed_out':
+        break
+    if state['page'] == 'ready' and state['model'] and (not chat or state['chat_id'] == chat):
         break
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -52,4 +66,7 @@ print({RESULT_MARKER!r} + json.dumps(state, ensure_ascii=False))
         data = None
     if not isinstance(data, dict):
         return {'status': 'failed', 'message': 'Gemini returned an invalid inspection snapshot.'}
+    if chat and (data.get('chat_id') != chat or data.get('page') != 'ready'):
+        return {'status': 'failed', 'data': data,
+                'message': 'The requested Gemini chat could not be confirmed in the selected Chrome profile.'}
     return {'status': 'ok', 'data': data}

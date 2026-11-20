@@ -2,28 +2,31 @@
   "api_version": 1,
   "id": "flow",
   "name": "Google Flow",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "profile_policy": "rotate_on_limit",
   "operations": {
     "inspect": {
-      "description": "Read Flow's current account, mode and available settings.",
+      "description": "Open or inspect an existing Flow project in the selected Chrome profile. Return the project ID, current mode and visible controls. Settings remain in their current state.",
       "parameters": {
         "type": "object",
         "properties": {
           "project": {
-            "type": "string"
+            "type": "string",
+            "description": "Optional existing Flow project ID or canonical project URL."
           },
           "mode": {
             "enum": [
               "classic",
               "agent"
-            ]
+            ],
+            "description": "Expected composer mode. Inspection reports the actual mode."
           },
           "kind": {
             "enum": [
               "image",
               "video"
-            ]
+            ],
+            "description": "Filter visible model controls to the relevant media kind."
           }
         }
       }

@@ -74,16 +74,43 @@ class GeminiAppTests(ChromeFixture):
 
     def test_inspection_keeps_an_open_gemini_chat_document(self):
         self.js.side_effect = [{'origin': 'https://gemini.google.com', 'path': '/u/0/app/fixture-chat'},
-                               {'page': 'ready', 'account': {'status': 'unknown'}, 'model': None},
-                               {'page': 'ready', 'account': {'status': 'unknown'}, 'model': 'Hydrogen Tinggi'}]
+                               {'page': 'ready', 'account': {'status': 'unknown'}, 'model': None,
+                                'chat_id': 'c_fixture-chat'},
+                               {'page': 'ready', 'account': {'status': 'unknown'}, 'model': 'Hydrogen Tinggi',
+                                'chat_id': 'c_fixture-chat'}]
         with patch('time.sleep') as sleep:
-            result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect')
+            result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect',
+                               params={'chat': 'fixture-chat'})
         self.assertTrue(result['success'], result)
         self.assertEqual(result['data']['model'], 'Hydrogen Tinggi')
+        self.assertEqual(result['data']['chat_id'], 'c_fixture-chat')
         self.assertEqual(self.js.call_count, 3)
         self.dispatch.assert_called_once()
         sleep.assert_called_once_with(0.25)
         self.navigate.assert_not_called()
+
+    def test_inspection_opens_only_the_requested_chat_in_the_selected_profile(self):
+        self.assertTrue(self.call(plugin.PROFILE_TOOL, action='select', profile='Profile 2')['success'])
+        self.js.side_effect = [{'origin': 'null', 'path': 'blank'},
+                               {'page': 'ready', 'account': {'status': 'unknown'},
+                                'model': 'Fixture model', 'chat_id': 'c_fixture-chat'}]
+        result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect',
+                           params={'chat': 'c_fixture-chat'})
+        self.assertEqual(result['status'], 'ok', result)
+        self.assertEqual(result['profile'], 'Profile 2')
+        self.assertEqual(result['data']['chat_id'], 'c_fixture-chat')
+        self.navigate.assert_called_once_with('https://gemini.google.com/app/fixture-chat')
+
+    def test_inspection_does_not_confirm_a_redirect_to_a_different_chat(self):
+        self.js.side_effect = [{'origin': 'null', 'path': 'blank'},
+                               {'page': 'ready', 'account': {'status': 'unknown'},
+                                'model': 'Fixture model', 'chat_id': 'c_other-chat'}]
+        with patch('time.monotonic', side_effect=[0.0, 8.0]):
+            result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect',
+                               params={'chat': 'c_fixture-chat'})
+        self.assertEqual(result['status'], 'failed', result)
+        self.assertIn('could not be confirmed', result['message'])
+        self.navigate.assert_called_once_with('https://gemini.google.com/app/fixture-chat')
 
     def test_returns_ready_without_a_readable_model_at_the_deadline(self):
         state = {'page': 'ready', 'account': {'status': 'unknown'}, 'model': None,
@@ -110,6 +137,14 @@ class GeminiAppTests(ChromeFixture):
         result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect',
                            params={'profile': 'Profile 2'})
         self.assertEqual(result['status'], 'failed')
+        self.dispatch.assert_not_called()
+
+    def test_rejects_chat_ids_that_are_not_safe_route_segments(self):
+        for chat in ('https://example.test/app/chat', '../chat', 'c_', ''):
+            with self.subTest(chat=chat):
+                result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect',
+                                   params={'chat': chat})
+                self.assertEqual(result['status'], 'failed', result)
         self.dispatch.assert_not_called()
 
     def test_unparseable_browser_result_fails_cleanly(self):

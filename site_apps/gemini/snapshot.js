@@ -1,6 +1,6 @@
 (origin) => {
     const account = {status: 'unknown'};
-    const result = {page: 'redirected', account, model: null, controls: {},
+    const result = {page: 'redirected', account, chat_id: null, model: null, controls: {},
         quota: {status: 'unknown', notices: []}};
     if (location.origin !== origin) {
         if (location.origin === 'https://accounts.google.com') {
@@ -11,6 +11,8 @@
     }
 
     if (!/^\/(?:u\/\d+\/)?app(?:\/|$)/.test(location.pathname)) return result;
+    const chatRoute = location.pathname.match(/^\/(?:u\/\d+\/)?app\/([a-zA-Z0-9-]+)\/?$/);
+    if (chatRoute) result.chat_id = 'c_' + chatRoute[1];
 
     const visible = (node) => node.getClientRects().length > 0 &&
         getComputedStyle(node).visibility === 'visible' && !node.closest('[aria-hidden="true"]');

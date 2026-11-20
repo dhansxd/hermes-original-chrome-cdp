@@ -105,8 +105,8 @@ berikutnya. Riwayat rinci sebelum PRD tersedia pada bagian sumber bukti.
 | Pemuat dan lifecycle extension pengguna | List/describe/run/enable/disable/remove | Ya, gateway direload resmi | 33 regresi khusus paket dan uji native enam jendela, disable/remove, serta pekerjaan lintas turn lulus. Template Flow 0.3.0 dan Gemini `inspect` tersedia. |
 | Profil tetap/acak/per platform/subagent | Implementasi tersedia pada 0.8.0 | Ya | Regresi aturan profil dan uji native pemilihan profil child per paket lulus. Kanal nyata mengikuti item terbuka. |
 | Rolling generik dan handoff | Implementasi tersedia pada 0.8.0 | Ya, gateway direload resmi | 31 regresi rolling lulus. Fixture CDP UI membuktikan A -> B -> C, profil sumber pending bersama peer, source receipt setelah Stop/reload, serta preservasi browser umum/extension lain/manual. |
-| Extension Gemini | Paket `site_apps/gemini` 0.1.1 dengan operasi `inspect` | Lingkungan uji | Katalog dan pemilihan profil diuji melalui `browser_app`. Chat dan kelanjutan pekerjaan mengikuti GEM-01 sampai GEM-05. |
-| Extension Google Flow | Paket `site_apps/flow` 0.3.0 pada host 0.10.3 | Ya, salinan eksternal `browser-apps/flow` cocok dengan template | Produksi gambar/video dan rolling klasik/Agent mempunyai bukti host 0.10.1. Inspeksi klasik → Agent → klasik melalui Hermes pada 0.10.3 lulus dalam satu jendela kerja dan dokumen yang sama. Peer dipertahankan. Reset kuota provider nyata mengikuti FLO-04. |
+| Extension Gemini | Paket `site_apps/gemini` 0.1.2 dengan operasi `inspect` | Lingkungan uji | Inspeksi menerima ID chat dan mengonfirmasi identitas chat pada profil yang dipilih. Pengiriman dan kelanjutan pekerjaan mengikuti GEM-01 sampai GEM-05. |
+| Extension Google Flow | Paket `site_apps/flow` 0.3.1 dengan pemisahan `inspect` dan `configure` | Lingkungan uji | Inspeksi mengonfirmasi proyek dan membaca UI yang terlihat. Penerimaan produksi dan rolling sebelumnya tercatat pada FLO-01 sampai FLO-04. |
 
 Status konfigurasi lokal diperiksa pada 16 November 2026. Browser provider bernilai
 `original-chrome-default`, dan plugin tercantum aktif pada versi 0.10.3.
@@ -378,6 +378,11 @@ keputusan rolling berdasarkan bukti yang dikembalikan paket. Untuk Gemini,
 agent memilih sendiri apakah menunggu reset atau meminta kelanjutan dengan
 profil tujuan eksplisit. Tahap `inspect` melaporkan petunjuk akun dan kuota yang
 terlihat. Kelanjutan eksplisit mengikuti GEM-05.
+
+Kebijakan yang direncanakan untuk kedua paket menyediakan pilihan manual dan
+otomatis. Mode manual menyerahkan pemilihan tujuan kepada agent. Mode otomatis
+memakai urutan profil yang dikonfigurasi setelah limit dikonfirmasi layanan.
+Pekerjaan berstatus belum pasti tetap diperiksa pada profil asal dalam kedua mode.
 
 Kandidat default mencakup seluruh profil yang dapat mengakses layanan, dalam urutan
 alami direktori. Profil awal atau urutan pilihan pengguna dapat dikonfigurasi.

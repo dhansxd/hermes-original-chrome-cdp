@@ -50,6 +50,67 @@ class FlowAppTests(unittest.TestCase):
             self.app.save_state(context, {'projects': {'Default': 'one', 'Profile 2': 'two'}})
             self.assertEqual(self.app.local_state(context)['projects'], {'Default': 'one', 'Profile 2': 'two'})
 
+    def test_inspect_reuses_the_requested_project_and_preserves_composer_settings(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), profile='Profile 2')
+            ui = Mock()
+            ui.read.return_value = 'https://flow.google.com/project/native-id/?hl=id#editor'
+            ui.snapshot.return_value = {
+                'url': ui.read.return_value, 'mode': 'agent', 'approval': '1',
+                'models': [{'selector': 'video', 'value': 'Video'}, {'selector': 'image', 'value': 'Image'}]}
+            with patch.object(self.app, 'UI', return_value=ui):
+                result = self.app.run(context, 'inspect', {
+                    'project': 'native-id', 'mode': 'classic', 'kind': 'video'})
+            self.assertEqual(result['status'], 'ok', result)
+            self.assertEqual(result['data']['project_id'], 'native-id')
+            self.assertEqual(result['data']['mode'], 'agent')
+            self.assertEqual(result['data']['requested_mode'], 'classic')
+            self.assertEqual(result['data']['approval'], '1')
+            self.assertEqual(result['data']['models'], [{'selector': 'video', 'value': 'Video'}])
+            self.assertIn('https://flow.google.com/project/native-id', ui.wait.call_args.args[0])
+            ui.execute.assert_not_called()
+            ui.click.assert_not_called()
+            ui.mode.assert_not_called()
+            ui.settings.assert_not_called()
+
+    def test_inspect_probes_the_requested_project_before_any_saved_project(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), profile='Profile 2')
+            self.app.save_state(context, {'projects': {'Default': 'other', 'Profile 2': 'old'}})
+            ui = Mock()
+            target = self.app.project_url('requested')
+            ui.read.side_effect = ['https://flow.google.com/', 'fixture@example.test', target]
+            ui.snapshot.return_value = {'url': target, 'mode': 'classic', 'models': []}
+            with patch.object(self.app, 'UI', return_value=ui):
+                probe = self.app.identify(context, 'inspect', {'project': 'requested'})
+                result = self.app.run(context, 'inspect', {'project': 'requested'})
+            self.assertEqual(probe['status'], 'ok', probe)
+            self.assertEqual(result['data']['project_id'], 'requested')
+            ui.execute.assert_called_once_with(f'goto_url({target!r})')
+            self.assertEqual(self.app.local_state(context)['projects'], {'Default': 'other', 'Profile 2': target})
+
+    def test_inspect_refuses_a_different_project_without_saving_selection(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), profile='Default')
+            ui = Mock()
+            ui.read.return_value = 'https://flow.google.com/'
+            ui.snapshot.return_value = {'url': self.app.project_url('unrelated')}
+            with patch.object(self.app, 'UI', return_value=ui):
+                result = self.app.run(context, 'inspect', {'project': 'requested'})
+            self.assertEqual(result['status'], 'failed', result)
+            self.assertIn('could not be confirmed', result['message'])
+            self.assertEqual(self.app.local_state(context), {})
+
+    def test_inspection_can_read_an_open_account_panel_without_accepting_upload_terms(self):
+        ui = Mock()
+        ui.read.side_effect = ['', True, 'fixture@example.test']
+        with patch.object(self.app, 'acknowledge_upload') as acknowledge:
+            result = self.app.account(ui, credits=False, inspect_only=True)
+        self.assertEqual(result['id'], hashlib.sha256(b'fixture@example.test').hexdigest())
+        acknowledge.assert_not_called()
+        ui.click.assert_not_called()
+        ui.execute.assert_not_called()
+
     def test_no_submit_after_invalid_prompt(self):
         ui = Mock()
         with self.assertRaises(ValueError):

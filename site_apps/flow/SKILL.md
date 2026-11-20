@@ -8,10 +8,12 @@ have separate sessions. Read `browser_app` action `describe` for current operati
    the same session alias used for the operations below.
 2. Run `create_project` with a title, or pass an existing canonical `project` ID
    or URL to an operation. Project selection is kept per Chrome profile.
-3. Run `inspect` for the current model names and setting options. `configure`
-   selects `mode`, `kind`, `model`, `aspect`, `count`, and the controls exposed
-   by the selected model. Classic video supports `duration`, `resolution`, and
-   `input_type` where the current UI provides them.
+3. Run `inspect` to confirm the project ID, active mode, and visible controls.
+   If the requested project is already open, inspection reuses the page.
+   `mode` indicates an expected mode and `kind` filters visible model controls.
+   Use `configure` to open the settings, list model options, or apply changes.
+   Classic video supports `duration`, `resolution`, and `input_type` where
+   the current UI provides them.
 4. Run `generate_image` or `generate_video` with a prompt and the settings.
    Keep the returned `job` ID. A running/uncertain response belongs to that
    source request. Resume with that same `job`, operation and session alias.
@@ -29,7 +31,7 @@ Example call arguments follow.
   "params": {
     "project": "project-id-from-create-project",
     "mode": "classic",
-    "model": "model-name-from-inspect",
+    "model": "model-name-from-flow-settings",
     "aspect": "9:16",
     "resolution": "720p",
     "duration": 3,
