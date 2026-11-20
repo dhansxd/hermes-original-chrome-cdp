@@ -429,7 +429,8 @@ def write_json(path, value):
 
 SCHEMA = {
     'name': APP_TOOL,
-    'description': 'Use user-owned site extensions through your Original Chrome session. '
+    'description': 'Use mapped controls in Original Chrome for a requested website, such as Gemini Web '
+                   'or Google Flow. For these sites start with describe using app gemini or flow. '
                    'list refreshes installed packages without running their code. describe reads '
                    'one package\'s operations, parameter schemas and guide. run executes that '
                    'package with its own agent/session namespace. Reuse the same session alias '

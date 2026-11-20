@@ -520,10 +520,17 @@ def prepare_call(tool_name, args, task_id, *, session_id='', turn_id='', provide
 def register(ctx):
     provider = ChromeProvider(ctx.get_config, set_setting=ctx.set_config)
     ctx.register_browser_provider(provider)
+    root = Path(__file__).parent
     apps = AppHost(provider, ctx.get_config, ctx.dispatch_tool, prepare_code,
-                   lambda: ctx.state.data_dir, bundled_source=Path(__file__).parent / 'site_apps')
+                   lambda: ctx.state.data_dir, bundled_source=root / 'site_apps')
     ctx.register_tool(name=APP_TOOL, toolset='browser', handler=apps.handle,
                       check_fn=provider.is_available, schema=SCHEMA)
+    if hasattr(ctx, 'register_skill'):
+        ctx.register_skill('site-controls', root / 'skills' / 'site-controls' / 'SKILL.md',
+                           description='Use mapped Chrome controls for Gemini Web and Google Flow tasks, '
+                                       'including images, video, Deep Research, chats and downloads.',
+                           frontmatter={'platforms': ['macos'],
+                                        'metadata': {'hermes': {'requires_toolsets': ['browser']}}})
 
     def profile_control(args, **context):
         return json.dumps(provider.profiles(args, **context), ensure_ascii=False)

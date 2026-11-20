@@ -204,6 +204,10 @@ report that they apply to future browsing.
 
 ## User-owned website extensions
 
+The plugin registers the [site-controls skill](skills/site-controls/SKILL.md) as
+`original-chrome-default:site-controls`. It points Hermes to mapped browser
+actions when the request names a site such as Gemini Web or Google Flow.
+
 The Gemini Web package provides mapped actions for opening a conversation,
 entering a prompt, selecting a tool or model, sending, and reading the result.
 Use the package's named session for related actions. If a control needs inspection,
