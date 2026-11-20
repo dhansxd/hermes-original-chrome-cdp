@@ -80,14 +80,85 @@ class FlowAppTests(unittest.TestCase):
             ui = Mock()
             target = self.app.project_url('requested')
             ui.read.side_effect = ['https://flow.google.com/', 'fixture@example.test', target]
-            ui.snapshot.return_value = {'url': target, 'mode': 'classic', 'models': []}
+            ui.snapshot.return_value = {'url': target, 'mode': 'classic', 'models': [], 'settings_open': False}
             with patch.object(self.app, 'UI', return_value=ui):
                 probe = self.app.identify(context, 'inspect', {'project': 'requested'})
                 result = self.app.run(context, 'inspect', {'project': 'requested'})
             self.assertEqual(probe['status'], 'ok', probe)
             self.assertEqual(result['data']['project_id'], 'requested')
+            self.assertFalse(result['data']['settings_open'])
+            self.assertIn('configure', result['data']['settings_hint'])
             ui.execute.assert_called_once_with(f'goto_url({target!r})')
             self.assertEqual(self.app.local_state(context)['projects'], {'Default': 'other', 'Profile 2': target})
+
+    def test_configure_catalog_reuses_open_project_and_keeps_agent_approval(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), profile='Default')
+            ui = Mock()
+            target = self.app.project_url('native-id')
+            ui.read.return_value = target + '/?hl=id'
+            ui.snapshot.return_value = {'url': ui.read.return_value, 'mode': 'agent', 'approval': '1'}
+            ui.model.return_value = [{'value': 'Native model', 'disabled': False}]
+            with patch.object(self.app, 'UI', return_value=ui):
+                result = self.app.run(context, 'configure', {'project': target, 'mode': 'agent', 'kind': 'video'})
+            self.assertEqual(result['status'], 'ok', result)
+            self.assertEqual(result['data']['approval'], '1')
+            self.assertEqual(result['data']['model_options'], ui.model.return_value)
+            self.assertIn(target, ui.wait.call_args.args[0])
+            ui.settings.assert_called_once_with('agent')
+            ui.close_settings.assert_called_once_with('agent')
+            ui.click.assert_not_called()
+            ui.execute.assert_not_called()
+
+    def test_listing_native_models_closes_the_menu_without_selecting_a_value(self):
+        ui = Mock()
+        available = [{'value': 'Current model', 'disabled': False}]
+        ui.read.return_value = available
+        self.assertEqual(self.app.UI.model(ui, 'agent', 'video', read_only=True), available)
+        ui.click.assert_called_once_with('flow-settings-view button.video-model-picker-button')
+        ui.execute.assert_called_once_with("press_key('Escape')")
+
+    def test_agent_settings_open_from_collapsed_and_expanded_composers(self):
+        for expanded in (False, True):
+            with self.subTest(expanded=expanded):
+                ui = Mock()
+                ui.read.side_effect = [False, False, expanded, False]
+                self.app.UI.settings(ui, 'agent')
+                selectors = [call.args[0] for call in ui.click.call_args_list]
+                self.assertEqual(len(selectors), 1 if expanded else 2)
+                if not expanded:
+                    self.assertTrue(selectors[0].startswith('button.agent-action-button'))
+                self.assertTrue(selectors[-1].startswith('flow-agent-panel button'))
+                self.assertIn('Setelan agen', selectors[-1])
+
+        ui = Mock()
+        ui.read.side_effect = [False, True]
+        self.app.UI.settings(ui, 'agent')
+        self.assertIn('Kembali', ui.click.call_args.args[0])
+        self.assertIn('flow-unified-settings-view', ui.wait.call_args.args[0])
+
+    def test_unified_agent_catalog_reads_current_kind_without_changing_approval(self):
+        ui = Mock()
+        summary = {'mode': 'agent', 'settings_view': 'flow-unified-settings-view', 'approval': '1'}
+        groups = [
+            {'label': 'Rasio aspek', 'options': [{'value': '9:16', 'selected': True}]},
+            {'label': 'Jumlah output', 'options': [{'value': 'x2', 'selected': True}]},
+        ]
+        defaults = {'mode': 'agent', 'settings_view': 'flow-generation-defaults-view', 'groups': groups,
+                    'duration': None, 'approval': None}
+        ui.snapshot.side_effect = [summary, summary, summary, defaults]
+        choices = [{'value': 'Native video', 'disabled': False}]
+        ui.agent_defaults.return_value = ('Native video', choices)
+        result = self.app.configure(ui, {'kind': 'video'}, catalog_only=True)
+        self.assertEqual(result['model_options'], choices)
+        self.assertEqual(result['models'], [{'value': 'Native video', 'selector': 'video'}])
+        settings = self.app.selected_settings(result, 'video')
+        self.assertEqual(settings['selected'], {'aspect': '9:16', 'count': 'x2'})
+        self.assertEqual(settings['count'], 2)
+        self.assertEqual(settings['approval'], '1')
+        ui.agent_defaults.assert_called_once_with('video', None)
+        ui.close_settings.assert_called_once_with('agent')
+        ui.click.assert_not_called()
 
     def test_inspect_refuses_a_different_project_without_saving_selection(self):
         with tempfile.TemporaryDirectory() as root:

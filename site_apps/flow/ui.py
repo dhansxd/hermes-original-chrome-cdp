@@ -3,6 +3,16 @@ import json
 
 
 PROJECT_LOCATION = r"(location.origin + location.pathname).replace(/\/$/, '')"
+AGENT_SETTINGS_LABELS = (':is([aria-label="Setelan" i],[aria-label="Setelan agen" i],'
+                         '[aria-label="Settings" i],[aria-label="Agent settings" i])')
+AGENT_SETTINGS_HOME = 'flow-unified-settings-view'
+AGENT_DEFAULTS = 'flow-generation-defaults-view'
+AGENT_SETTINGS_BACK = 'flow-agent-panel button:is([aria-label="Kembali"],[aria-label="Back"])'
+AGENT_MODELS = 'flow-generation-defaults-view flow-radio-group label.radio-option'
+
+
+def visible(selector):
+    return f'Array.from(document.querySelectorAll({json.dumps(selector)})).some(e=>e.getClientRects().length)'
 
 
 SNAPSHOT = r'''(() => {
@@ -15,20 +25,28 @@ SNAPSHOT = r'''(() => {
   const agent = Array.from(document.querySelectorAll('button.agent-mode-chip, flow-agent-mode-switch button'))
     .some(button => visible(button) && button.getAttribute('aria-pressed') === 'true')
     || Array.from(document.querySelectorAll('flow-agent-panel')).some(visible);
-  const pane = Array.from(document.querySelectorAll('flow-prompt-box-settings,flow-settings-view')).find(visible);
-  const groupSelector = pane?.tagName === 'FLOW-PROMPT-BOX-SETTINGS' ? 'flow-toggles' : 'mat-button-toggle-group';
+  const pane = Array.from(document.querySelectorAll(agent
+    ? 'flow-settings-view,flow-unified-settings-view,flow-generation-defaults-view' : 'flow-prompt-box-settings')).find(visible);
+  const groupSelector = pane?.matches('flow-prompt-box-settings,flow-generation-defaults-view')
+    ? 'flow-toggles' : 'mat-button-toggle-group';
   const groups = pane ? Array.from(pane.querySelectorAll(groupSelector)).map(g=>({
     label:g.getAttribute('aria-label'), options:Array.from(g.querySelectorAll('button[role=radio]')).map(b=>({
       value:label(b), selected:b.getAttribute('aria-checked')==='true', disabled:b.disabled
     }))})) : [];
   const slider = pane?.querySelector('input[type=range]');
-  return {url:location.href, time_origin:performance.timeOrigin, mode:agent?'agent':'classic', groups,
-    models:pane ? Array.from(pane.querySelectorAll('button[aria-haspopup=menu]')).map(b=>({
+  const selectedApproval = pane?.matches('flow-unified-settings-view')
+    ? pane.querySelector('button[role=radio][aria-checked=true]') : null;
+  const approval = pane?.matches('flow-unified-settings-view')
+    ? (selectedApproval && {'Selalu':'1', 'Always':'1', 'Jangan pernah':'2', 'Never':'2'}[label(selectedApproval)]) ?? null
+    : pane?.querySelector('input[type=radio]:checked')?.value ?? null;
+  return {url:location.href, time_origin:performance.timeOrigin, mode:agent?'agent':'classic', settings_open:!!pane,
+    settings_view:pane?.localName ?? null, groups,
+    models:pane ? Array.from(pane.querySelectorAll('button[aria-haspopup=menu]')).filter(visible).map(b=>({
       value:label(b), selector:b.classList.contains('image-model-picker-button')?'image':
         b.classList.contains('video-model-picker-button')?'video':'model'})) : [],
     duration:slider?{index:Number(slider.value),min:Number(slider.min),max:Number(slider.max),
       step:Number(slider.step),text:pane.querySelector('.duration-slider-value')?.textContent}:null,
-    approval:pane?.querySelector('input[type=radio]:checked')?.value ?? null,
+    approval,
     quote:pane?.querySelector('.cost-text,.credit-cost')?.textContent ?? pane?.innerText.match(/[^\n]*(?:kredit|credits)[^\n]*/i)?.[0],
     ingredients:Array.from(document.querySelectorAll('flow-ingredient-bar img')).filter(visible).map(e=>({
       id:e.getAttribute('data-media-id') ?? e.src.match(/\/image\/([a-f0-9-]+)/)?.[1] ?? null,
@@ -63,7 +81,7 @@ def flow_click(selector, text=None, timeout=10, project=None):
               const project = %s;
               if (project !== null && %s !== project) return false;
               const label = e => {
-                const primary = e.querySelector('.item-text > .label');
+                const primary = e.querySelector('.item-text > .label, .radio-option-label');
                 if (primary) return primary.textContent.trim().replace(/^🍌\s*/,'');
                 const copy = e.cloneNode(true);
                 copy.querySelectorAll('mat-icon,svg,[aria-hidden=true]').forEach(n => n.remove());
@@ -124,11 +142,13 @@ class UI:
     def mode(self, mode):
         if mode not in {'classic', 'agent'}:
             raise ValueError('mode must be classic or agent')
-        if self.snapshot()['mode'] == mode:
+        state = self.snapshot()
+        if state['mode'] == mode:
             return
+        if state.get('settings_view') in {AGENT_SETTINGS_HOME, AGENT_DEFAULTS}:
+            self.close_settings('agent')
         if self.read("Array.from(document.querySelectorAll('flow-agent-panel')).some(e=>e.getClientRects().length)"):
-            self.click('flow-agent-panel button.header-action[aria-label="Tutup"],'
-                       'flow-agent-panel button.header-action[aria-label="Close"]')
+            self.click('flow-agent-panel button:is([aria-label="Tutup"],[aria-label="Close"])')
             self.wait("!Array.from(document.querySelectorAll('flow-agent-panel')).some(e=>e.getClientRects().length)")
         self.click('button.agent-mode-chip, flow-agent-mode-switch button')
         self.wait(f'({SNAPSHOT}).mode === {json.dumps(mode)}')
@@ -139,12 +159,31 @@ class UI:
                 self.click('button.settings-trigger-button')
             self.wait("!!document.querySelector('flow-prompt-box-settings')?.getClientRects().length")
         else:
-            if not self.read("!!document.querySelector('flow-settings-view')?.getClientRects().length"):
-                self.click('button.agent-action-button[aria-label="Setelan"],'
-                           'button.agent-action-button[aria-label="Settings"]')
-            self.wait("!!document.querySelector('flow-settings-view')?.getClientRects().length")
+            pane = visible('flow-settings-view,' + AGENT_SETTINGS_HOME)
+            if self.read(pane):
+                return
+            if self.read(visible(AGENT_DEFAULTS)):
+                self.click(AGENT_SETTINGS_BACK)
+                self.wait(visible(AGENT_SETTINGS_HOME))
+                return
+            header = 'flow-agent-panel button' + AGENT_SETTINGS_LABELS
+            header_visible = visible(header)
+            if not self.read(header_visible):
+                self.click('button.agent-action-button' + AGENT_SETTINGS_LABELS)
+                self.wait(f'{pane} || {header_visible}')
+            if not self.read(pane):
+                self.click(header)
+            self.wait(pane)
 
     def close_settings(self, mode):
+        if mode == 'agent':
+            if self.read(visible(AGENT_DEFAULTS)):
+                self.click(AGENT_SETTINGS_BACK)
+                self.wait(visible(AGENT_SETTINGS_HOME))
+            if self.read(visible(AGENT_SETTINGS_HOME)):
+                self.click(AGENT_SETTINGS_BACK)
+                self.wait(f'!({visible(AGENT_SETTINGS_HOME)})')
+                return
         pane = 'flow-prompt-box-settings' if mode == 'classic' else 'flow-settings-view'
         if not self.read(f"!!document.querySelector('{pane}')?.getClientRects().length"):
             return
@@ -161,8 +200,8 @@ class UI:
         if option['selected']:
             return
         # Group order comes from the current settings pane, including conditional controls.
-        selector = self.read("(() => {const p=Array.from(document.querySelectorAll('flow-prompt-box-settings,flow-settings-view')).find(e=>e.getClientRects().length);"
-            "const s=p.tagName==='FLOW-PROMPT-BOX-SETTINGS'?'flow-toggles':'mat-button-toggle-group';"
+        selector = self.read("(() => {const p=Array.from(document.querySelectorAll('flow-prompt-box-settings,flow-settings-view,flow-generation-defaults-view')).find(e=>e.getClientRects().length);"
+            "const s=p.matches('flow-prompt-box-settings,flow-generation-defaults-view')?'flow-toggles':'mat-button-toggle-group';"
             f"const g=p.querySelectorAll(s)[{group}];"
             "g.setAttribute('data-hermes-flow-group','selected');return '[data-hermes-flow-group=selected] button[role=radio]';})()")
         try:
@@ -171,26 +210,53 @@ class UI:
         finally:
             self.read("(() => {document.querySelectorAll('[data-hermes-flow-group]').forEach(e=>e.removeAttribute('data-hermes-flow-group'));return true;})()")
 
-    def model(self, mode, kind, value=None):
+    def model(self, mode, kind, value=None, *, read_only=False):
         category = 'model' if mode == 'classic' else kind
-        self.wait(f"({SNAPSHOT}).models.some(item=>item.selector==={json.dumps(category)}&&item.value)")
-        selected = next(item['value'] for item in self.snapshot()['models']
-                        if item['selector'] == category)
+        models = f"({SNAPSHOT}).models.filter(item=>item.selector==={json.dumps(category)})"
+        self.wait(f'{models}.some(item=>item.value)')
+        if value is None and not read_only:
+            selected = next(item['value'] for item in self.snapshot()['models'] if item['selector'] == category)
         selector = ('flow-prompt-box-settings button[aria-haspopup=menu]' if mode == 'classic'
                     else f'flow-settings-view button.{kind}-model-picker-button')
         self.click(selector)
         self.wait("Array.from(document.querySelectorAll('[role=menuitem]')).some(e=>e.getClientRects().length)")
-        options = self.read("Array.from(document.querySelectorAll('[role=menuitem]')).map(e=>({"
+        options = self.read("Array.from(document.querySelectorAll('[role=menuitem]'))"
+            ".filter(e=>e.getClientRects().length && getComputedStyle(e).visibility!=='hidden').map(e=>({"
             "value:(e.querySelector('.item-text > .label')?.textContent ?? e.innerText).trim().replace(/^🍌\\s*/,''),"
             "disabled:e.getAttribute('aria-disabled')==='true'}))")
         if value is None:
-            self.click('[role=menuitem]', selected)
+            if read_only:
+                self.execute("press_key('Escape')")
+            else:
+                self.click('[role=menuitem]', selected)
         elif any(item['value'] == value and not item['disabled'] for item in options):
             self.click('[role=menuitem]', value)
+            self.wait(f'{models}.some(item=>item.value==={json.dumps(value)})')
         else:
             self.execute("press_key('Escape')")
             raise ValueError(f'Unavailable Flow model {value!r}. Available options: {options}')
         return options
+
+    def agent_defaults(self, kind, value):
+        if kind not in {'image', 'video'}:
+            raise ValueError('kind must be image or video')
+        self.click(f'{AGENT_SETTINGS_HOME} button.{kind}-defaults-row')
+        options = (f'Array.from(document.querySelectorAll({json.dumps(AGENT_MODELS)}))'
+                   ".filter(e=>e.getClientRects().length).map(e=>({"
+                   "value:e.querySelector('.radio-option-label')?.textContent.trim().replace(/^🍌\\s*/,''),"
+                   "selected:e.querySelector('input[type=radio]').checked,"
+                   "disabled:e.querySelector('input[type=radio]').disabled}))")
+        self.wait(f'{options}.some(o=>o.selected&&o.value)')
+        models = self.read(options)
+        if value is not None:
+            if not any(model['value'] == value and not model['disabled'] for model in models):
+                raise ValueError(f'Unavailable Flow model {value!r}. Available options: {models}')
+            if not any(model['value'] == value and model['selected'] for model in models):
+                self.click(AGENT_MODELS, value)
+                self.wait(f'{options}.some(o=>o.selected&&o.value==={json.dumps(value)})')
+                models = self.read(options)
+        selected = next(model['value'] for model in models if model['selected'])
+        return selected, [{'value': model['value'], 'disabled': model['disabled']} for model in models]
 
     def duration(self, seconds):
         state = self.snapshot()

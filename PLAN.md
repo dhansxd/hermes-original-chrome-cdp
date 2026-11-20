@@ -59,12 +59,13 @@ pembanding perilaku.
    lama. Tugas yang masih berjalan harus tetap dilanjutkan. Verifikasi hasil
    dan setiap unduhan atau pengiriman yang diminta sebelum jawaban akhir.
    Setelah itu ukur cleanup jendela milik tugas dan pastikan jendela lain utuh.
-4. [ ] Perjelas panduan Flow dalam paket situs. Panel yang tertutup berarti
+4. [x] Perjelas panduan Flow dalam paket situs. Panel yang tertutup berarti
    kontrol belum terlihat. Gunakan `configure` untuk membaca pilihan setelah
    mode dan model terpilih. Di Klasik, gunakan UI untuk spesifikasi yang
    tersedia dan isi prompt dengan deskripsi konten. Di Agent, gunakan kontrol
    yang tersedia dan sampaikan spesifikasi tanpa kontrol sebagai instruksi,
-   lalu verifikasi hasil.
+   lalu verifikasi hasil. Flow 0.4.2 membaca pilihan Klasik dan radio model
+   pada default gambar/video Agent di Chrome asli dalam satu jendela.
 5. [ ] Catat kontrol yang terbukti belum dipetakan berdasarkan tugas yang
    benar-benar memakai fallback. Catat situs, halaman atau mode, serta tindakan
    yang diperlukan. Bedakan panel tertutup dan opsi yang tidak tersedia untuk

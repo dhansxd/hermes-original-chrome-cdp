@@ -6,7 +6,7 @@ import shutil
 import time
 from pathlib import Path
 
-from .ui import PROJECT_LOCATION, UI
+from .ui import AGENT_DEFAULTS, AGENT_SETTINGS_HOME, PROJECT_LOCATION, SNAPSHOT, UI
 from .downloads import collect, verify
 from .references import upload, bind, acknowledge_upload
 from . import entities, preparation
@@ -81,7 +81,7 @@ def wait_for_project(ui, project):
     ui.wait(f"{project_matches(project)} && ({ACCOUNT_READY}) && ({PROJECT_READY})", 30)
 
 
-def ensure(context, params, *, inspect_only=False):
+def ensure(context, params, *, inspect_only=False, require_project=False):
     if inspect_only:
         if (set(params) - PARAMETERS['inspect']
                 or params.get('mode', 'classic') not in ('classic', 'agent')
@@ -92,19 +92,20 @@ def ensure(context, params, *, inspect_only=False):
     current = ui.read('location.href')
     saved = local_state(context)
     selected = params.get('project')
-    opened = current
-    if inspect_only:
-        if 'project' in params:
-            selected = project_url(selected)
-        opened = observed_project(current)
-    target = selected or (opened if inspect_only else None) or saved.get('projects', {}).get(context.profile)
+    check_project = inspect_only or require_project
+    opened = observed_project(current) if check_project else current
+    if check_project and 'project' in params:
+        selected = project_url(selected)
+    target = selected or (opened if check_project else None) or saved.get('projects', {}).get(context.profile)
+    if require_project and not target:
+        raise ValueError('Open an existing Flow project before reading or changing its settings.')
     if target:
         target = project_url(target)
         if target != opened:
             ui.execute(f'goto_url({target!r})')
     elif not current.startswith(ORIGIN + '/'):
         ui.execute(f'goto_url({ORIGIN + "/"!r})')
-    if inspect_only and target:
+    if check_project and target:
         wait_for_project(ui, target)
     else:
         ui.wait(ACCOUNT_READY, 30)
@@ -163,8 +164,8 @@ def account(ui, *, credits=True, inspect_only=False):
 
 
 def identify(context, operation, params):
-    if operation == 'inspect':
-        ui = ensure(context, params, inspect_only=True)
+    if operation in {'inspect', 'configure'}:
+        ui = ensure(context, params if operation == 'inspect' else {}, inspect_only=True)
         return {'status': 'ok', 'account': account(ui, credits=False, inspect_only=True),
                 'quota': {'scope': scope(operation)}}
     # Probe the destination account before opening account-local project IDs.
@@ -189,7 +190,10 @@ def selected_settings(settings, kind):
     groups = settings['groups']
     selected = {group['label']: next((o['value'] for o in group['options'] if o['selected']), None)
                 for group in groups if group.get('label')}
-    if settings['mode'] == 'agent' and len(groups) == 4:
+    if settings.get('settings_view') == AGENT_DEFAULTS:
+        selected = {key: selected[label] for key in ('aspect', 'count')
+                    for label in GROUPS[key] if selected.get(label) is not None}
+    elif settings['mode'] == 'agent' and len(groups) == 4:
         offset = 0 if kind == 'image' else 2
         selected = {'aspect': next(o['value'] for o in groups[offset]['options'] if o['selected']),
                     'count': next(o['value'] for o in groups[offset + 1]['options'] if o['selected'])}
@@ -199,34 +203,51 @@ def selected_settings(settings, kind):
             'quote': settings.get('quote'), 'count': int(count.removeprefix('x'))}
 
 
-def configure(ui, params, *, kind=None):
+def configure(ui, params, *, kind=None, catalog_only=False):
     mode = params.get('mode', ui.snapshot()['mode'])
+    media_kind = kind or params.get('kind', 'video')
     ui.mode(mode)
     ui.settings(mode)
     try:
+        settings = ui.snapshot()
+        unified = settings.get('settings_view') == AGENT_SETTINGS_HOME
         if mode == 'classic' and kind:
-            options = ui.snapshot()['groups'][0]['options']
             labels = {'image': {'Gambar', 'Image'}, 'video': {'Video'}}[kind]
+            ui.wait(f"({SNAPSHOT}).groups[0]?.options.some(o=>{json.dumps(sorted(labels))}.includes(o.value))")
+            options = ui.snapshot()['groups'][0]['options']
             desired = next((o['value'] for o in options if o['value'] in labels), None)
             if desired is None:
                 raise ValueError('Flow media kind control is unavailable')
             ui.choose(0, desired)
-        if mode == 'agent':
-            # Native radio 2 means the agent creates automatically. The user authorized this default.
-            if ui.snapshot()['approval'] != '2':
+        if unified:
+            ui.wait(f"({SNAPSHOT}).approval !== null")
+            approval = ui.snapshot()['approval']
+            if not catalog_only and approval != '2':
+                options = ui.snapshot()['groups']
+                never = next((option['value'] for group in options for option in group['options']
+                              if option['value'] in {'Jangan pernah', 'Never'} and not option['disabled']), None)
+                if never is None:
+                    raise ValueError('Flow Agent confirmation control is unavailable')
+                ui.click(f'{AGENT_SETTINGS_HOME} button[role=radio]', never)
+                ui.wait(f"({SNAPSHOT}).approval === '2'")
+                approval = '2'
+            selected_model, model_options = ui.agent_defaults(media_kind, params.get('model'))
+        else:
+            if mode == 'agent' and not catalog_only and settings['approval'] != '2':
+                # Native radio 2 means the agent creates automatically. The user authorized this default.
                 ui.click('flow-settings-view mat-radio-button:has(input[value="2"]) label')
                 ui.wait("document.querySelector('flow-settings-view input[value=\"2\"]')?.checked")
-        model_options = ui.model(mode, kind or params.get('kind', 'video'), params.get('model'))
+            model_options = ui.model(mode, media_kind, params.get('model'), read_only=catalog_only)
         for key in ('input_type', 'aspect', 'resolution', 'count', 'duration'):
             if key not in params:
                 continue
             state = ui.snapshot()
-            if mode == 'agent':
-                if key not in {'aspect', 'count'}:
-                    raise ValueError(f'Agent settings do not expose a hard {key} control')
+            if mode == 'agent' and key not in {'aspect', 'count'}:
+                raise ValueError(f'Agent settings do not expose a hard {key} control')
+            if mode == 'agent' and not unified:
                 if len(state['groups']) != 4:
                     raise RuntimeError('Agent settings group layout changed')
-                index = (0 if (kind or params.get('kind', 'video')) == 'image' else 2) + (key == 'count')
+                index = (0 if media_kind == 'image' else 2) + (key == 'count')
             else:
                 index = next((i for i, group in enumerate(state['groups']) if group['label'] in GROUPS[key]), None)
                 if key == 'duration' and state['duration']:
@@ -245,6 +266,8 @@ def configure(ui, params, *, kind=None):
                 value = next((o['value'] for o in state['groups'][index]['options'] if o['value'] in aliases.get(value, {value})), value)
             ui.choose(index, value)
         result = ui.snapshot()
+        if unified:
+            result.update(approval=approval, models=[{'value': selected_model, 'selector': media_kind}])
         result['model_options'] = model_options
         return result
     finally:
@@ -270,6 +293,10 @@ def inspect(context, params):
     if 'kind' in params:
         state['models'] = [model for model in state['models']
                            if model['selector'] in ('model', params['kind'])]
+    if state.get('settings_open') is False:
+        state['settings_hint'] = ('Settings are closed, so model options have not been checked. '
+                                  'To read the current model_options, run configure in the same session '
+                                  'with just the project. Pass mode or kind only to check a different composer.')
     return state
 
 
@@ -631,11 +658,13 @@ def run(context, operation, params):
         if operation in GENERATIONS:
             preparing_generation = True
             return generate(context, UI(context), operation, params)
+        if operation == 'configure':
+            ui = ensure(context, params, require_project=True)
+            catalog_only = set(params) <= {'project', 'mode', 'kind'}
+            return not_submitted(configure(ui, params, kind=params.get('kind'), catalog_only=catalog_only))
         ui = ensure(context, params)
         if operation == 'create_project':
             return not_submitted(create_project(context, ui, params.get('title')))
-        if operation == 'configure':
-            return not_submitted(configure(ui, params, kind=params.get('kind')))
         if operation == 'upload':
             return not_submitted(upload(ui, context.directory, params['path']))
         if operation == 'bind_reference':

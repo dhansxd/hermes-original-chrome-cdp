@@ -2,12 +2,12 @@
   "api_version": 1,
   "id": "flow",
   "name": "Google Flow",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "profile_policy": "rotate_on_limit",
   "handoff_mode": "manual",
   "operations": {
     "inspect": {
-      "description": "Open or inspect an existing Flow project in the selected Chrome profile. Return the project ID, current mode and visible controls. Settings remain in their current state.",
+      "description": "Confirm the project, active mode and visible controls. Use configure in the same session to read the complete model options.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -44,7 +44,7 @@
       }
     },
     "configure": {
-      "description": "Select Flow settings and return native selected-control readback. Inspect exposes current model/option names.",
+      "description": "Read the current selected model and model_options by opening the native settings menu. For a read of current settings, pass only project. Specify mode or kind to inspect another composer and setting values to apply changes.",
       "parameters": {
         "type": "object",
         "properties": {

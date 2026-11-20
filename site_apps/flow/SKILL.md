@@ -11,9 +11,12 @@ have separate sessions. Read `browser_app` action `describe` for current operati
 3. Run `inspect` to confirm the project ID, active mode, and visible controls.
    If the requested project is already open, inspection reuses the page.
    `mode` indicates an expected mode and `kind` filters visible model controls.
-   Use `configure` to open the settings, list model options, or apply changes.
-   Classic video supports `duration`, `resolution`, and `input_type` where
-   the current UI provides them.
+   A closed panel (`settings_open: false`) leaves the model and option lists
+   empty. Run `configure` with only the project and the same session alias
+   to read `model_options`, the selected models, and the available controls.
+   Pass `mode` or `kind` when the task calls for a different composer. Report
+   an option as unavailable only after checking the opened settings for
+   that mode, media kind and selected model.
 4. Run `generate_image` or `generate_video` with a prompt and the settings.
    Flow checks the selected project after navigation and again at Generate.
    Keep the returned `job` ID. A running/uncertain response belongs to that
@@ -95,14 +98,24 @@ the recorded account, project, or previous outputs cannot be verified, the
 stored job can be inspected before trying again. Files already collected stay
 with the job, and an unresolved submission still takes the observation path.
 
+## Classic mode
+
+Select image or video and the model in Flow first. Use native settings for
+the aspect ratio, output count, duration, resolution and input type that the
+selected model exposes. Pass these values as settings to `generate_image`
+or `generate_video`. Use `prompt` for the scene, subject, camera and audio
+description.
+
 ## Agent mode
 
 `mode: "agent"` uses native Agent settings and automatic approval as authorized
 by the user. Image/video model, aspect and count are Agent defaults. The extension
 also includes these choices in the Agent instruction. Agent may choose different
 generation parameters, so compare the decoded result with the requested output.
-The inspected Agent settings have no hard duration or resolution controls.
-Include desired seconds/resolution in the prompt and report them as requests.
+`configure` opens the relevant image or video defaults before reading the model
+choices. Use the native controls after opening Agent settings. If duration, resolution
+or another requested setting has no control there, include it as an instruction
+in the Agent prompt and verify the result against the request.
 
 ## References
 
