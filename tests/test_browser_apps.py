@@ -59,6 +59,39 @@ class BrowserAppTests(unittest.TestCase):
         result = json.loads(self.host.handle(args, task_id=task, session_id=chat, turn_id=turn))
         return result
 
+    def test_records_only_ui_details_for_the_owned_extension_session(self):
+        self.package()
+        self.package('other')
+        opened = self.invoke()
+        args = {'action': 'record_missing_control', 'app': 'fixture', 'session': opened['session'],
+                'params': {'page_or_mode': 'Project settings', 'control': 'Click Show details', 'fallback': 'dom'}}
+        path = self.root / 'data/browser-apps/fixture/missing-controls.jsonl'
+
+        wrong_owner = json.loads(self.host.handle(args, task_id='B', session_id='chat-B'))
+        wrong_app = json.loads(self.host.handle({**args, 'app': 'other'}, task_id='A', session_id='chat-A'))
+        invalid = json.loads(self.host.handle({**args, 'params': {**args['params'], 'fallback': 'guess'}},
+                                              task_id='A', session_id='chat-A'))
+        self.assertFalse(wrong_owner['success'])
+        self.assertFalse(wrong_app['success'])
+        self.assertFalse(invalid['success'])
+        self.assertFalse(path.exists())
+
+        expected = [{'app': 'fixture', **args['params']},
+                    {'app': 'fixture', **args['params'], 'control': 'Click Advanced', 'fallback': 'screenshot'}]
+        for finding in expected:
+            params = {key: value for key, value in finding.items() if key != 'app'}
+            result = json.loads(self.host.handle({**args, 'params': params}, task_id='A', session_id='chat-A'))
+            self.assertTrue(result['success'], result)
+            self.assertEqual(result['finding'], finding)
+            self.assertEqual(Path(result['path']), path)
+
+        self.provider.ended(session_id='chat-A', task_id='A', turn_id='turn')
+        self.dispatch.assert_not_called()
+        self.assertFalse(self.provider.owners)
+        self.assertEqual([json.loads(line) for line in path.read_text().splitlines()], expected)
+        after_cleanup = json.loads(self.host.handle(args, task_id='A', session_id='chat-A'))
+        self.assertFalse(after_cleanup['success'])
+
     def test_final_reply_continues_only_the_owned_running_work(self):
         self.package(operations={'click': {}, 'inspect': {}, 'read_result': {}})
         pacing = patch('browser_apps.OBSERVATION_INTERVAL', 0)

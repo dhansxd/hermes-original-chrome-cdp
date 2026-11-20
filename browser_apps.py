@@ -226,6 +226,34 @@ class AppHost:
     def jobs(self, identifier):
         return JobStore(self.data_dir() / 'browser-apps' / identifier / 'jobs', write_json)
 
+    def record_missing_control(self, args, task_id, session_id):
+        identifier = app_identifier(args.get('app'))
+        session = args.get('session')
+        if not isinstance(session, str) or not session:
+            raise ValueError('Pass the exact app session used for the fallback.')
+        params = args.get('params', {})
+        if not isinstance(params, dict) or set(params) != {'page_or_mode', 'control', 'fallback'}:
+            raise ValueError('Provide page_or_mode, control, and fallback.')
+        finding = {'app': identifier}
+        for field in ('page_or_mode', 'control'):
+            value = params[field]
+            if not isinstance(value, str) or not 0 < len(value.strip()) <= 200:
+                raise ValueError(f'{field} must be a short description (1–200 characters).')
+            finding[field] = value.strip()
+        if params['fallback'] not in ('dom', 'screenshot'):
+            raise ValueError('fallback must be dom or screenshot.')
+        finding['fallback'] = params['fallback']
+        with self.provider.lock:
+            # Validate the existing owner without opening a browser or calling the package.
+            AppContext(self, identifier, session, task_id, session_id)
+            directory = self.data_dir() / 'browser-apps' / identifier
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            path = directory / 'missing-controls.jsonl'
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(descriptor, 'a', encoding='utf-8') as stream:
+                stream.write(json.dumps(finding, ensure_ascii=False) + '\n')
+        return {'success': True, 'status': 'ok', 'finding': finding, 'path': str(path)}
+
     def seed_packages(self, source):
         """Install missing bundled packages, preserving user source and lifecycle choices."""
         import fcntl
@@ -392,6 +420,8 @@ class AppHost:
                 result = {'success': True, 'status': 'ok', 'directory': str(self.root), 'apps': entries}
             elif action in {'enable', 'disable', 'remove'}:
                 result = self.manage(action, app_identifier(args.get('app')))
+            elif action == 'record_missing_control':
+                result = self.record_missing_control(args, task_id, session_id)
             elif action in {'describe', 'run'}:
                 identifier = app_identifier(args.get('app'))
                 directory, metadata, source = read_package(self.root, identifier)
@@ -487,7 +517,7 @@ class AppHost:
                         if choice.running is not None:
                             choice.pending = True
             else:
-                raise ValueError('Choose list, describe, run, enable, disable, or remove.')
+                raise ValueError('Choose list, describe, run, enable, disable, remove, or record_missing_control.')
             return json.dumps(result, ensure_ascii=False)
         except Exception as error:
             return json.dumps({'success': False, 'status': 'failed',
@@ -523,7 +553,10 @@ SCHEMA = {
                    'list refreshes installed packages without running their code. describe reads '
                    'one package\'s operations, parameter schemas and guide. run executes that '
                    'package with its own agent/session namespace. Reuse the same session alias '
-                   'for related calls. Packages are read from the configured apps_directory and '
+                   'for related calls. After using DOM or screenshot fallback for a confirmed unmapped '
+                   'control, call record_missing_control before the final answer with the same app '
+                   'and exact session, and params page_or_mode, control, and fallback (dom or screenshot). '
+                   'Packages are read from the configured apps_directory and '
                    'can be edited or added independently of this plugin. enable and disable persist '
                    'package availability. disable closes only this package\'s owned browser sessions. '
                    'remove disables and deletes its source after cleanup finishes. Artifacts and '
@@ -534,10 +567,13 @@ SCHEMA = {
                    'request to its source profile/account. Pass job with the owning operation/session '
                    'to reconcile or continue it. describe lists this conversation\'s recoverable jobs.',
     'parameters': {'type': 'object', 'properties': {
-        'action': {'type': 'string', 'enum': ['list', 'describe', 'run', 'enable', 'disable', 'remove'], 'default': 'list'},
+        'action': {'type': 'string', 'enum': ['list', 'describe', 'run', 'enable', 'disable', 'remove',
+                                             'record_missing_control'], 'default': 'list'},
         'app': {'type': 'string', 'description': 'Directory ID returned by list.'},
         'operation': {'type': 'string', 'description': 'Operation declared by the selected package.'},
-        'params': {'type': 'object', 'description': 'Operation arguments, following describe.'},
+        'params': {'type': 'object', 'description': 'Operation arguments, following describe. For '
+                   'record_missing_control, provide page_or_mode, control (button label or action), '
+                   'and fallback (dom or screenshot).'},
         'job': {'type': 'string', 'description': 'Resume a rotate_on_limit job returned by run or describe. Reconciles its source request before further submission.'},
         'target_profile': {'type': 'string', 'description': 'Explicit Chrome directory ID for a manual handoff. Use only with a job reporting awaiting_profile.'},
         'session': {'type': 'string', 'description': 'Your session alias. For an unmapped UI action, '

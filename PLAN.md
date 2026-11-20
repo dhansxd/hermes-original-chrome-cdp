@@ -66,10 +66,12 @@ pembanding perilaku.
    yang tersedia dan sampaikan spesifikasi tanpa kontrol sebagai instruksi,
    lalu verifikasi hasil. Flow 0.4.2 membaca pilihan Klasik dan radio model
    pada default gambar/video Agent di Chrome asli dalam satu jendela.
-5. [ ] Catat kontrol yang terbukti belum dipetakan berdasarkan tugas yang
-   benar-benar memakai fallback. Catat situs, halaman atau mode, serta tindakan
-   yang diperlukan. Bedakan panel tertutup dan opsi yang tidak tersedia untuk
-   model terpilih. Jadikan catatan ini bahan patch saat diminta.
+5. [x] Hermes mencatat kontrol yang terbukti belum dipetakan ketika memakai
+   fallback dalam tugas. Catat situs, halaman atau mode, serta tindakan yang
+   diperlukan. Periksa panel dan model sebelum menetapkan temuan. Jadikan
+   catatan ini bahan patch saat diminta. Uji Hermes dari sesi baru memverifikasi
+   satu temuan tersimpan lewat `record_missing_control` setelah fallback DOM
+   dan sebelum jawaban akhir, dalam satu jendela.
 
 ### Fitur setelah perbaikan lulus
 

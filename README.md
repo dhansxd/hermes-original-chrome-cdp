@@ -214,8 +214,8 @@ Use the package's named session for related actions. If a control needs inspecti
 pass the session returned by `browser_app` to native `browser_exec` to use the
 same window. See the [Gemini package guide](site_apps/gemini/SKILL.md).
 
-The `browser_app` tool accepts `list`, `describe`, `run`, `enable`, `disable`, and
-`remove`. Package discovery and
+The `browser_app` tool accepts `list`, `describe`, `run`, `enable`, `disable`,
+`remove`, and `record_missing_control`. Package discovery and
 help read files without executing package code or opening Chrome. An operation
 uses an app-specific browser session bound to the calling agent and conversation.
 Different apps and ordinary browsing have separate windows, including when their
@@ -244,6 +244,11 @@ the current source on each call and preserves the loaded module during an active
 operation. Relative imports such as `from .helpers import inspect_page` use the
 package's own namespace and current source. Files beside `app.py` can be located
 using `Path(__file__).parent`.
+
+After using DOM or screenshot fallback for a confirmed unmapped control, Hermes
+records the page or mode and the control in `missing-controls.jsonl` under that
+package's `data_directory`. This uses the same app and exact session with
+`browser_app` action `record_missing_control`.
 
 Packages execute trusted local Python code with the permissions of the Hermes
 process. The bound browser context is valid during `run`. Its browser helpers use
