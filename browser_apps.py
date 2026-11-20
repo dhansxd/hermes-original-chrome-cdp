@@ -8,11 +8,13 @@ import os
 import re
 import shutil
 import sys
-import types
 import tempfile
+import types
 import uuid
 from contextlib import contextmanager
+from copy import copy
 from pathlib import Path
+from time import monotonic, sleep
 
 from hermes_constants import get_hermes_home
 
@@ -24,6 +26,7 @@ else:
 
 APP_TOOL = 'browser_app'
 STATUSES = {'ok', 'running', 'quota_exhausted', 'needs_inspection', 'failed'}
+OBSERVATION_INTERVAL = 15
 
 
 def app_identifier(value):
@@ -320,6 +323,51 @@ class AppHost:
             raise ValueError('apps_directory must name the user extension directory.')
         return Path(configured).expanduser().resolve()
 
+    def running_work(self, task_id, session_id, turn_id=None):
+        if not (task_id and session_id):
+            return {}
+        with self.provider.lock:
+            return {choice.browser_name: (choice.app_id, choice.running)
+                    for choice in self.provider.profile_choices.values()
+                    if not choice.finished and choice.pending and choice.running is not None
+                    and choice.owner[:2] == (task_id, session_id)
+                    and (turn_id is None or choice.turn_id == turn_id)}
+
+    def continue_running(self, request, next_call, task_id='', session_id='', turn_id='', api_mode='', **kwargs):
+        response = next_call(request)
+        if not turn_id or api_mode != 'chat_completions' or not getattr(response, 'choices', None):
+            return response
+        choice = response.choices[0]
+        message = getattr(choice, 'message', None)
+        if (str(choice.finish_reason or 'stop').lower() != 'stop' or not getattr(message, 'content', None)
+                or getattr(message, 'tool_calls', None) or getattr(message, 'refusal', None)):
+            return response
+        work = self.running_work(task_id, session_id, turn_id)
+        if not work:
+            return response
+        session, (app, _) = next(iter(work.items()))
+        offered = {(tool.get('function') or {}).get('name') for tool in request.get('tools') or []}
+        arguments = {'action': 'describe', 'app': app, 'session': session}
+        tool_name = APP_TOOL
+        if APP_TOOL not in offered:
+            if 'tool_call' not in offered:
+                return response
+            tool_name = 'tool_call'
+            arguments = {'calls': [{'name': APP_TOOL, 'arguments': arguments}]}
+        # Keep the same turn open through the normal tool dispatcher. The synthetic
+        # call only reports progress. It never replays the browser action.
+        from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
+        call = ChatCompletionMessageFunctionToolCall(
+            id='call_' + uuid.uuid4().hex[:24], type='function',
+            function={'name': tool_name, 'arguments': json.dumps(arguments)})
+        response, choice, message = copy(response), copy(choice), copy(message)
+        message.content = None
+        message.tool_calls = [call]
+        choice.message = message
+        choice.finish_reason = 'tool_calls'
+        response.choices = [choice, *response.choices[1:]]
+        return response
+
     def handle(self, args, task_id='', session_id='', **kwargs):
         context = None
         try:
@@ -358,6 +406,16 @@ class AppHost:
                             result['jobs'] = self.jobs(identifier).summaries(session_id)
                         except (OSError, ValueError) as error:
                             result['jobs_error'] = str(error)
+                    session = args.get('session')
+                    if isinstance(session, str):
+                        active = self.running_work(task_id, session_id, kwargs.get('turn_id')).get(session)
+                        if active and active[0] == identifier:
+                            operation, job = active[1]
+                            result['running_work'] = {'status': 'running', 'session': session,
+                                'operation': operation, 'job': job,
+                                'message': 'Continue checking this existing work in this turn. Use the same '
+                                           'session and job, without submitting again. Verify the outcome '
+                                           'and finish any requested delivery before the final response.'}
                 else:
                     operation = args.get('operation')
                     if not isinstance(operation, str) or operation not in metadata['operations']:
@@ -372,6 +430,17 @@ class AppHost:
                         context._binding = context._choice()
                         context._binding.active += 1
                         self.active.add(context)
+                    # Pace observations of work in progress and allow Stop to invalidate the context.
+                    while True:
+                        with self.provider.lock:
+                            choice = context._choice()
+                            observe = (choice.running is not None
+                                       and (operation == 'read_result'
+                                            or (choice.running[1] and args.get('job') == choice.running[1])))
+                            remaining = choice.last_observation + OBSERVATION_INTERVAL - monotonic() if observe else 0
+                        if remaining <= 0:
+                            break
+                        sleep(min(remaining, 0.25))
                     with loaded_package(directory, source) as module:
                         if uses_rolling(metadata, args):
                             mode = metadata.get('handoff_mode')
@@ -397,6 +466,26 @@ class AppHost:
                             with self.provider.lock:
                                 context._choice().pending = value['status'] in {'running', 'needs_inspection'}
                                 write_json(context.directory / 'result.json', result)
+                    with self.provider.lock:
+                        choice = context._choice()
+                        if result['status'] == 'running':
+                            now = monotonic()
+                            if choice.running is None:
+                                choice.running_since = now
+                            choice.running = (result.get('operation', operation), result.get('job'))
+                            choice.last_observation = now
+                            result['running_seconds'] = int(now - choice.running_since)
+                        elif choice.running is not None:
+                            active_operation, active_job = choice.running
+                            if active_job:
+                                observed = active_job == result.get('job')
+                            else:
+                                observed = (operation == 'read_result'
+                                            or (active_operation != 'click' and operation == active_operation))
+                            if observed:
+                                choice.running = None
+                        if choice.running is not None:
+                            choice.pending = True
             else:
                 raise ValueError('Choose list, describe, run, enable, disable, or remove.')
             return json.dumps(result, ensure_ascii=False)

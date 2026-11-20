@@ -6,6 +6,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from hermes_constants import reset_hermes_home_override, set_hermes_home_override
@@ -55,8 +56,61 @@ class BrowserAppTests(unittest.TestCase):
                 session_key='route-' + task, turn_id=turn, config=self.config)
         self.assertEqual(prepared['action'], 'modify', prepared)
         args.update(prepared['args'])
-        result = json.loads(self.host.handle(args, task_id=task, session_id=chat))
+        result = json.loads(self.host.handle(args, task_id=task, session_id=chat, turn_id=turn))
         return result
+
+    def test_final_reply_continues_only_the_owned_running_work(self):
+        self.package(operations={'click': {}, 'inspect': {}, 'read_result': {}})
+        pacing = patch('browser_apps.OBSERVATION_INTERVAL', 0)
+        pacing.start()
+        self.addCleanup(pacing.stop)
+        started = self.invoke(operation='click', params={'status': 'running'})
+        message = SimpleNamespace(content='The result is still running.', tool_calls=None)
+        response = SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop', message=message)])
+        context = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn', 'api_mode': 'chat_completions'}
+        args = {'action': 'describe', 'app': 'fixture', 'session': started['session']}
+
+        for offered, expected_args in [('browser_app', args),
+                ('tool_call', {'calls': [{'name': 'browser_app', 'arguments': args}]})]:
+            request = {'tools': [{'function': {'name': offered}}]}
+            downstream = Mock(return_value=response)
+            candidate = self.host.continue_running(request, downstream, **context)
+            downstream.assert_called_once_with(request)
+            choice = candidate.choices[0]
+            self.assertEqual(choice.finish_reason, 'tool_calls')
+            self.assertIsNone(choice.message.content)
+            call, = choice.message.tool_calls
+            self.assertEqual(call.function.name, offered)
+            self.assertEqual(json.loads(call.function.arguments), expected_args)
+            self.assertEqual(response.choices[0].message.content, 'The result is still running.')
+
+        self.dispatch.assert_not_called()
+        progress = json.loads(self.host.handle(args, task_id='A', session_id='chat-A'))
+        self.assertEqual(progress['running_work']['session'], started['session'])
+        for override in [{'task_id': 'B'}, {'session_id': 'chat-B'}, {'turn_id': 'another'}]:
+            with self.subTest(override=override):
+                self.assertIs(self.host.continue_running(request, lambda _: response,
+                                                         **{**context, **override}), response)
+        self.assertIs(self.host.continue_running({}, lambda _: response, **context), response)
+
+        inspection = self.invoke(params={'status': 'ok'})
+        self.assertEqual(inspection['session'], started['session'])
+        self.assertEqual(self.host.running_work('A', 'chat-A', 'turn')[started['session']][0], 'fixture')
+
+        completed = self.invoke(operation='read_result', params={'status': 'ok'})
+        self.assertEqual(completed['session'], started['session'])
+        self.assertIs(self.host.continue_running(request, lambda _: response, **context), response)
+        self.provider.ended(session_id='chat-A', task_id='A', turn_id='turn')
+        self.assertFalse(self.provider.owners)
+
+    def test_terminal_guardrail_halt_releases_only_the_running_owner(self):
+        self.package()
+        own = self.invoke(params={'status': 'running'})
+        peer = self.invoke(task='B', chat='chat-B', params={'status': 'running'})
+        self.provider.ended(session_id='chat-A', task_id='A', turn_id='turn',
+                            turn_exit_reason='guardrail_halt')
+        self.assertNotIn(own['session'], self.provider.owners)
+        self.assertIn(peer['session'], self.provider.owners)
 
     def test_bundled_site_packages_default_to_the_current_hermes_profile(self):
         self.settings.pop('apps_directory')

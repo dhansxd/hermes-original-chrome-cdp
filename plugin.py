@@ -45,6 +45,9 @@ class SessionProfile:
     alias: str = 'default'
     platform: str = ''
     pending: bool = False
+    running: tuple[str, str | None] | None = None
+    running_since: float = 0.0
+    last_observation: float = 0.0
     active: int = 0
     directory_key: str = ''
 
@@ -446,16 +449,19 @@ class ChromeProvider(BrowserProvider):
             with self.lock:
                 self.parents.pop(session_id, None)
 
-    def ended(self, session_id=None, task_id=None, turn_id=None, interrupted=False, **kwargs):
+    def ended(self, session_id=None, task_id=None, turn_id=None, interrupted=False,
+              failed=False, turn_exit_reason=None, **kwargs):
         if not session_id:
             return
+        terminal_failure = failed or turn_exit_reason == 'guardrail_halt'
         with self.lock:
-            turns = [(base, choice.turn_id) for base, choice in self.profile_choices.items()
+            turns = [(base, choice.turn_id, interrupted or (terminal_failure and choice.running is not None))
+                     for base, choice in self.profile_choices.items()
                      if choice.owner[1] == session_id and (task_id is None or choice.owner[0] == task_id)
                      and (turn_id is None or choice.turn_id == turn_id)
-                     and (interrupted or not choice.pending)]
-        for base, expected in turns:
-            self.finish(session_name=base, expected_turn=expected, completed=True, interrupted=interrupted)
+                     and (interrupted or not choice.pending or (terminal_failure and choice.running is not None))]
+        for base, expected, abandon in turns:
+            self.finish(session_name=base, expected_turn=expected, completed=True, interrupted=abandon)
 
     def stopped(self, session_key='', **kwargs):
         """Match Hermes's Stop route to the browser names admitted in that context."""
@@ -525,6 +531,8 @@ def register(ctx):
                    lambda: ctx.state.data_dir, bundled_source=root / 'site_apps')
     ctx.register_tool(name=APP_TOOL, toolset='browser', handler=apps.handle,
                       check_fn=provider.is_available, schema=SCHEMA)
+    if hasattr(ctx, 'register_middleware'):
+        ctx.register_middleware('llm_execution', apps.continue_running)
     if hasattr(ctx, 'register_skill'):
         ctx.register_skill('site-controls', root / 'skills' / 'site-controls' / 'SKILL.md',
                            description='Use mapped Chrome controls for Gemini Web and Google Flow tasks, '
