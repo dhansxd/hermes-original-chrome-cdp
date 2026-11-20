@@ -15,6 +15,7 @@ have separate sessions. Read `browser_app` action `describe` for current operati
    Classic video supports `duration`, `resolution`, and `input_type` where
    the current UI provides them.
 4. Run `generate_image` or `generate_video` with a prompt and the settings.
+   Flow checks the selected project after navigation and again at Generate.
    Keep the returned `job` ID. A running/uncertain response belongs to that
    source request. Resume with that same `job`, operation and session alias.
 5. A completed response includes native request identity, original file path,

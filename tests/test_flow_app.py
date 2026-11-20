@@ -117,6 +117,54 @@ class FlowAppTests(unittest.TestCase):
             self.app.generate(Mock(), ui, 'generate_video', {'prompt': ''})
         ui.click.assert_not_called()
 
+    def test_generation_redirect_stops_before_preparing_or_saving_project(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), profile='Default')
+            ui = Mock()
+            ui.read.return_value = 'https://flow.google.com/'
+            ui.wait.side_effect = RuntimeError('Project readiness timed out after redirect')
+            project = self.app.project_url('expected')
+            with patch.object(self.app, 'UI', return_value=ui), \
+                    patch.object(self.app, 'configure') as configure, \
+                    patch.object(self.app.shutil, 'which', return_value='/tool'):
+                result = self.app.run(context, 'generate_image', {'project': 'expected', 'prompt': 'scene'})
+            self.assertEqual(result['status'], 'failed', result)
+            self.assertEqual(result['request']['state'], 'rejected')
+            self.assertIn(project, ui.wait.call_args.args[0])
+            ui.execute.assert_called_once_with(f'goto_url({project!r})')
+            configure.assert_not_called()
+            ui.fill.assert_not_called()
+            ui.click.assert_not_called()
+            self.assertEqual(self.app.local_state(context), {})
+
+    def test_generation_clears_unsubmitted_checkpoint_if_click_guard_rejects_route(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), profile='Default', job_id='job')
+            project = self.app.project_url('expected')
+            current = project + '/?hl=id'
+            ui = Mock()
+            ui.read.side_effect = [current, 'editor', 'editor', 'scene']
+            ui.snapshot.return_value = {'url': current, 'ingredients': [], 'references': [],
+                                        'frames': [], 'tiles': [], 'notices': []}
+            ui.click.return_value = False
+            checkpoints = []
+            context.checkpoint.side_effect = lambda record: checkpoints.append(record.copy())
+            settings = {'mode': 'classic', 'groups': [], 'models': [], 'duration': None, 'approval': None}
+            with patch.object(self.app, 'UI', return_value=ui), \
+                    patch.object(self.app, 'configure', return_value=settings), \
+                    patch.object(self.app, 'account', return_value={'credits': 10}), \
+                    patch.object(self.app, 'observe_generation') as observe, \
+                    patch.object(self.app.shutil, 'which', return_value='/tool'):
+                result = self.app.run(context, 'generate_video', {'project': 'expected', 'prompt': 'scene'})
+            self.assertEqual(result['status'], 'failed', result)
+            self.assertIn('changed before Generate', result['message'])
+            self.assertEqual(result['request']['state'], 'rejected')
+            ui.execute.assert_not_called()
+            ui.click.assert_called_once_with('flow-generate-icon-button button', project=project)
+            self.assertEqual([record['submit_intent'] for record in checkpoints], [True, False])
+            self.assertTrue(all(record['project'] == project for record in checkpoints))
+            observe.assert_not_called()
+
     def test_resume_observes_source_without_generation(self):
         context = Mock(job_id='job')
         record = {'params': {}, 'attempts': [{'request_id': 'native'}], 'checkpoint': {
@@ -503,7 +551,7 @@ class FlowAppTests(unittest.TestCase):
         self.assertEqual(value['status'], 'running')
         self.assertEqual(marker['reads'], 2)
         ui.fill.assert_called_once()
-        ui.click.assert_called_once_with('flow-generate-icon-button button')
+        ui.click.assert_called_once_with('flow-generate-icon-button button', project='https://flow.google.com/project/p')
 
     def test_rebinding_saved_voice_checks_id_without_removing_the_chip(self):
         references = sys.modules[self.app.bind.__module__]
@@ -649,8 +697,9 @@ class FlowAppTests(unittest.TestCase):
                 (1000, 'Generation will use 1,050 credits', 'generate_video', True)):
             with self.subTest(balance=balance, quote=quote):
                 ui = Mock()
-                ui.read.side_effect = ['editor', 'editor', 'scene']
-                ui.snapshot.return_value = {'url': 'project', 'ingredients': [], 'references': [],
+                project = self.app.project_url('p')
+                ui.read.side_effect = [project, 'editor', 'editor', 'scene']
+                ui.snapshot.return_value = {'url': project, 'ingredients': [], 'references': [],
                                             'frames': [], 'tiles': [], 'notices': []}
                 settings = {'mode': 'classic', 'groups': [], 'models': [],
                             'duration': None, 'approval': None, 'quote': quote}
@@ -672,7 +721,7 @@ class FlowAppTests(unittest.TestCase):
                     ui.click.assert_not_called()
                 else:
                     self.assertEqual(result['status'], 'running')
-                    ui.click.assert_called_once_with('flow-generate-icon-button button')
+                    ui.click.assert_called_once_with('flow-generate-icon-button button', project=project)
 
     def test_partial_quota_refusal_collects_completed_outputs_before_handoff(self):
         with tempfile.TemporaryDirectory() as root:
@@ -868,10 +917,11 @@ class FlowAppTests(unittest.TestCase):
         group = lambda value: {'options': [{'value': value, 'selected': True}]}
         agent = {'mode': 'agent', 'groups': [group('9:16'), group('x1'), group('9:16'), group('x1')],
                  'models': [{'selector': 'video', 'value': 'Native model'}], 'duration': None, 'approval': '2'}
-        ui.snapshot.return_value = {'url': 'project', 'ingredients': [], 'references': [],
+        project = self.app.project_url('p')
+        ui.snapshot.return_value = {'url': project, 'ingredients': [], 'references': [],
                                     'frames': [], 'tiles': [], 'notices': []}
         prompt = 'Create exactly 1 video output(s) now using Native model. The output aspect ratio must be 9:16. scene'
-        ui.read.side_effect = ['editor', 'editor', prompt]
+        ui.read.side_effect = [project, 'editor', 'editor', prompt]
         context = Mock(directory=Path(self.enterContext(tempfile.TemporaryDirectory())), profile='Default', job_id='job')
         params = {'mode': 'agent', 'prompt': 'scene'}
         with patch.object(self.app, 'configure', side_effect=[agent, {'quote': 'Uses 9 credits'}, agent]) as configure, \
@@ -913,8 +963,9 @@ class FlowAppTests(unittest.TestCase):
     def test_classic_uses_updated_native_quote_after_reference_binding(self):
         context = Mock(directory=Path(self.enterContext(tempfile.TemporaryDirectory())), profile='Default', job_id='job')
         ui = Mock()
-        ui.read.side_effect = ['editor', 'https://flow.google.com/project/p', 'editor', 'scene']
-        ui.snapshot.return_value = {'url': 'project', 'ingredients': [], 'references': [],
+        project = self.app.project_url('p')
+        ui.read.side_effect = [project, 'editor', project, 'editor', 'scene']
+        ui.snapshot.return_value = {'url': project, 'ingredients': [], 'references': [],
                                     'frames': [], 'tiles': [], 'notices': [], 'quote': 'Uses 9 credits'}
         settings = {'mode': 'classic', 'groups': [], 'models': [], 'duration': None,
                     'approval': None, 'quote': 'Uses 15 credits'}
@@ -932,7 +983,7 @@ class FlowAppTests(unittest.TestCase):
                 'prompt': 'scene', 'references': [{'kind': 'image', 'title': 'Portrait'}]})
         self.assertEqual(value['status'], 'running')
         self.assertEqual(context.checkpoint.call_args.args[0]['quota_quote'], 'Uses 9 credits')
-        ui.click.assert_called_once_with('flow-generate-icon-button button')
+        ui.click.assert_called_once_with('flow-generate-icon-button button', project=project)
 
 
 if __name__ == '__main__':

@@ -6,7 +6,7 @@ import shutil
 import time
 from pathlib import Path
 
-from .ui import UI
+from .ui import PROJECT_LOCATION, UI
 from .downloads import collect, verify
 from .references import upload, bind, acknowledge_upload
 from . import entities, preparation
@@ -66,6 +66,14 @@ def observed_project(url):
     return route if PROJECT_URL.fullmatch(route) else None
 
 
+def project_matches(project):
+    return f'{PROJECT_LOCATION} === {json.dumps(project)}'
+
+
+def wait_for_project(ui, project):
+    ui.wait(f"{project_matches(project)} && ({ACCOUNT_READY}) && ({PROJECT_READY})", 30)
+
+
 def ensure(context, params, *, inspect_only=False):
     if inspect_only:
         if (set(params) - PARAMETERS['inspect']
@@ -89,15 +97,33 @@ def ensure(context, params, *, inspect_only=False):
             ui.execute(f'goto_url({target!r})')
     elif not current.startswith(ORIGIN + '/'):
         ui.execute(f'goto_url({ORIGIN + "/"!r})')
-    ready = ACCOUNT_READY
     if inspect_only and target:
-        route = r"((location.origin + location.pathname).replace(/\/$/, ''))"
-        ready = f"{route} === {json.dumps(target)} && ({ready}) && ({PROJECT_READY})"
-    ui.wait(ready, 30)
+        wait_for_project(ui, target)
+    else:
+        ui.wait(ACCOUNT_READY, 30)
     if selected and not inspect_only:
         saved.setdefault('projects', {})[context.profile] = target
         save_state(context, saved)
     return ui
+
+
+def generation_project(context, ui, params):
+    opened = observed_project(ui.read('location.href'))
+    saved = local_state(context)
+    if 'project' in params:
+        project = project_url(params['project'])
+    else:
+        previous = saved.get('projects', {}).get(context.profile)
+        project = project_url(previous) if previous else opened
+    if project is None:
+        raise ValueError('Select an existing Flow project before generating.')
+    if project != opened:
+        ui.execute(f'goto_url({project!r})')
+    wait_for_project(ui, project)
+    if 'project' in params:
+        saved.setdefault('projects', {})[context.profile] = project
+        save_state(context, saved)
+    return project
 
 
 def account(ui, *, credits=True, inspect_only=False):
@@ -400,6 +426,7 @@ def generate(context, ui, operation, params):
         raise ValueError('A non-empty prompt is required')
     if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
         raise RuntimeError('Install FFmpeg and ffprobe on the Hermes process PATH before generating media')
+    project = generation_project(context, ui, params)
     path = context.directory / 'checkpoint.json'
     position = json.loads(path.read_text()) if path.exists() else {}
     if position.get('job') != context.job_id or position.get('profile') != context.profile or position.get('operation') != 'handoff':
@@ -455,9 +482,11 @@ def generate(context, ui, operation, params):
         finally:
             ui.close_settings('classic')
     state = ui.snapshot()
+    if observed_project(state['url']) != project:
+        raise RuntimeError('The requested Flow project changed before Generate.')
     if any(not ingredient['ready'] for ingredient in state['ingredients']):
         raise RuntimeError('A composer reference has not finished loading')
-    checkpoint = {'job': context.job_id, 'operation': operation, 'project': state['url'], 'kind': kind,
+    checkpoint = {'job': context.job_id, 'operation': operation, 'project': project, 'kind': kind,
                   'prompt': prompt, 'settings': settings, 'credits_before': owner['credits'],
                   'references': bindings,
                   'reference_ids': [item['id'] for item in state['ingredients'] if item.get('id')],
@@ -477,22 +506,26 @@ def generate(context, ui, operation, params):
         if owner['credits'] < required:
             return quota_rejection(context, checkpoint,
                 f"Flow account panel shows {owner['credits']} credits and its {quota_quote_source} quotes {required} credits")
-    ui.wait("Array.from(document.querySelectorAll('flow-generate-icon-button button')).some(e=>e.getClientRects().length&&!e.disabled)")
+    ready = "Array.from(document.querySelectorAll('flow-generate-icon-button button')).some(e=>e.getClientRects().length&&!e.disabled)"
+    ui.wait(f'{project_matches(project)} && {ready}')
     checkpoint['submit_intent'] = True
     context.checkpoint(checkpoint)
     try:
-        ui.click('flow-generate-icon-button button')
-        # The source checkpoint precedes the single native submit. Recovery only observes it.
-        deadline = time.monotonic() + 120
-        while True:
-            result = observe_generation(context, ui, checkpoint)
-            if checkpoint.get('request_id') or time.monotonic() >= deadline:
-                return result
-            time.sleep(1)
+        if ui.click('flow-generate-icon-button button', project=project) is not False:
+            # The source checkpoint precedes the single native submit. Recovery only observes it.
+            deadline = time.monotonic() + 120
+            while True:
+                result = observe_generation(context, ui, checkpoint)
+                if checkpoint.get('request_id') or time.monotonic() >= deadline:
+                    return result
+                time.sleep(1)
     except Exception as error:
         request = {'state': 'accepted', 'id': checkpoint['request_id']} if checkpoint.get('request_id') else {'state': 'unknown'}
         return {'status': 'needs_inspection', 'request': request,
                 'message': str(error), 'data': {'project': checkpoint['project']}}
+    checkpoint['submit_intent'] = False
+    context.checkpoint(checkpoint)
+    raise RuntimeError('The requested Flow project changed before Generate.')
 
 
 def run(context, operation, params):
@@ -503,6 +536,8 @@ def run(context, operation, params):
             raise ValueError('kind must match the generate_image or generate_video operation')
         if operation == 'inspect':
             return not_submitted(inspect(context, params))
+        if operation in GENERATIONS:
+            return generate(context, UI(context), operation, params)
         ui = ensure(context, params)
         if operation == 'create_project':
             return not_submitted(create_project(context, ui, params.get('title')))
@@ -518,8 +553,6 @@ def run(context, operation, params):
             return entities.create_voice(context, ui, params)
         if operation == 'create_character':
             return entities.create_character(context, ui, params)
-        if operation in GENERATIONS:
-            return generate(context, ui, operation, params)
         raise ValueError('Choose an operation listed by browser_app describe')
     except Exception as error:
         return {'status': 'failed', 'message': str(error) or type(error).__name__,

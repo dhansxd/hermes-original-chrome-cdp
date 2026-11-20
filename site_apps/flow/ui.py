@@ -2,6 +2,9 @@
 import json
 
 
+PROJECT_LOCATION = r"(location.origin + location.pathname).replace(/\/$/, '')"
+
+
 SNAPSHOT = r'''(() => {
   const visible = e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
   const label = e => {
@@ -51,11 +54,13 @@ SNAPSHOT = r'''(() => {
 })()'''
 
 
-NATIVE_INPUT = r"""import json,time
-def flow_click(selector, text=None, timeout=10):
+NATIVE_INPUT = f'PROJECT_LOCATION = {PROJECT_LOCATION!r}\n' + r"""import json,time
+def flow_click(selector, text=None, timeout=10, project=None):
     deadline = time.monotonic() + timeout
     while True:
         point = js(r'''(() => {
+              const project = %s;
+              if (project !== null && %s !== project) return false;
               const label = e => {
                 const primary = e.querySelector('.item-text > .label');
                 if (primary) return primary.textContent.trim().replace(/^🍌\s*/,'');
@@ -73,9 +78,13 @@ def flow_click(selector, text=None, timeout=10):
               const r = e.getBoundingClientRect();
               const x = r.x + r.width / 2, y = r.y + r.height / 2;
               return r.width && r.height && e.contains(document.elementFromPoint(x,y)) ? [x,y] : null;
-            })()''' % (json.dumps(selector), json.dumps(text), json.dumps(text), json.dumps(selector + ' ' + str(text))))
+            })()''' % (json.dumps(project), PROJECT_LOCATION, json.dumps(selector),
+                        json.dumps(text), json.dumps(text), json.dumps(selector + ' ' + str(text))))
+        if point is False:
+            return False
         if point is not None:
-            return click_at_xy(*point)
+            click_at_xy(*point)
+            return True
         if time.monotonic() >= deadline:
             raise RuntimeError('Flow control is unavailable: ' + selector + ' ' + str(text))
         time.sleep(.1)
@@ -98,8 +107,12 @@ class UI:
     def read(self, expression):
         return self.execute(f"print('FLOW_VALUE=' + str(js({('JSON.stringify(' + expression + ')')!r})))")
 
-    def click(self, selector, text=None):
-        self.execute(f'flow_click({selector!r}, {text!r})')
+    def click(self, selector, text=None, *, project=None):
+        if project is None:
+            self.execute(f'flow_click({selector!r}, {text!r})')
+            return
+        return self.execute(
+            f"print('FLOW_VALUE=' + json.dumps(flow_click({selector!r}, {text!r}, project={project!r})))")
 
     def snapshot(self):
         return self.read(SNAPSHOT)

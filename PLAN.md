@@ -106,7 +106,7 @@ berikutnya. Riwayat rinci sebelum PRD tersedia pada bagian sumber bukti.
 | Profil tetap/acak/per platform/subagent | Implementasi tersedia pada 0.8.0 | Ya | Regresi aturan profil dan uji native pemilihan profil child per paket lulus. Kanal nyata mengikuti item terbuka. |
 | Rolling generik dan handoff | Implementasi tersedia pada 0.8.0 | Ya, gateway direload resmi | 31 regresi rolling lulus. Fixture CDP UI membuktikan A -> B -> C, profil sumber pending bersama peer, source receipt setelah Stop/reload, serta preservasi browser umum/extension lain/manual. |
 | Extension Gemini | Paket `site_apps/gemini` 0.2.1 dengan operasi `inspect` dan `reply` | Lingkungan uji | Gemini Web Indonesia memakai penanda panel respons lengkap. Satu uji teks melalui tool Hermes pada akun nyata memulihkan jawaban dengan ID permintaan yang sama setelah hasil awal belum terkonfirmasi. Chat asal bertambah tepat satu pesan dan satu jawaban. |
-| Extension Google Flow | Paket `site_apps/flow` 0.3.1 dengan pemisahan `inspect` dan `configure` | Lingkungan uji | Inspeksi mengonfirmasi proyek dan membaca UI yang terlihat. Penerimaan produksi dan rolling sebelumnya tercatat pada FLO-01 sampai FLO-04. |
+| Extension Google Flow | Paket `site_apps/flow` 0.3.2 | Lingkungan uji | Inspeksi membaca proyek dan UI yang terlihat. Generate memverifikasi proyek setelah navigasi dan sebelum klik. Penerimaan produksi dan rolling sebelumnya tercatat pada FLO-01 sampai FLO-04. |
 
 Status konfigurasi lokal diperiksa pada 16 November 2026. Browser provider bernilai
 `original-chrome-default`, dan plugin tercantum aktif pada versi 0.10.3.
