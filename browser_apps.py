@@ -450,7 +450,8 @@ SCHEMA = {
         'params': {'type': 'object', 'description': 'Operation arguments, following describe.'},
         'job': {'type': 'string', 'description': 'Resume a rotate_on_limit job returned by run or describe. Reconciles its source request before further submission.'},
         'target_profile': {'type': 'string', 'description': 'Explicit Chrome directory ID for a manual handoff. Use only with a job reporting awaiting_profile.'},
-        'session': {'type': 'string', 'description': 'Your session alias. Each app and agent has '
-                                                    'its own private browser session.'},
+        'session': {'type': 'string', 'description': 'Your session alias. For an unmapped UI action, '
+                    'pass the exact session returned from this call to native browser_exec. '
+                    'Each app and agent has its own private browser session.'},
     }},
 }

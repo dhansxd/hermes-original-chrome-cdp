@@ -207,8 +207,8 @@ report that they apply to future browsing.
 The Gemini Web package provides mapped actions for opening a conversation,
 entering a prompt, selecting a tool or model, sending, and reading the result.
 Use the package's named session for related actions. If a control needs inspection,
-pass the session returned by `browser_app` to native `browser_exec` in the same
-turn. See the [Gemini package guide](site_apps/gemini/SKILL.md).
+pass the session returned by `browser_app` to native `browser_exec` to use the
+same window. See the [Gemini package guide](site_apps/gemini/SKILL.md).
 
 The `browser_app` tool accepts `list`, `describe`, `run`, `enable`, `disable`, and
 `remove`. Package discovery and
@@ -231,9 +231,11 @@ character is a letter or number. `describe` supplies operation parameter schemas
 and the current guide to the agent. Package code receives the supplied parameter
 object and validates the operation's required values.
 
-Use the same alias for related calls. The returned private `session` can also be
-passed to native `browser_exec` by that caller during the same turn for targeted
-DOM inspection. The package decides when navigation is necessary. The host loads
+Use the same alias for related calls. Pass the returned private `session` to
+native `browser_exec` for DOM inspection, screenshots or other unmapped UI
+actions in the same Chrome window. If the package reports pending work, that
+session can also be used on the next turn in the same conversation. The package
+decides when navigation is necessary. The host loads
 the current source on each call and preserves the loaded module during an active
 operation. Relative imports such as `from .helpers import inspect_page` use the
 package's own namespace and current source. Files beside `app.py` can be located

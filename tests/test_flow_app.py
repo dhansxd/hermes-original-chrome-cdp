@@ -885,6 +885,34 @@ class FlowAppTests(unittest.TestCase):
         self.assertEqual(result['request']['id'], 'native')
         self.assertNotIn('handoff', result)
 
+    def test_pending_download_preserves_the_request_and_collects_without_another_click(self):
+        with tempfile.TemporaryDirectory() as root:
+            context, ui = Mock(directory=Path(root)), Mock()
+            project = self.app.project_url('source')
+            ui.snapshot.return_value = {'url': project, 'tiles': [
+                {'kind': 'image', 'id': 'native', 'ready': True}], 'notices': []}
+            ui.read.side_effect = [['Original size'], '/project/source']
+            checkpoint = {'operation': 'generate_image', 'project': 'source', 'prompt': 'fixture',
+                          'kind': 'image', 'count': 1, 'baseline': [], 'notices_before': [],
+                          'settings': {'mode': 'classic'}, 'request_id': 'accepted', 'credits_before': 10}
+            receipt = Path(root) / 'downloads' / 'native.json'
+            file = {'path': '/fixture/native.png'}
+            with patch.object(self.app, 'open_output', return_value=project + '/edit/native') as open_output, \
+                    patch.object(self.app, 'collect', side_effect=[{'pending': True}, file]) as collect, \
+                    patch.object(self.app, 'verify', return_value=file), \
+                    patch.object(self.app, 'account', return_value={'credits': 5}):
+                pending = self.app.observe_generation(context, ui, checkpoint)
+                receipt.parent.mkdir()
+                receipt.write_text(json.dumps({'guid': 'fixture-guid'}))
+                done = self.app.observe_generation(context, ui, checkpoint)
+            self.assertEqual(pending['status'], 'running')
+            self.assertEqual(pending['request'], {'state': 'accepted', 'id': 'accepted'})
+            self.assertEqual(done['request'], {'state': 'completed', 'id': 'accepted'})
+            self.assertEqual(done['data']['files'], [file])
+            open_output.assert_called_once()
+            self.assertTrue(collect.call_args_list[0].args[3])
+            self.assertEqual(collect.call_args_list[1].args[3], '')
+
     def test_quota_notice_cannot_end_an_accepted_job_with_missing_results(self):
         for show_completed in (False, True):
             with self.subTest(show_completed=show_completed):

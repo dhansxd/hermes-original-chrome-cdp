@@ -281,6 +281,23 @@ class BrowserAppTests(unittest.TestCase):
         self.assertEqual(len(set(paths)), 3)
         self.assertTrue(all(Path(path).is_dir() for path in paths))
 
+    def test_native_fallback_keeps_a_pending_app_window_across_turns(self):
+        self.package(source='def run(context, operation, params): return {"status": "running"}\n')
+        app = self.invoke()
+        self.provider.ended(session_id='chat-A', task_id='A', turn_id='turn')
+
+        def prepare(session, chat, route):
+            with patch.dict(os.environ, {}, clear=True):
+                rule = self.provider.prepare_call('browser_exec', {'session': session}, 'B',
+                    session_id=chat, session_key=route, turn_id='next-turn', config=self.config)
+            return rule['args']['session']
+
+        self.assertNotEqual(prepare('same', 'chat-A', 'route-A'), app['session'])
+        self.assertNotEqual(prepare(app['session'], 'chat-B', 'route-A'), app['session'])
+        self.assertNotEqual(prepare(app['session'], 'chat-A', 'route-B'), app['session'])
+        self.assertEqual(prepare(app['session'], 'chat-A', 'route-A'), app['session'])
+        self.assertEqual(self.invoke(task='B', turn='next-turn')['session'], app['session'])
+
     def test_two_callers_execute_a_package_in_independent_modules(self):
         self.package(source='from pathlib import Path\nvalue = None\ndef run(context, operation, params):\n    global value\n    value = context.task_id\n    context.directory.joinpath("ready").touch()\n    params["barrier"].wait(3)\n    return value\n')
         barrier = threading.Barrier(2)

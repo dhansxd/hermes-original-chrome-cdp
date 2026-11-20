@@ -124,7 +124,8 @@ def run():
     if state['reason'] != 'ready':
         return blocked(argument, state)
     click(state)
-    return {'status': 'ok', 'data': {'control': argument, 'clicked': True}}
+    return {'status': 'running' if argument == 'send' else 'ok',
+            'data': {'control': argument, 'clicked': True}}
 
 
 print(marker + json.dumps(run(), ensure_ascii=False))

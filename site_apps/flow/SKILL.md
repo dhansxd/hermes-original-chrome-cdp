@@ -44,6 +44,9 @@ Example call arguments follow.
 
 Resume by keeping `job` from the result at the tool's top level and passing
 `params: {}`. Recovery observes the original project and download receipt.
+For an action outside the mapped controls, pass the exact returned `session` to
+native `browser_exec` to continue in the existing Chrome window. Continue using
+the same job until its original media download has completed.
 If Flow redirects to another project or a previously observed output is
 temporarily missing, recovery asks for inspection on the source job.
 A quota notice alone leaves an accepted request with missing outputs pending.

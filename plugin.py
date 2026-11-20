@@ -158,6 +158,8 @@ class ChromeProvider(BrowserProvider):
         with self.lock:
             if self.unloading:
                 return {'action': 'block', 'message': 'Original Chrome provider is unloading.'}
+            from gateway.session_context import get_session_env
+            route = session_key or get_session_env('HERMES_SESSION_KEY', '') or session_id
             app_id = ''
             try:
                 app_id = app_identifier(args.get('app')) if args.get('app') else ''
@@ -165,9 +167,15 @@ class ChromeProvider(BrowserProvider):
                     app_identifier(None)
                 alias = args.get('session') or 'default'
                 existing = self.profile_choices.get(self.profile_routes.get(alias, alias)) if isinstance(alias, str) else None
-                if (existing and existing.app_id and existing.owner[:2] == (task_id, session_id)
-                        and existing.turn_id == kwargs.get('turn_id', '')):
-                    app_id = existing.app_id
+                if existing and existing.app_id:
+                    same_turn = (existing.owner[:2] == (task_id, session_id)
+                                 and existing.turn_id == kwargs.get('turn_id', ''))
+                    # A continuation carries the exact name returned by browser_app.
+                    pending_fallback = (tool_name == 'browser_exec' and existing.pending and not existing.finished
+                                        and alias == existing.browser_name and bool(session_id)
+                                        and existing.owner[1:] == (session_id, route))
+                    if same_turn or pending_fallback:
+                        app_id = existing.app_id
                 if app_id and self.get_setting('apps_disabled.' + app_id):
                     return {'action': 'block', 'message': 'This website extension is disabled.'}
                 namespace = self.instance_id
@@ -184,8 +192,6 @@ class ChromeProvider(BrowserProvider):
             if result and result.get('action') == 'modify':
                 name = result['args']['session']
                 base = self.profile_routes.get(name, name)
-                from gateway.session_context import get_session_env
-                route = session_key or get_session_env('HERMES_SESSION_KEY', '') or session_id
                 owner = (task_id, session_id, route)
                 if app_id:
                     requested_alias = (existing.alias if existing and existing.app_id == app_id

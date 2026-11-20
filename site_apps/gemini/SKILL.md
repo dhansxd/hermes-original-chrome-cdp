@@ -12,7 +12,7 @@ Call the mapped action directly when you know which control to use.
 | --- | --- |
 | `open_chat` | Open Gemini Web or an existing conversation by ID |
 | `type_prompt` | Fill the empty composer without submitting |
-| `click` | Use a named control such as `create_image`, `deep_research`, or `send` |
+| `click` | Use a named control such as `create_image`, `deep_research`, or `send`. Send reports `running` while the request is still awaiting its result. |
 | `select_model` | Click the model matching the visible label |
 | `read_result` | Read the latest visible text response or report that it is still running |
 
@@ -24,9 +24,10 @@ For example, select a mapped tool in the open chat using:
 
 The action returns only its result. If a control is unmapped, hidden behind a
 banner, or otherwise unavailable, the result is `needs_inspection`. Pass its
-returned `session` to native `browser_exec` in the same turn. Inspect the relevant
-DOM or use a screenshot if needed, then continue with the same browser window.
-If a Send action is unconfirmed, check the chat before trying it again.
+returned `session` to native `browser_exec`. Inspect the relevant DOM or use a
+screenshot if needed, then continue with the same Chrome window. After Send,
+verify that the new response has appeared and finish any requested download
+before ending the turn. If Send is unconfirmed, check the chat before retrying.
 
 ## Inspect the current page
 

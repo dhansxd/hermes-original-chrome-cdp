@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "gemini",
   "name": "Gemini Web",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "profile_policy": "rotate_on_limit",
   "handoff_mode": "manual",
   "rolling_parameters": {"reply": "continuation"},
@@ -25,7 +25,7 @@
       }
     },
     "click": {
-      "description": "Click a mapped Gemini control. Tool choices can open the Tools menu. A Send click reports that input was dispatched.",
+      "description": "Click a mapped Gemini control. Send returns running after the click and keeps this browser session for the result.",
       "parameters": {
         "type": "object",
         "properties": {
