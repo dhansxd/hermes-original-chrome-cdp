@@ -9,12 +9,26 @@ Chrome profile on macOS. It uses your own local Chrome installation and sign-ins
    `/Applications/Google Chrome.app`.
 2. Open the Chrome profile you want to use. Visit `chrome://version` and look at
    **Profile Path**. Note its final component, for example `Default` or `Profile 2`.
-3. Visit `chrome://inspect/#remote-debugging` and enable remote debugging.
+3. [Enable Chrome remote debugging once](#enable-chrome-remote-debugging-once).
 4. Open **System Settings → Privacy & Security → Accessibility**. Grant access to
    the application that runs Hermes. Follow any restart request from macOS.
 
-The permission belongs to the launching application or process. A Terminal-launched
-Hermes session and an IDE-launched session can have different permission identities.
+The Accessibility permission belongs to the launching application or process. A
+Terminal-launched Hermes session and an IDE-launched session can have different
+permission identities.
+
+### Enable Chrome remote debugging once
+
+1. Paste `chrome://inspect/#remote-debugging` into the address bar in Google
+   Chrome and press **Enter**.
+2. Under **Remote debugging**, check **Allow remote debugging for this browser
+   instance**.
+3. Leave the checkbox enabled. You can quit Chrome completely after setup.
+
+Chrome stores the checkbox across normal quits and restarts. If you reset Chrome
+or turn the checkbox off, enable it again before using this provider. On a browser
+request, the plugin opens Chrome in the selected profile when needed and handles
+Chrome's separate **Allow remote debugging?** connection dialog when it appears.
 
 ## Install the provider
 

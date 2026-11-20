@@ -76,11 +76,17 @@ APIs. Native Stop route handling and late-session rejection remain covered.
 
 Prepare Chrome once using the profile you want Hermes to use.
 
-1. Open Chrome and visit `chrome://inspect/#remote-debugging`.
-2. Enable remote debugging using the controls provided by your Chrome version.
+1. In Google Chrome, open `chrome://inspect/#remote-debugging`.
+2. Under **Remote debugging**, check **Allow remote debugging for this browser
+   instance**.
 3. In macOS **System Settings → Privacy & Security → Accessibility**, allow the
    application that launches Hermes. For example, this can be Terminal, your IDE,
    or the Hermes application, depending on how Hermes runs.
+
+Chrome remembers the checkbox after you quit and reopen it. Leave it checked so
+Hermes can start Chrome on the next browser request. The plugin handles Chrome's
+separate connection dialog during startup. See the
+[detailed Chrome setup](docs/TUTORIAL.md#enable-chrome-remote-debugging-once).
 
 Install and enable the plugin through Hermes.
 
@@ -433,7 +439,7 @@ site state after an interrupted click or submission before issuing it again.
 | --- | --- |
 | Provider absent from the picker | Confirm macOS, the Chrome application path, plugin enablement, and Hermes BrowserProvider compatibility |
 | Accessibility error | Grant access to the application that actually runs Hermes and apply the process restart macOS requests |
-| Remote-debugging error | Check `chrome://inspect/#remote-debugging` in your installed Chrome |
+| Remote-debugging error | [Check the Remote debugging checkbox](docs/TUTORIAL.md#enable-chrome-remote-debugging-once) in your installed Chrome, then retry in Hermes |
 | Selected profile missing | Create or open that profile in Chrome, then verify its directory in `chrome://version` |
 | Browser/profile override conflict | Review the competing CDP override settings listed above |
 | Private URL rejected | Review Hermes's normal private-URL permission setting for the intended destination |
