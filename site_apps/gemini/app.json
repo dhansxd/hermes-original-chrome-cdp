@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "gemini",
   "name": "Gemini Web",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "operations": {
     "inspect": {
       "description": "Inspect Gemini Web or open an existing chat in the selected Chrome profile. Return the chat ID, active account, model, visible controls, and any displayed usage-limit or reset information.",
@@ -14,6 +14,29 @@
             "description": "Optional existing Gemini conversation ID, with or without the c_ prefix."
           }
         },
+        "additionalProperties": false
+      }
+    },
+    "reply": {
+      "description": "Send one text follow-up in an existing Gemini chat on the selected Chrome profile. Reuse the same request ID, chat, and prompt to recover an unconfirmed result without resending.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "chat": {
+            "type": "string",
+            "description": "Existing Gemini conversation ID returned by inspect."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "The text follow-up to send."
+          },
+          "request_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+            "description": "Unique ID for this follow-up. Keep it for retries and reconciliation."
+          }
+        },
+        "required": ["chat", "prompt", "request_id"],
         "additionalProperties": false
       }
     }

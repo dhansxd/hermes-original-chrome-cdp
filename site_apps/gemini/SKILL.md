@@ -22,4 +22,24 @@ evidence of available credit. Report a reset time only when the UI displays it.
 
 When deciding what to do about a limit, inspect the evidence and pick the next
 profile explicitly if appropriate. Keep an unresolved provider request on its
-original account until its outcome is known. This release provides inspection.
+original account until its outcome is known.
+
+## Reply to an existing chat
+
+Use operation `reply` with the same Chrome profile and a previously verified
+chat ID. Use the active text model and an empty composer. Choose a new
+`request_id` for each intended follow-up.
+
+```json
+{"action":"run","app":"gemini","operation":"reply","session":"work","params":{"chat":"c_CHAT_ID","prompt":"Please expand on the second point.","request_id":"follow-up-1"}}
+```
+
+Save the request ID, chat ID and profile. The operation sends one message and
+returns the new answer after matching it to that message. On a timeout or
+`needs_inspection`, repeat the same `reply` with the original profile, chat,
+prompt and request ID. This checks the original conversation for the response.
+Keep using the original ID until the outcome is known. A completed ID returns
+the saved result. Inspection may be necessary if the page stops exposing the
+observed chat or response controls.
+Long answers can return a preview with `answer_truncated: true`.
+The complete text remains available in the original Gemini chat.

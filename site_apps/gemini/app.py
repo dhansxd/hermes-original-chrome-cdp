@@ -1,8 +1,10 @@
-"""Inspect Gemini Web through the caller's existing Hermes browser context."""
+"""Use Gemini Web through the caller's existing Hermes browser context."""
 
 import json
 import re
 from pathlib import Path
+
+from . import reply
 
 
 ORIGIN = 'https://gemini.google.com'
@@ -11,16 +13,14 @@ RESULT_MARKER = 'GEMINI_INSPECT='
 CHAT_PATH = r'/(?:u/\d+/)?app/([a-zA-Z0-9-]+)/?'
 
 
-def run(context, operation, params):
-    if operation != 'inspect' or set(params) - {'chat'}:
-        raise ValueError('Gemini inspect accepts only an optional chat ID.')
-    chat = params.get('chat')
-    if 'chat' in params:
-        if not isinstance(chat, str) or not re.fullmatch(r'(?:c_)?[a-zA-Z0-9-]+', chat):
-            raise ValueError('Gemini chat must be a conversation ID.')
-        chat = 'c_' + chat.removeprefix('c_')
+def chat_id(value):
+    if not isinstance(value, str) or not re.fullmatch(r'(?:c_)?[a-zA-Z0-9-]+', value):
+        raise ValueError('Gemini chat must be a conversation ID.')
+    return 'c_' + value.removeprefix('c_')
 
-    code = f'''import hashlib, json, re, time
+
+def navigation(chat):
+    return f'''import re
 origin = {ORIGIN!r}
 chat = {chat!r}
 route = js("({{origin: location.origin, path: location.pathname}})")
@@ -30,7 +30,20 @@ if chat:
         goto_url(origin + '/app/' + chat[2:])
 elif route['origin'] != origin or not re.match(r'^/(?:u/\\d+/)?app(?:/|$)', route['path']):
     goto_url(origin + '/app')
+'''
 
+
+def run(context, operation, params):
+    if operation == 'reply':
+        if set(params) != {'chat', 'prompt', 'request_id'}:
+            raise ValueError('Gemini reply requires chat, prompt, and request_id.')
+        chat = chat_id(params['chat'])
+        return reply.run(context, chat, params['prompt'], params['request_id'], navigation(chat), ORIGIN, SNAPSHOT)
+    if operation != 'inspect' or set(params) - {'chat'}:
+        raise ValueError('Gemini inspect accepts only an optional chat ID.')
+    chat = chat_id(params['chat']) if 'chat' in params else None
+
+    code = navigation(chat) + f'''import hashlib, json, time
 snapshot = {SNAPSHOT!r}
 expression = '(' + snapshot + ')(' + json.dumps(origin) + ')'
 deadline = time.monotonic() + 8

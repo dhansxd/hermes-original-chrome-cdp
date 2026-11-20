@@ -22,6 +22,8 @@ class GeminiAppTests(ChromeFixture):
         self.dispatch = Mock(side_effect=self.native)
         self.js = Mock()
         self.navigate = Mock()
+        self.click = Mock()
+        self.type_text = Mock()
         self.host = browser_apps.AppHost(self.provider, settings.get, self.dispatch, lambda code: code,
                                          lambda: self.data / 'plugin-data',
                                          bundled_source=Path(browser_apps.__file__).parent / 'site_apps')
@@ -31,7 +33,8 @@ class GeminiAppTests(ChromeFixture):
         self.assertEqual(tool, 'browser_exec')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            exec(args['code'], {'js': self.js, 'goto_url': self.navigate})
+            exec(args['code'], {'js': self.js, 'goto_url': self.navigate,
+                                'click_at_xy': self.click, 'type_text': self.type_text})
         return {'success': True, 'output': output.getvalue()}
 
     def call(self, tool, **args):
@@ -49,7 +52,7 @@ class GeminiAppTests(ChromeFixture):
         listing = json.loads(self.host.handle({'action': 'list'}))
         entry = next(app for app in listing['apps'] if app['id'] == 'gemini')
         self.assertTrue(entry['enabled'])
-        self.assertEqual(entry['operations'], ['inspect'])
+        self.assertEqual(entry['operations'], ['inspect', 'reply'])
         details = json.loads(self.host.handle({'action': 'describe', 'app': 'gemini'}))
         self.assertIn('Choose an existing Chrome profile', details['guide'])
         self.assertNotIn('profile_policy', details['app'])
@@ -153,3 +156,70 @@ class GeminiAppTests(ChromeFixture):
         result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect')
         self.assertEqual(result['status'], 'failed')
         self.assertIn('invalid inspection snapshot', result['message'])
+
+    @staticmethod
+    def reply_states():
+        route = {'origin': 'https://gemini.google.com', 'path': '/app/fixture-chat'}
+        previous = {'prompt': 'Prior prompt', 'answer': 'Prior answer', 'finished': True}
+        base = {'chat_id': 'c_fixture-chat', 'email': 'fixture@example.test', 'document': 100,
+                'model': 'Fixture model', 'editor': '', 'focused': False, 'busy': False,
+                'media': False, 'users': 1, 'answers': 1, 'latest': previous, 'previous': None,
+                'point': [10, 20]}
+        focused = {**base, 'focused': True}
+        draft = {**focused, 'editor': 'Next question', 'point': [30, 40]}
+        complete = {**base, 'users': 2, 'answers': 2, 'previous': previous,
+                    'latest': {'prompt': 'Next question', 'answer': 'New answer', 'finished': True}}
+        return route, base, focused, draft, complete
+
+    def reply(self, request='request-one', **params):
+        return self.call(browser_apps.APP_TOOL, action='run', operation='reply', params={
+            'chat': 'fixture-chat', 'prompt': 'Next question', 'request_id': request, **params})
+
+    def test_reply_sends_once_and_reuses_a_completed_request(self):
+        route, base, focused, draft, complete = self.reply_states()
+        self.assertTrue(self.call(plugin.PROFILE_TOOL, action='select', profile='Profile 2')['success'])
+        self.js.side_effect = [route, base, base, focused, draft, complete]
+        result = self.reply()
+        self.assertEqual(result['status'], 'ok', result)
+        self.assertEqual(result['profile'], 'Profile 2')
+        self.assertEqual(result['data']['answer'], 'New answer')
+        self.assertEqual([item.args for item in self.click.call_args_list], [(10, 20), (30, 40)])
+        self.type_text.assert_called_once_with('Next question')
+        self.assertEqual(self.reply()['data'], result['data'])
+        self.assertEqual(self.dispatch.call_count, 2)
+        self.navigate.assert_not_called()
+
+    def test_reply_recovers_from_lost_send_result_without_resending(self):
+        route, base, focused, draft, complete = self.reply_states()
+        self.js.side_effect = [route, base, base, focused, draft]
+        self.click.side_effect = [None, RuntimeError('lost after sending')]
+        self.assertEqual(self.reply()['status'], 'needs_inspection')
+        self.assertEqual(self.reply(request='different')['status'], 'failed')
+        self.assertEqual(self.reply(prompt='Changed prompt')['status'], 'failed')
+        self.assertTrue(self.call(plugin.PROFILE_TOOL, action='select', profile='Profile 2',
+                                  session='other-profile')['success'])
+        wrong_profile = self.call(browser_apps.APP_TOOL, action='run', operation='reply',
+                                  session='other-profile', params={
+                                      'chat': 'fixture-chat', 'prompt': 'Next question',
+                                      'request_id': 'request-one'})
+        self.assertEqual(wrong_profile['status'], 'failed', wrong_profile)
+        self.assertEqual(self.dispatch.call_count, 2)
+        unrelated = {**complete, 'latest': {**complete['latest'], 'prompt': 'Unrelated question'}}
+        self.js.side_effect = [route, unrelated]
+        with patch('time.monotonic', side_effect=[0, 46]):
+            self.assertEqual(self.reply()['status'], 'needs_inspection')
+        self.js.side_effect = [route, {**complete, 'document': 200}]
+        result = self.reply()
+        self.assertEqual(result['status'], 'ok', result)
+        self.assertEqual(result['data']['answer'], 'New answer')
+        self.assertEqual(self.click.call_count, 2)
+        self.type_text.assert_called_once()
+
+    def test_reply_keeps_an_existing_draft(self):
+        route, base, _, _, _ = self.reply_states()
+        self.js.side_effect = [route, {**base, 'editor': 'Existing user draft'}]
+        result = self.reply()
+        self.assertEqual(result['status'], 'failed', result)
+        self.assertIn('unsent draft', result['message'])
+        self.click.assert_not_called()
+        self.type_text.assert_not_called()
