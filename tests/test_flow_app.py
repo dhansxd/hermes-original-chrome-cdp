@@ -772,6 +772,83 @@ class FlowAppTests(unittest.TestCase):
                     self.assertEqual(result['status'], 'running')
                     ui.click.assert_called_once_with('flow-generate-icon-button button', project=project)
 
+    def test_source_retry_restores_project_model_and_only_prices_remaining_outputs(self):
+        for balance, quote, visible, status in (
+                (9, '9 credits', True, 'running'),
+                (8, '9 credits', True, 'quota_exhausted'),
+                (9, None, True, 'needs_inspection'),
+                (9, '9 credits or 18 credits', True, 'needs_inspection'),
+                (None, '9 credits', True, 'needs_inspection'),
+                (9, '9 credits', False, 'needs_inspection')):
+            with self.subTest(balance=balance, quote=quote, visible=visible):
+                project = self.app.project_url('resumable-source')
+                original_file = {'path': '/fixture/earlier.mp4'}
+                ctx = Mock(directory=Path(self.enterContext(tempfile.TemporaryDirectory())),
+                           job_id='job', profile='Profile 2')
+                path = ctx.directory / 'checkpoint.json'
+                ctx.checkpoint.side_effect = lambda value: path.write_text(json.dumps(value))
+                original_settings = {'mode': 'classic', 'models': [{'selector': 'model', 'value': 'Original model'}],
+                                     'selected': {'Aspect ratio': '9:16', 'Video resolution': '720p'},
+                                     'duration': {'text': '5 seconds'}}
+                output = {'id': 'already-collected', 'kind': 'video'}
+                packet = {'operation': 'generate_video', 'params': {'project': 'earlier-account', 'prompt': 'scene'},
+                          'source': {'profile': 'Profile 2', 'account': {'id': 'source-account'}},
+                          'checkpoint': {'job': 'job', 'operation': 'generate_video', 'count': 2, 'project': project,
+                                         'quota_evidence': 'Not enough credits', 'settings': original_settings,
+                                         'files': [original_file], 'outputs': [output]},
+                          'remaining': {'remaining_count': 1, 'completed': [original_file]}}
+                prepared = self.app.prepare_source_retry(ctx, packet)
+                self.assertEqual(prepared['status'], 'ok', prepared)
+                self.assertEqual(prepared['params'], {'project': project, 'prompt': 'scene', 'count': 1,
+                    'mode': 'classic', 'model': 'Original model', 'aspect': '9:16', 'resolution': '720p',
+                    'duration': 5, 'references': []})
+                self.assertEqual(packet['params']['project'], 'earlier-account')
+                ui = Mock()
+                ui.read.side_effect = [project, 'editor', 'editor', 'scene']
+                ui.snapshot.return_value = {'url': project, 'ingredients': [], 'references': [],
+                    'frames': [], 'tiles': [output] if visible else [], 'notices': [], 'quote': quote}
+                native = {'mode': 'classic', 'groups': [], 'models': original_settings['models'],
+                          'duration': None, 'approval': None, 'quote': 'stale price: 12 credits'}
+
+                def observe(context, ui, checkpoint):
+                    self.assertEqual(checkpoint['baseline'], ['already-collected'])
+                    self.assertEqual(checkpoint['continued_files'], [original_file])
+                    self.assertEqual(checkpoint['count'], 1)
+                    checkpoint['request_id'] = 'new-native-id'
+                    return {'status': 'running'}
+
+                with patch.object(self.app, 'configure', return_value=native), \
+                        patch.object(self.app, 'account', return_value={'id': 'source-account', 'credits': balance}), \
+                        patch.object(self.app, 'observe_generation', side_effect=observe), \
+                        patch.object(self.app.shutil, 'which', return_value='/tool'):
+                    result = self.app.generate(ctx, ui, 'generate_video', prepared['params'])
+                self.assertEqual(result['status'], status, result)
+                if status == 'running':
+                    ui.click.assert_called_once_with('flow-generate-icon-button button', project=project)
+                else:
+                    ui.click.assert_not_called()
+                if status == 'needs_inspection':
+                    blocked = json.loads(path.read_text())
+                    self.assertEqual(result['request']['state'], 'not_submitted')
+                    self.assertEqual(self.app.resume(ctx, {'checkpoint': blocked}), result)
+                if status == 'quota_exhausted':
+                    self.assertEqual(result['handoff']['remaining_count'], 1)
+                    self.assertEqual(result['handoff']['completed'], [original_file])
+                    self.assertEqual(json.loads(path.read_text())['prior_source_outputs'], [output])
+
+    def test_source_retry_does_not_accept_an_old_output_when_its_tile_gains_an_id(self):
+        project = self.app.project_url('source')
+        ctx, ui = Mock(), Mock()
+        ui.snapshot.return_value = {'url': project, 'notices': [],
+            'tiles': [{'id': 'old-result', 'kind': 'video', 'src': 'new-source', 'ready': True}]}
+        checkpoint = {'project': project, 'kind': 'video', 'count': 1, 'settings': {},
+                      'baseline': ['old-poster'],
+                      'prior_source_outputs': [{'id': 'old-result', 'key': 'old-poster'}]}
+        result = self.app.observe_generation(ctx, ui, checkpoint)
+        self.assertEqual(result['status'], 'needs_inspection')
+        self.assertEqual(result['data']['outputs'], [])
+        ctx.accepted.assert_not_called()
+
     def test_partial_quota_refusal_collects_completed_outputs_before_handoff(self):
         with tempfile.TemporaryDirectory() as root:
             context = Mock(directory=Path(root))

@@ -78,6 +78,20 @@ mode. Both modes retain completed files and continue the remaining work.
 When the job has an uncertain submission or destination preparation, resume
 with its job ID alone to reconcile the recorded profile first.
 
+## Resume the source project after credits return
+
+For a job paused by a confirmed quota refusal, use its saved job ID and the
+same operation and session. In manual mode, select the reported
+`source_profile` as `target_profile`. In automatic mode, resume with the job ID
+alone after the configured round ran out. Flow tries the last verified quota
+source in its existing project before checking the other configured profiles.
+
+Flow reads the account's current balance and the price displayed for the
+remaining outputs in the restored composer. If either number is unreadable or
+the recorded account, project, or previous outputs cannot be verified, the
+stored job can be inspected before trying again. Files already collected stay
+with the job, and an unresolved submission still takes the observation path.
+
 ## Agent mode
 
 `mode: "agent"` uses native Agent settings and automatic approval as authorized

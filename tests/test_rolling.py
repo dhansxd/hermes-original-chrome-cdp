@@ -62,6 +62,18 @@ class RollingTests(ChromeFixture):
         metadata['handoff_mode'] = 'manual'
         path.write_text(json.dumps(metadata))
 
+    def enable_source_retry(self):
+        self.enable_handoff_modes()
+        with (self.directory / 'app.py').open('a') as stream:
+            stream.write("""
+
+def prepare_source_retry(context, packet):
+    event(context, 'prepare_source_retry', packet=packet)
+    return {'status': 'ok', 'params': {**packet['params'],
+            'project': packet['checkpoint']['project'],
+            'count': packet['remaining'].get('remaining_count', 1)}}
+""")
+
     def test_manual_handoff_keeps_partial_results_until_explicit_target_after_reload(self):
         self.enable_handoff_modes()
         self.scenario['profiles']['Default'].update(mode='partial', reset_at='2030-01-01')
@@ -186,6 +198,62 @@ class RollingTests(ChromeFixture):
         self.assertEqual([event['profile'] for event in self.events('identify')], ['Default'])
         self.assertFalse(self.events('handoff'))
         self.assertFalse(self.events('run'))
+
+    def test_automatic_exhausted_job_reuses_refilled_last_source_project(self):
+        self.enable_source_retry()
+        self.settings.update({'handoff_mode.fixture': 'automatic', 'rolling_profiles.fixture': ['Profile 2']})
+        self.scenario['profiles']['Default']['mode'] = 'quota'
+        self.scenario['profiles']['Profile 2']['mode'] = 'partial'
+        self.save_scenario()
+        first = self.invoke(params={'prompt': 'fixture', 'project': 'original', 'count': 3})
+        self.assertEqual(first['status'], 'quota_exhausted', first)
+        self.assertEqual(first['source_profile'], 'Profile 2')
+        self.assertFalse(self.events('prepare_source_retry'))
+        self.scenario['profiles']['Profile 2'].update(mode='complete', available=True)
+        self.save_scenario()
+        done = self.invoke(job=first['job'])
+        self.assertTrue(done['success'], done)
+        self.assertEqual(done['job'], first['job'])
+        runs = self.events('run')
+        self.assertEqual([item['profile'] for item in runs], ['Default', 'Profile 2', 'Profile 2'])
+        self.assertEqual(runs[-1]['params']['project'], runs[-2]['params']['project'])
+        self.assertEqual(runs[-1]['params']['count'], 2)
+        self.assertEqual(len(self.events('handoff')), 1)
+
+    def test_manual_source_resume_needs_explicit_selection_and_same_account(self):
+        self.enable_source_retry()
+        self.scenario['profiles']['Default'].update(mode='partial', account='original')
+        self.save_scenario()
+        first = self.invoke(params={'prompt': 'fixture', 'project': 'source', 'count': 3})
+        self.assertTrue(first['awaiting_profile'], first)
+        self.assertTrue(self.invoke(job=first['job'])['awaiting_profile'])
+        self.scenario['profiles']['Default'].update(mode='complete', available=True, account='different')
+        self.save_scenario()
+        changed = self.invoke(job=first['job'], target_profile='Default')
+        self.assertEqual(changed['status'], 'needs_inspection', changed)
+        self.assertFalse(self.events('prepare_source_retry'))
+        self.assertEqual(len(self.events('run')), 1)
+        self.scenario['profiles']['Default']['account'] = 'original'
+        self.save_scenario()
+        success = self.invoke(job=first['job'], target_profile='Default')
+        self.assertTrue(success['success'], success)
+        self.assertEqual(self.events('run')[-1]['params']['count'], 2)
+        self.assertFalse(self.events('handoff'))
+
+    def test_source_retry_with_accepted_request_only_observes_same_attempt(self):
+        self.enable_source_retry()
+        self.scenario['profiles']['Default']['mode'] = 'partial'
+        self.save_scenario()
+        first = self.invoke(params={'prompt': 'fixture', 'project': 'source', 'count': 3})
+        self.scenario['profiles']['Default'].update(mode='accepted', available=True)
+        self.save_scenario()
+        pending = self.invoke(job=first['job'], target_profile='Default')
+        self.assertEqual(pending['status'], 'running', pending)
+        done = self.invoke(job=first['job'])
+        self.assertTrue(done['success'], done)
+        self.assertEqual(done['request']['id'], pending['request']['id'])
+        self.assertEqual(len(self.events('run')), 2)
+        self.assertEqual(len(self.events('resume')), 1)
 
     def test_existing_job_still_recovers_after_package_enables_modes(self):
         self.scenario['profiles']['Default']['mode'] = 'accepted'

@@ -523,8 +523,9 @@ identitas media dan file asli dapat dikaitkan dengan permintaan asal.
     output diteruskan. Cakupan ini diuji dengan regresi terarah. Fixture native
     menguji A → B → C, source pending, Stop/reload, dan preservasi peer/manual.
   - [ ] Reset/isi ulang kuota akun Flow nyata, lalu kunjung ulang profil awal.
-    Peristiwa provider ini belum diamati. Regresi generik mencakup perubahan
-    ketersediaan kuota serta profil yang kembali tersedia.
+    Flow 0.4.1 memulihkan proyek sumber dan sisa output setelah memeriksa ulang
+    saldo dan harga native. Skenario manual, otomatis, dan akun yang berubah
+    diuji dengan fixture lokal. Reset kuota asli dari provider belum diamati.
   Uji video unggahan dengan permintaan perubahan suara ditolak oleh Flow dan
   menampilkan pemberitahuan refund. Kegagalan provider tanpa identitas hasil
   tetap memerlukan inspeksi pada job sumber. Penilaian aksen/timbre suara tujuan

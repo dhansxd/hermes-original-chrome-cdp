@@ -359,14 +359,42 @@ def observation_pending(checkpoint, message):
     return {'status': 'needs_inspection', 'request': request, 'message': message}
 
 
+def source_retry_blocked(context, position, message):
+    if position.get('blocked') != message:
+        context.checkpoint({**position, 'blocked': message})
+    return {'status': 'needs_inspection', 'message': message,
+            'request': {'state': 'not_submitted', 'evidence': 'Flow stopped before clicking Generate.'}}
+
+
+def composer_identity(state):
+    def asset(url):
+        return (url or '').split('?', 1)[0]
+
+    return ([item.get('id') or asset(item.get('src')) for item in state.get('ingredients', [])],
+            [(item['kind'], item.get('id') or asset(item.get('src')), item.get('name'))
+             for item in state.get('references', [])],
+            [asset(frame.get('image')) for frame in state.get('frames', [])])
+
+
+def saved_position(context):
+    path = context.directory / 'checkpoint.json'
+    position = json.loads(path.read_text()) if path.exists() else {}
+    if position.get('job') == context.job_id and position.get('profile') == context.profile:
+        return position
+    return {}
+
+
 def observe_generation(context, ui, checkpoint):
     project = recorded_project(checkpoint)
     state = ui.snapshot()
     if observed_project(state['url']) != project:
         return observation_pending(checkpoint, 'Flow is outside the original project.')
     baseline = set(checkpoint['baseline'])
+    prior = {key for tile in checkpoint.get('prior_source_outputs', [])
+             for key in (tile_key(tile), tile.get('id'), tile.get('src')) if key}
     outputs = [tile for tile in state['tiles'] if tile['kind'] == checkpoint['kind']
                and tile_key(tile) and tile_key(tile) not in baseline
+               and not prior.intersection((tile_key(tile), tile.get('id'), tile.get('src')))
                and tile.get('id') not in checkpoint.get('reference_ids', [])]
     previous = {tile_key(tile): tile for tile in checkpoint.get('outputs', [])}
     by_id = {tile['id']: key for key, tile in previous.items() if tile.get('id')}
@@ -468,15 +496,22 @@ def generate(context, ui, operation, params):
     if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
         raise RuntimeError('Install FFmpeg and ffprobe on the Hermes process PATH before generating media')
     project = generation_project(context, ui, params)
-    path = context.directory / 'checkpoint.json'
-    position = json.loads(path.read_text()) if path.exists() else {}
-    if position.get('job') != context.job_id or position.get('profile') != context.profile or position.get('operation') != 'handoff':
+    position = saved_position(context)
+    if position.get('operation') not in {'handoff', 'source_retry'}:
         position = {}
+    retry = position.get('operation') == 'source_retry'
     settings = selected_settings(configure(ui, params, kind=kind), kind)
     owner = account(ui)
+    if retry:
+        category = 'model' if params['mode'] == 'classic' else kind
+        models = [model['value'] for model in settings['models'] if model['selector'] == category]
+        if (owner.get('id') != position['account'] or settings['count'] != params['count']
+                or settings['mode'] != params['mode'] or models != [params['model']]):
+            return source_retry_blocked(context, position,
+                'Flow could not verify the original account, model, and remaining output count.')
     quota_quote = settings.get('quote')
     quota_quote_source = 'selected composer'
-    if settings['mode'] == 'agent' and owner['credits'] == 0:
+    if not retry and settings['mode'] == 'agent' and owner['credits'] == 0:
         model = next(item['value'] for item in settings['models'] if item['selector'] == kind)
         try:
             native = configure(ui, {'mode': 'classic', 'model': model}, kind=kind)
@@ -515,18 +550,29 @@ def generate(context, ui, operation, params):
     actual = ui.read(f"document.querySelector({json.dumps(selector)}).innerText")
     if ' '.join(actual.split()) != ' '.join(prompt.split()):
         raise RuntimeError('The Flow composer did not preserve the requested prompt')
-    if bindings and settings['mode'] == 'classic':
-        ui.settings('classic')
+    if retry or (bindings and settings['mode'] == 'classic'):
+        ui.settings(settings['mode'])
         try:
             settings['quote'] = ui.snapshot().get('quote')
             quota_quote = settings['quote']
         finally:
-            ui.close_settings('classic')
+            ui.close_settings(settings['mode'])
+    if retry:
+        owner = account(ui)
+        if owner.get('id') != position['account']:
+            return source_retry_blocked(context, position, 'Flow could not verify the original account before Generate.')
     state = ui.snapshot()
     if observed_project(state['url']) != project:
         raise RuntimeError('The requested Flow project changed before Generate.')
     if any(not ingredient['ready'] for ingredient in state['ingredients']):
         raise RuntimeError('A composer reference has not finished loading')
+    if retry:
+        if composer_identity(state) != composer_identity(position['composer']):
+            return source_retry_blocked(context, position, 'Flow could not confirm the original composer references.')
+        visible = {key for tile in state['tiles'] for key in (tile_key(tile), tile.get('id')) if key}
+        if any((tile_key(tile) not in visible and tile.get('id') not in visible)
+               for tile in position['outputs']):
+            return source_retry_blocked(context, position, 'Flow could not confirm previously observed outputs in the source project.')
     checkpoint = {'job': context.job_id, 'operation': operation, 'project': project, 'kind': kind,
                   'prompt': prompt, 'settings': settings, 'credits_before': owner['credits'],
                   'references': bindings,
@@ -541,9 +587,13 @@ def generate(context, ui, operation, params):
                   'count': settings['count'],
                   'baseline': [tile_key(tile) for tile in state['tiles'] if tile_key(tile)],
                   'submit_intent': False}
-    cost = re.search(r'(?<![\d.,])(\d+(?:[.,]\d{3})*)\s+(?:kredit|credits)\b', quota_quote or '', re.I)
-    if cost and owner['credits'] is not None:
-        required = int(re.sub(r'\D', '', cost[1]))
+    if retry:
+        checkpoint['prior_source_outputs'] = position['outputs']
+    costs = re.findall(r'(?<![\d.,])(\d+(?:[.,]\d{3})*)\s+(?:kredit|credits)\b', quota_quote or '', re.I)
+    if retry and (len(costs) != 1 or owner['credits'] is None):
+        return source_retry_blocked(context, position, 'Flow could not verify the current credit balance and generation price.')
+    if costs and owner['credits'] is not None:
+        required = int(re.sub(r'\D', '', costs[0]))
         if owner['credits'] < required:
             return quota_rejection(context, checkpoint,
                 f"Flow account panel shows {owner['credits']} credits and its {quota_quote_source} quotes {required} credits")
@@ -570,6 +620,7 @@ def generate(context, ui, operation, params):
 
 
 def run(context, operation, params):
+    preparing_generation = False
     try:
         if operation not in PARAMETERS or set(params) - PARAMETERS[operation]:
             raise ValueError('Unknown Flow operation or parameter. Read browser_app describe for the current schema.')
@@ -578,6 +629,7 @@ def run(context, operation, params):
         if operation == 'inspect':
             return not_submitted(inspect(context, params))
         if operation in GENERATIONS:
+            preparing_generation = True
             return generate(context, UI(context), operation, params)
         ui = ensure(context, params)
         if operation == 'create_project':
@@ -596,6 +648,10 @@ def run(context, operation, params):
             return entities.create_character(context, ui, params)
         raise ValueError('Choose an operation listed by browser_app describe')
     except Exception as error:
+        if preparing_generation:
+            position = saved_position(context)
+            if position.get('operation') == 'source_retry':
+                return source_retry_blocked(context, position, str(error) or type(error).__name__)
         return {'status': 'failed', 'message': str(error) or type(error).__name__,
                 'error': {'type': type(error).__name__, 'message': str(error)},
                 'request': {'state': 'rejected', 'evidence': 'Operation stopped before a generation submit'}}
@@ -608,6 +664,9 @@ def resume(context, job):
     attempt_id = job['attempts'][-1].get('request_id') if job.get('attempts') else None
     owns_checkpoint = checkpoint.get('job') == context.job_id or (
         attempt_id is not None and attempt_id == checkpoint.get('request_id'))
+    if (owns_checkpoint and checkpoint.get('operation') == 'source_retry'
+            and checkpoint.get('profile') == context.profile and checkpoint.get('blocked')):
+        return source_retry_blocked(context, checkpoint, checkpoint['blocked'])
     if owns_checkpoint and checkpoint.get('operation') == 'create_voice':
         return entities.save_voice(context, ensure(context, {'project': checkpoint['project']}), checkpoint)
     if owns_checkpoint and checkpoint.get('operation') == 'create_character':
@@ -621,6 +680,40 @@ def resume(context, job):
         return observe_generation(context, ui, checkpoint)
     return {'status': 'needs_inspection', 'data': ensure(context, job['params']).snapshot(),
             'message': 'Inspect the saved operation before starting another operation'}
+
+
+def prepare_source_retry(context, packet):
+    checkpoint, source, remaining = packet['checkpoint'], packet['source'], packet['remaining']
+    operation = packet['operation']
+    count = remaining.get('remaining_count')
+    if (operation not in GENERATIONS or checkpoint.get('operation') != operation
+            or checkpoint.get('job') != context.job_id or source['profile'] != context.profile
+            or not checkpoint.get('quota_evidence')
+            or type(count) is not int or not 0 < count == checkpoint['count'] - len(checkpoint.get('files', []))):
+        return {'status': 'needs_inspection', 'message': 'Flow needs a verified terminal quota checkpoint with remaining outputs.'}
+    settings, kind = checkpoint['settings'], GENERATIONS[operation]
+    category = 'model' if settings['mode'] == 'classic' else kind
+    models = [item['value'] for item in settings['models'] if item['selector'] == category and item['value']]
+    if len(models) != 1:
+        return {'status': 'needs_inspection', 'message': 'Flow could not confirm the model from the source checkpoint.'}
+    params = {**packet['params'], 'project': recorded_project(checkpoint), 'count': count,
+              'mode': settings['mode'], 'model': models[0],
+              'references': checkpoint.get('portable_references', [])}
+    for key in ('aspect', 'input_type', 'resolution', 'duration'):
+        value = settings['selected'].get('aspect') if key == 'aspect' else None
+        value = next((settings['selected'][label] for label in GROUPS[key] if settings['selected'].get(label)), value)
+        if key == 'duration':
+            value = (settings.get('duration') or {}).get('text') or value
+            value = re.match(r'\d+', str(value))
+            value = int(value[0]) if value else None
+        if value is not None:
+            params[key] = value
+    context.checkpoint({'job': context.job_id, 'profile': context.profile, 'operation': 'source_retry',
+                        'account': source['account']['id'], 'composer': checkpoint.get('composer', {}),
+                        'outputs': checkpoint.get('prior_source_outputs', []) + checkpoint.get('outputs', []),
+                        'completed': remaining.get('completed', []),
+                        'transfers': checkpoint.get('transfers', [])})
+    return {'status': 'ok', 'params': params}
 
 
 def handoff(context, packet):

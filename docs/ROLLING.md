@@ -117,6 +117,15 @@ uncertain work on its recorded profile before handoff.
 
 Packages that omit `handoff_mode` use the original candidate policy below.
 
+Packages can opt into same-profile quota recovery with
+`prepare_source_retry(context, packet)`. An explicit resume of an exhausted
+automatic job, or a manual selection of the saved source profile, verifies
+that source's Chrome directory and service account before preparing new
+parameters for the remaining work. The app verifies current affordability
+in the original project before clicking Submit. If this check proves no
+submission and needs inspection, return `needs_inspection` with
+`request.state: "not_submitted"` and evidence so the original job stays paused.
+
 An opt-in package may also declare `rolling_parameters`, an operation-to-parameter
 map. The host uses rolling only when a mapped operation receives its declared
 parameter or a rolling job ID, for example `reply: continuation` in Gemini.

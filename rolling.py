@@ -279,7 +279,7 @@ class RollingJob:
                         return self.inspect('The source service account changed or is unavailable.')
                     observed = self.module.resume(self.context, copy.deepcopy(record))
                     if (self.not_submitted(observed) and not self.attempt.get('request_id')
-                            and not self.blocked_destination(observed)):
+                            and not self.blocked_destination(observed) and not self.blocked_source_retry(observed)):
                         if phase == 'handoff' and not isinstance(observed.get('params'), dict):
                             return self.inspect('Source reconciliation must return prepared destination params.')
                         self.record['current_params'] = observed.get('params', self.record['current_params'])
@@ -290,6 +290,10 @@ class RollingJob:
                         return self.record['result']
                     if self.blocked_destination(observed):
                         return self.roll(target_profile, skip_attempt=self.attempt)
+                if identifier:
+                    retried = self.retry_saved_source(target_profile)
+                    if retried is not None:
+                        return retried
                 return self.roll(target_profile)
             except Exception as error:
                 return self.inspect(str(error), error={'type': type(error).__name__, 'message': str(error)})
@@ -307,6 +311,47 @@ class RollingJob:
                 and self.attempt['profile'] != packet['source']['profile']
                 and not self.attempt.get('request_id') and value.get('status') == 'failed'
                 and self.not_submitted(value) and not value['request'].get('id'))
+
+    def blocked_source_retry(self, value):
+        return (self.attempt.get('retry_pause') and value.get('status') == 'needs_inspection'
+                and self.not_submitted(value) and not value['request'].get('id'))
+
+    def retry_saved_source(self, target_profile):
+        packet = self.record.get('handoff')
+        prepare = getattr(self.module, 'prepare_source_retry', None)
+        if not packet or not callable(prepare):
+            return None
+        source = packet['source']
+        phase = self.record['phase']
+        manual = phase == 'awaiting_profile' and target_profile == source['profile']
+        automatic = phase == 'quota_exhausted' and self.mode == 'automatic' and target_profile is None
+        if not (manual or automatic) or source.get('result', {}).get('status') != 'quota_exhausted':
+            return None
+        try:
+            profile = self.bind(source['profile'], source['identity'])
+        except (OSError, ValueError, RuntimeError):
+            if automatic:
+                return None
+            raise
+        probe = self.module.identify(self.context, self.record['operation'], copy.deepcopy(self.record['params']))
+        account, quota = probe.get('account', {}), probe.get('quota', {})
+        if (not account.get('evidence') or account.get('id') != source['account']['id']
+                or quota.get('scope') != source['scope']):
+            if automatic:
+                return None
+            return self.inspect('The original service account or quota scope could not be verified.')
+        self.check_handoff_files(packet)
+        prepared = prepare(self.context, copy.deepcopy(packet))
+        if prepared.get('status') != 'ok' or not isinstance(prepared.get('params'), dict):
+            return self.inspect('The source project is not ready to resume.', provider_result=prepared)
+        self.record['attempts'].append({'profile': profile.id, 'identity': list(profile.identity),
+                                        'account': account, 'scope': source['scope'], 'retry_pause': phase})
+        self.record['current_params'] = prepared['params']
+        if not self.outcome(self.submit()):
+            return self.record['result']
+        if manual:
+            return self.wait_for_profile()
+        return self.roll(None, skip_attempt=self.attempt)
 
     def ready_for_handoff(self):
         with self.host.provider.lock:
@@ -366,6 +411,12 @@ class RollingJob:
             self.ready_for_handoff()
             self.save()
             return True
+        if self.blocked_source_retry(value):
+            phase = self.attempt['retry_pause']
+            if phase == 'awaiting_profile':
+                value = {**value, 'awaiting_profile': True, 'source_profile': self.attempt['profile']}
+            self.finish(value, phase)
+            return False
         if state in {'accepted', 'completed'} and isinstance(identifier, str) and identifier:
             self.accepted(identifier, request.get('data'))
             if state == 'completed' and value.get('status') == 'ok':
