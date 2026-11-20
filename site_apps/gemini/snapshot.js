@@ -85,7 +85,7 @@
     // Limit notices are advisory. Read only the status UI, never chat responses or draft text.
     const noticeSelector = '[role="alert"], [role="status"], mat-snack-bar-container, [data-test-id*="limit-banner"]';
     const limitText = /\b(?:usage limit|quota|rate limit|limit (?:for|reached)|reached your.{0,40}limit|batas (?:penggunaan|pemakaian|harian)|kuota)\b/i;
-    const resetText = /\b(?:resets? (?:at|on|in|tomorrow)|try again (?:at|after|in|tomorrow)|direset|diatur ulang|coba lagi (?:pada|setelah|besok))\b.*/i;
+    const resetText = /\b(?:resets? (?:at|on|in|tomorrow)|try again (?:at|after|in|tomorrow)|until|hingga|direset|diatur ulang|coba lagi (?:pada|setelah|besok))\b.*/i;
     const chat = 'model-response, user-query, [contenteditable="true"]';
     const notices = [...new Set(all(noticeSelector).filter((node) => !node.closest(chat) && !node.querySelector(chat))
         .map((node) => clean(node.innerText, 320))

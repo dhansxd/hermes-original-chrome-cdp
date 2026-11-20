@@ -438,7 +438,7 @@ class RollingJob:
                 self.store.quota(*key, self.attempt['quota'])
             elif quota.get('available') is True and quota.get('evidence'):
                 self.store.quota(*key, {**quota, 'exhausted': False, 'observed_at': time.time()})
-            elif cached.get('exhausted'):
+            elif cached.get('exhausted') and not quota.get('requires_fresh_evidence'):
                 self.attempt['quota'] = cached
             if 'quota' in self.attempt:
                 if not self.record.get('handoff'):

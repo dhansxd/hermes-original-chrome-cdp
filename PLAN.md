@@ -374,17 +374,17 @@ Implementasi callback UI produksi pada Gemini/Flow mengikuti GEM/FLO.
 ## 6. Rolling kuota dan kelanjutan pekerjaan
 
 Flow mendeklarasikan `rotate_on_limit`. Pengendali umum plugin menjalankan
-keputusan rolling berdasarkan bukti yang dikembalikan paket. Untuk Gemini,
-agent memilih sendiri apakah menunggu reset atau meminta kelanjutan dengan
-profil tujuan eksplisit. Tahap `inspect` melaporkan petunjuk akun dan kuota yang
-terlihat. Kelanjutan eksplisit mengikuti GEM-05.
+keputusan rolling berdasarkan bukti yang dikembalikan paket. Gemini memakai
+pengendali yang sama untuk `reply` teks dengan checkpoint portabel yang diberikan
+pemanggil. `inspect` melaporkan petunjuk akun dan kuota yang terlihat.
 
 Flow menyediakan pilihan manual dan otomatis. Mode manual menjadi default dan
 menunggu profil tujuan yang ditentukan secara eksplisit melalui `target_profile`
 bersama ID job. Mode otomatis mengikuti daftar `rolling_profiles.flow` setelah
 layanan mengonfirmasi limit dan dapat diaktifkan dengan `handoff_mode.flow`.
 Pekerjaan berstatus belum pasti tetap diperiksa pada profil asal dalam kedua
-mode. Penerapan pola yang sama pada Gemini mengikuti GEM-05.
+mode. Gemini menyediakan pilihan yang sama untuk penolakan model yang terbukti
+sebelum Send dengan `handoff_mode.gemini` dan `rolling_profiles.gemini`.
 
 Untuk paket tanpa deklarasi mode handoff, kandidat default mencakup seluruh
 profil yang dapat mengakses layanan dalam urutan alami direktori. Profil awal
@@ -460,8 +460,10 @@ opsi yang tersedia pada akun.
 - [ ] **GEM-04** Generate video serta pengambilan file asli milik turn tersebut.
   Uji file, metadata media, dan kepemilikan sesi hingga unduhan selesai.
 - [ ] **GEM-05** Laporkan bukti limit UI dan waktu reset yang ditampilkan. Simpan
-  status pekerjaan, lalu lanjutkan lintas akun setelah agent menentukan profil
-  tujuan. Uji pemulihan permintaan yang belum pasti pada akun asal.
+  status pekerjaan, lalu lanjutkan lintas akun menggunakan mode manual atau
+  otomatis. Jalur `reply` dengan checkpoint dan blokir Send diuji lewat fixture
+  lokal. Bukti limit nyata pada UI serta rekonsiliasi setelah Send tetap bagian
+  dari penerimaan yang terbuka.
 
 Source mandiri juga memiliki musik, temporary chat, dan tahapan Research. Cakupan
 migrasinya dicatat per operasi ketika diimplementasikan. Daftar operasi paket

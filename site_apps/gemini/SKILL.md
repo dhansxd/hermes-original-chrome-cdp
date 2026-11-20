@@ -20,9 +20,9 @@ Treat usage notices as observed UI text. A notice can refer to a particular mode
 or action. `unknown` means there was no recognized visible notice. It gives no
 evidence of available credit. Report a reset time only when the UI displays it.
 
-When deciding what to do about a limit, inspect the evidence and pick the next
-profile explicitly if appropriate. Keep an unresolved provider request on its
-original account until its outcome is known.
+Use the observed notice to decide whether to wait for reset or choose another
+profile for future work. Keep an unresolved provider request on its original
+account until its outcome is known.
 
 ## Reply to an existing chat
 
@@ -43,3 +43,42 @@ the saved result. Inspection may be necessary if the page stops exposing the
 observed chat or response controls.
 Long answers can return a preview with `answer_truncated: true`.
 The complete text remains available in the original Gemini chat.
+
+## Continue a text task on another profile
+
+Add `continuation` to a new `reply` when the user authorizes cross-account
+continuation. Set `model` to the exact label from `inspect` and `checkpoint` to
+the portable text context the destination may receive. Include all context
+needed for the follow-up. The destination starts a fresh chat with only this
+checkpoint and the requested follow-up. The original chat, its upload IDs and
+files belong to their original account.
+
+The extension can hand off when the verified Gemini page explicitly reports
+that the selected model's quota is exhausted and blocks Send for this draft.
+The unsent draft stays on the source page. Use the displayed `reset_text` when
+present. After Send, reconcile an uncertain result using the original job and
+profile.
+
+Manual handoff is the default. A result with `awaiting_profile: true` is ready
+for a different Chrome profile with a distinct account. Pass the saved job ID
+and the user's explicitly selected `target_profile` with the same operation
+and session.
+
+```json
+{"action":"run","app":"gemini","operation":"reply","session":"work","job":"saved-job-id","target_profile":"Profile 2","params":{}}
+```
+
+For automatic handoff on new jobs, merge these settings under
+`plugins.entries.original-chrome-default.settings` in Hermes configuration.
+
+```yaml
+handoff_mode:
+  gemini: automatic
+rolling_profiles:
+  gemini: [Profile 2, Profile 10]
+```
+
+Select the same text model in your destination profiles. Confirmed
+replies include the destination chat ID. To observe an unconfirmed request, pass
+the saved job ID alone. Fresh-chat recovery requires the original observed
+document until the destination chat ID has been verified.

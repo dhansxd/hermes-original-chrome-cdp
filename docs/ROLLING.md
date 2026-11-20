@@ -111,6 +111,12 @@ uncertain work on its recorded profile before handoff.
 
 Packages that omit `handoff_mode` use the original candidate policy below.
 
+An opt-in package may also declare `rolling_parameters`, an operation-to-parameter
+map. The host uses rolling only when a mapped operation receives its declared
+parameter or a rolling job ID, for example `reply: continuation` in Gemini.
+A quota probe can require fresh evidence with `quota.requires_fresh_evidence: true`
+when cached exhaustion alone cannot authorize moving an individual request.
+
 Candidates come from fresh Chrome metadata in natural directory order. Configure
 preferred order in plugin settings when needed.
 

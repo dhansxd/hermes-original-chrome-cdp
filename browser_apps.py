@@ -30,6 +30,19 @@ def app_identifier(value):
     return value
 
 
+def uses_rolling(metadata, args):
+    if metadata.get('profile_policy') != 'rotate_on_limit':
+        return False
+    parameters = metadata.get('rolling_parameters')
+    if parameters is None:
+        return True
+    operation = args.get('operation')
+    parameter = parameters.get(operation) if isinstance(operation, str) else None
+    params = args.get('params', {})
+    return parameter is not None and (args.get('job') is not None
+        or args.get('target_profile') is not None or (isinstance(params, dict) and parameter in params))
+
+
 def read_package(root, identifier):
     directory = root / app_identifier(identifier)
     path = directory / 'app.json'
@@ -45,6 +58,10 @@ def read_package(root, identifier):
     if ('handoff_mode' in metadata and (metadata['handoff_mode'] not in HANDOFF_MODES
                                        or metadata.get('profile_policy') != 'rotate_on_limit')):
         raise ValueError('handoff_mode must be manual or automatic and requires rotate_on_limit.')
+    rolling_parameters = metadata.get('rolling_parameters')
+    if 'rolling_parameters' in metadata and (not isinstance(rolling_parameters, dict) or not rolling_parameters
+            or metadata.get('profile_policy') != 'rotate_on_limit'):
+        raise ValueError('rolling_parameters must map operations to opt-in parameters for rotate_on_limit.')
     if not isinstance(operations, dict):
         raise ValueError('Extension operations must be an object.')
     for name, details in operations.items():
@@ -53,6 +70,10 @@ def read_package(root, identifier):
         parameters = details.get('parameters', {'type': 'object'})
         if not isinstance(parameters, dict) or parameters.get('type') != 'object':
             raise ValueError('Operation parameters must describe an object.')
+    for operation, parameter in (rolling_parameters or {}).items():
+        parameter_schema = operations.get(operation, {}).get('parameters', {}).get('properties', {})
+        if not isinstance(parameter, str) or not isinstance(parameter_schema, dict) or parameter not in parameter_schema:
+            raise ValueError('Each rolling_parameters entry must name a declared operation parameter.')
     source = (directory / 'app.py').read_bytes()
     if path.read_bytes() != original:
         raise RuntimeError('Extension metadata changed while loading. Inspect the updated package.')
@@ -231,7 +252,7 @@ class AppHost:
                 if self.bundled_source:
                     self.seed_packages(self.bundled_source)
                 _, metadata, _ = read_package(self.root, app_identifier(args.get('app')))
-                if metadata.get('profile_policy') == 'rotate_on_limit':
+                if uses_rolling(metadata, args):
                     context['defer_profile'] = True
             except (OSError, ValueError, RuntimeError):
                 pass  # The handler reports package errors through the existing entry point.
@@ -350,7 +371,7 @@ class AppHost:
                         context._binding.active += 1
                         self.active.add(context)
                     with loaded_package(directory, source) as module:
-                        if metadata.get('profile_policy') == 'rotate_on_limit':
+                        if uses_rolling(metadata, args):
                             mode = metadata.get('handoff_mode')
                             if mode is not None:
                                 configured = self.get_setting('handoff_mode.' + identifier)

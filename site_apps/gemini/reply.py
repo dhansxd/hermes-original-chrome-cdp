@@ -14,7 +14,7 @@ MARKER = 'GEMINI_REPLY='
 RESPONSE_WAIT = 45
 
 NATIVE = r'''
-import hashlib, json, time
+import hashlib, json, re, time
 
 def read(control=None):
     args = [json.dumps(origin), json.dumps(chat), '(' + snapshot + ')', json.dumps(control)]
@@ -33,10 +33,11 @@ def anchor(turn):
     return None
 
 def original(state):
-    return state.get('chat_id') == chat and account(state) == baseline['account']
+    route_matches = (state.get('chat_id') == chat if chat else state.get('document') == baseline['document'])
+    return route_matches and account(state) == baseline['account']
 
 def unchanged(state):
-    return (original(state) and state['document'] == baseline['document']
+    return (original(state) and state.get('chat_id') == chat and state['document'] == baseline['document']
             and state['users'] == state['answers'] == baseline['turns']
             and anchor(state['latest']) == baseline['anchor']
             and (baseline['model'] is None or state['model'] == baseline['model'])
@@ -48,10 +49,14 @@ def ready():
         state = read('editor')
         if state.get('editor') and state.get('chat_id') == chat:
             return {'status': 'not_submitted', 'message': 'Gemini already has an unsent draft.'}
+        if expected and state.get('email') and (hashlib.sha256(state['email'].encode()).hexdigest()
+                != expected['account'] or (state.get('model') and state['model'] != expected['model'])):
+            return {'status': 'not_submitted', 'message': 'The Gemini account or selected model differs from the requested continuation.'}
         previous = anchor(state.get('latest'))
-        if (state.get('point') and account(state) and state['editor'] == ''
+        anchored = (previous and state['latest']['finished']) if chat else state.get('users') == 0
+        if (state.get('chat_id') == chat and state.get('point') and account(state) and state['editor'] == ''
                 and not state['busy'] and not state['media'] and state['users'] == state['answers']
-                and previous and state['latest']['finished']):
+                and anchored and (not expected or state['model'] == expected['model'])):
             return {'status': 'ready', 'baseline': {
                 'account': account(state), 'document': state['document'], 'anchor': previous,
                 'turns': state['users'], 'model': state['model']}}
@@ -59,6 +64,18 @@ def ready():
             return {'status': 'not_submitted',
                     'message': 'Gemini did not show a ready text composer and completed source turn.'}
         time.sleep(.25)
+
+def quota_refusal(state):
+    if not expected or not state.get('send_disabled') or state['editor'] != prompt:
+        return None
+    model = re.escape(expected['model'])
+    prefix = r"you(?:['’]ve| have) reached your "
+    pattern = (prefix + rf'(?:limit (?:on|for) {model}|{model} (?:usage )?limit)'
+               + rf'|anda (?:telah|sudah) mencapai batas (?:penggunaan )?(?:model )?{model}')
+    for notice in state.get('quota', {}).get('notices', []):
+        if re.match(rf'^(?:{pattern})(?=$|[\s.,!])', notice['evidence'], re.IGNORECASE):
+            return notice
+    return None
 
 def send():
     state = read('editor')
@@ -77,6 +94,9 @@ def send():
         if state['point'] and state['editor'] == prompt:
             click_at_xy(*state['point'])
             return observe()
+        notice = quota_refusal(state)
+        if notice:
+            return {'status': 'quota_exhausted', 'notice': notice}
         if time.monotonic() >= deadline:
             break
         time.sleep(.15)
@@ -88,7 +108,7 @@ def observe():
         state = read()
         if state.get('chat_id') and not original(state):
             break
-        if original(state):
+        if original(state) and state.get('chat_id'):
             latest = state['latest']
             if (state['users'] == state['answers'] == baseline['turns'] + 1
                     and latest and latest['prompt'] == prompt and latest['answer']
@@ -100,7 +120,7 @@ def observe():
                 while len(json.dumps(answer, ensure_ascii=False)) > 16_000:
                     answer = answer[:len(answer) // 2]
                     truncated = True
-                return {'status': 'ok', 'answer': answer, 'model': baseline['model'],
+                return {'status': 'ok', 'answer': answer, 'model': baseline['model'], 'chat_id': state['chat_id'],
                         'answer_truncated': truncated}
         if time.monotonic() >= deadline:
             break
@@ -145,20 +165,28 @@ def _native(context, script, action, baseline=None, navigation=''):
     return None
 
 
-def _reply(context, path, key, request_id, chat, prompt, script, navigation):
+def _reply(context, path, key, request_id, chat, prompt, script, navigation, *, expected, observe_only):
     journal = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     receipt = journal.get(key)
     profile = context.profile
     prompt_hash = _digest(prompt)
     data = {'chat_id': chat, 'request_id': request_id}
     if receipt:
-        if receipt['profile'] != profile or receipt['prompt_hash'] != prompt_hash:
+        if (receipt['profile'] != profile or receipt['prompt_hash'] != prompt_hash
+                or (expected and receipt.get('expected') not in (None, expected))):
             return {'status': 'failed', 'data': data,
-                    'message': 'Use the original Chrome profile and prompt to reconcile this request.'}
+                    'message': 'Use the original Chrome profile, account, model and prompt to reconcile this request.'}
         if receipt.get('result'):
+            if (receipt['result']['status'] == 'quota_exhausted' and context.job_id
+                    and receipt.get('job') != context.job_id):
+                return {'status': 'failed', 'data': data,
+                        'message': 'Resume the original browser_app job for this quota refusal.'}
             return {**receipt['result'], 'cached': True}
         action = 'observe'
     else:
+        if observe_only:
+            return {'status': 'needs_inspection', 'data': data,
+                    'message': 'Gemini has no saved send receipt to reconcile. The request was not repeated.'}
         if any(not item.get('result') for item in journal.values()):
             return {'status': 'failed', 'data': data,
                     'message': 'This chat has an unresolved reply. Reconcile the original request first.'}
@@ -166,7 +194,8 @@ def _reply(context, path, key, request_id, chat, prompt, script, navigation):
         if not prepared or prepared['status'] != 'ready':
             return {'status': 'failed', 'data': data, 'message':
                     (prepared or {}).get('message', 'The original Gemini chat could not be prepared.')}
-        receipt = {'profile': profile, 'prompt_hash': prompt_hash, 'baseline': prepared['baseline']}
+        receipt = {'profile': profile, 'prompt_hash': prompt_hash, 'baseline': prepared['baseline'],
+                   'job': context.job_id, 'expected': expected}
         journal[key] = receipt
         _save(path, journal)
         action = 'send'
@@ -174,10 +203,14 @@ def _reply(context, path, key, request_id, chat, prompt, script, navigation):
     outcome = _native(context, script, action, receipt['baseline'],
                       navigation=navigation if action == 'observe' else '')
     if outcome and outcome['status'] == 'ok':
-        data.update(answer=outcome['answer'], model=outcome['model'])
+        data.update(answer=outcome['answer'], model=outcome['model'], chat_id=outcome['chat_id'])
         if outcome['answer_truncated']:
             data['answer_truncated'] = True
         receipt['result'] = {'status': 'ok', 'data': data}
+        _save(path, journal)
+        return receipt['result']
+    if outcome and outcome['status'] == 'quota_exhausted' and action == 'send':
+        receipt['result'] = {'status': 'quota_exhausted', 'notice': outcome['notice'], 'data': data}
         _save(path, journal)
         return receipt['result']
     if outcome and outcome['status'] == 'not_submitted' and action == 'send':
@@ -188,18 +221,23 @@ def _reply(context, path, key, request_id, chat, prompt, script, navigation):
             'message': 'Gemini reply is unconfirmed. Repeat this request ID on its original profile to observe it.'}
 
 
-def run(context, chat, prompt, request_id, navigation, origin, snapshot):
+def normalize_input(prompt, request_id):
     if not isinstance(prompt, str) or not prompt.strip():
         raise ValueError('Gemini reply requires a nonempty text prompt.')
     if not isinstance(request_id, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', request_id):
         raise ValueError('Use a stable request_id containing 1–80 letters, digits, underscores or hyphens.')
+    return prompt.replace('\r\n', '\n').replace('\r', '\n').strip()
+
+
+def run(context, chat, prompt, request_id, navigation, origin, snapshot, *, expected=None, observe_only=False):
     if not context.session_id:
         raise ValueError('Gemini reply requires an owning Hermes conversation.')
-    prompt = prompt.replace('\r\n', '\n').replace('\r', '\n').strip()
+    prompt = normalize_input(prompt, request_id)
     script = (f'origin = {origin!r}\nchat = {chat!r}\nprompt = {prompt!r}\n'
               f'ui = {REPLY_UI!r}\nsnapshot = {snapshot!r}\nmarker = {MARKER!r}\n'
-              f'response_wait = {RESPONSE_WAIT!r}\n')
-    root = context.directory.parent / 'reply-receipts' / _digest(chat)
+              f'response_wait = {RESPONSE_WAIT!r}\nexpected = {expected!r}\n')
+    identity = _digest(chat) if chat else _digest('destination', context.job_id, context.profile)
+    root = context.directory.parent / 'reply-receipts' / identity
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     descriptor = os.open(root / '.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, 'rb') as lease:
@@ -208,4 +246,5 @@ def run(context, chat, prompt, request_id, navigation, origin, snapshot):
         except BlockingIOError:
             return {'status': 'failed', 'message': 'A Gemini reply is already active on this chat.'}
         return _reply(context, root / 'journal.json', _digest(context.session_id, request_id),
-                      request_id, chat, prompt, script, navigation)
+                      request_id, chat, prompt, script, navigation if chat or not observe_only else '',
+                      expected=expected, observe_only=observe_only)

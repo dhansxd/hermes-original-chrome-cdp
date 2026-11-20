@@ -16,7 +16,7 @@ import plugin
 class GeminiAppTests(ChromeFixture):
     def setUp(self):
         super().setUp()
-        settings = {'apps_directory': str(self.data / 'packages'), 'profile_directory': 'Default'}
+        self.settings = settings = {'apps_directory': str(self.data / 'packages'), 'profile_directory': 'Default'}
         self.provider = plugin.ChromeProvider(settings.get, data=self.data, set_setting=settings.__setitem__)
         self.addCleanup(self.provider.unload)
         self.dispatch = Mock(side_effect=self.native)
@@ -55,7 +55,8 @@ class GeminiAppTests(ChromeFixture):
         self.assertEqual(entry['operations'], ['inspect', 'reply'])
         details = json.loads(self.host.handle({'action': 'describe', 'app': 'gemini'}))
         self.assertIn('Choose an existing Chrome profile', details['guide'])
-        self.assertNotIn('profile_policy', details['app'])
+        self.assertEqual(details['app']['handoff_mode'], 'manual')
+        self.assertEqual(details['app']['rolling_parameters'], {'reply': 'continuation'})
         self.dispatch.assert_not_called()
 
     def test_uses_selected_profile_and_reports_only_masked_account(self):
@@ -223,3 +224,139 @@ class GeminiAppTests(ChromeFixture):
         self.assertIn('unsent draft', result['message'])
         self.click.assert_not_called()
         self.type_text.assert_not_called()
+
+    @staticmethod
+    def account_snapshot(state):
+        return {'page': 'ready', 'account': {'status': 'identified', 'email': state['email']},
+                'model': state['model'], 'chat_id': state['chat_id']}
+
+    def quota_states(self):
+        route, base, focused, draft, _ = self.reply_states()
+        self.notice = {"evidence": "You've reached your limit on Fixture model until 9 PM.",
+                       "reset_text": "until 9 PM."}
+        blocked = {**draft, 'point': None, 'send_disabled': True, 'quota': {'notices': [self.notice]}}
+        return [route, self.account_snapshot(base), route, base, base, focused, blocked]
+
+    def destination_states(self, *, document=200):
+        _, source, _, _, _ = self.reply_states()
+        route = {'origin': 'https://gemini.google.com', 'path': '/app/other-account-chat'}
+        base = {**source, 'chat_id': None, 'email': 'destination@example.test', 'document': 200,
+                'users': 0, 'answers': 0, 'latest': None}
+        inspect = self.account_snapshot({**base, 'chat_id': 'c_other-account-chat'})
+        focused = {**base, 'focused': True}
+        prompt = ('Continue the task using the following user-provided checkpoint as prior context.\n\n'
+                  'Checkpoint:\nPortable context\n\nCurrent request:\nNext question')
+        draft = {**focused, 'editor': prompt, 'point': [50, 60]}
+        final = {**base, 'chat_id': 'c_destination', 'document': document, 'users': 1, 'answers': 1,
+                 'latest': {'prompt': prompt, 'answer': 'Continued answer', 'finished': True}}
+        return [route, inspect, route, base, base, focused, draft, final]
+
+    def portable_reply(self):
+        return self.reply(continuation={'model': 'Fixture model', 'checkpoint': 'Portable context'})
+
+    def managed_job(self, job, *, target=None):
+        args = {'action': 'run', 'operation': 'reply', 'job': job}
+        if target is not None:
+            args['target_profile'] = target
+        return self.call(browser_apps.APP_TOOL, **args)
+
+    def test_manual_handoff_waits_and_opens_a_fresh_destination_chat(self):
+        self.js.side_effect = self.quota_states()
+        blocked = self.portable_reply()
+        self.assertTrue(blocked['awaiting_profile'], blocked)
+        self.assertEqual(blocked['profile'], 'Default')
+        self.assertEqual(blocked['quota']['reset_text'], self.notice['reset_text'])
+        self.assertEqual(blocked['handoff']['source_chat'], 'c_fixture-chat')
+        self.assertEqual([call.args for call in self.click.call_args_list], [(10, 20)])
+        self.type_text.assert_called_once_with('Next question')
+        waiting = self.managed_job(blocked['job'])
+        self.assertTrue(waiting['awaiting_profile'])
+        self.assertEqual(self.dispatch.call_count, 3)
+
+        self.js.side_effect = self.destination_states()
+        result = self.managed_job(blocked['job'], target='Profile 2')
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['profile'], 'Profile 2')
+        self.assertEqual(result['data']['chat_id'], 'c_destination')
+        self.assertEqual(result['data']['answer'], 'Continued answer')
+        self.navigate.assert_called_once_with('https://gemini.google.com/app')
+        self.assertEqual([call.args for call in self.click.call_args_list], [(10, 20), (10, 20), (50, 60)])
+        self.assertTrue(self.managed_job(blocked['job'])['cached'])
+
+    def test_automatic_handoff_respects_configured_order_and_same_account(self):
+        self.settings.update({'handoff_mode.gemini': 'automatic',
+                              'rolling_profiles.gemini': ['Profile 10', 'Profile 2']})
+        source = self.quota_states()
+        self.js.side_effect = [*source, *source[:2], *self.destination_states()]
+        result = self.portable_reply()
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['profile'], 'Profile 2')
+        self.assertEqual(result['profiles_tried'], ['Default', 'Profile 10', 'Profile 2'])
+        self.assertEqual(result['data']['chat_id'], 'c_destination')
+        self.assertEqual(self.type_text.call_count, 2)
+        self.assertEqual(self.click.call_count, 3)
+
+    def test_quota_banner_with_enabled_send_stays_on_original_profile(self):
+        self.settings.update({'handoff_mode.gemini': 'automatic', 'rolling_profiles.gemini': ['Profile 2']})
+        frames = self.quota_states()
+        *_, draft, complete = self.reply_states()
+        frames[-1] = {**draft, 'quota': {'notices': [self.notice]}}
+        self.js.side_effect = [*frames, complete]
+        result = self.portable_reply()
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['profile'], 'Default')
+        self.assertEqual(result['profiles_tried'], ['Default'])
+
+    def test_wrong_model_or_generic_banner_does_not_authorize_handoff(self):
+        self.settings.update({'handoff_mode.gemini': 'automatic', 'rolling_profiles.gemini': ['Profile 2']})
+        frames = self.quota_states()
+        frames[-1]['quota'] = {'notices': [{'evidence': "You've reached your limit on Another model."},
+                                         {'evidence': 'Gemini usage limits apply.'}]}
+        self.js.side_effect = frames
+        with patch('time.monotonic', side_effect=[0, 0, 0, 6]):
+            result = self.portable_reply()
+        self.assertEqual(result['status'], 'failed', result)
+        self.assertEqual(result['profiles_tried'], ['Default'])
+        self.assertEqual(self.click.call_count, 1)
+
+    def test_original_request_can_only_authorize_one_job_to_move(self):
+        frames = self.quota_states()
+        self.js.side_effect = frames
+        first = self.portable_reply()
+        self.assertTrue(first['awaiting_profile'])
+        self.js.side_effect = frames[:2]
+        duplicate = self.call(browser_apps.APP_TOOL, action='run', operation='reply', session='other',
+                              params={'chat': 'fixture-chat', 'prompt': 'Next question', 'request_id': 'request-one',
+                                      'continuation': {'model': 'Fixture model', 'checkpoint': 'Portable context'}})
+        self.assertEqual(duplicate['status'], 'failed', duplicate)
+        self.assertIn('original browser_app job', duplicate['message'])
+        self.assertEqual(self.click.call_count, 1)
+
+    def test_fresh_destination_needs_its_original_document_to_confirm_result(self):
+        self.js.side_effect = self.quota_states()
+        first = self.portable_reply()
+        self.assertTrue(first['awaiting_profile'])
+        self.js.side_effect = self.destination_states(document=201)
+        result = self.managed_job(first['job'], target='Profile 2')
+        self.assertEqual(result['status'], 'needs_inspection', result)
+        self.assertEqual(result['profile'], 'Profile 2')
+        self.assertNotIn('answer', result['provider_result']['data'])
+        self.assertEqual(self.type_text.call_count, 2)
+        self.assertEqual(self.click.call_count, 3)
+
+    def test_unconfirmed_after_send_reconciles_the_original_chat(self):
+        self.settings.update({'handoff_mode.gemini': 'automatic', 'rolling_profiles.gemini': ['Profile 2']})
+        frames = self.quota_states()
+        route, base, _, draft, complete = self.reply_states()
+        self.js.side_effect = [*frames[:-1], draft]
+        self.click.side_effect = [None, RuntimeError('lost after sending')]
+        pending = self.portable_reply()
+        self.assertEqual(pending['status'], 'needs_inspection', pending)
+        self.assertEqual(self.managed_job(pending['job'], target='Profile 2')['status'], 'needs_inspection')
+        self.js.side_effect = [route, self.account_snapshot(base), route, {**complete, 'document': 201}]
+        result = self.managed_job(pending['job'])
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['data']['chat_id'], 'c_fixture-chat')
+        self.assertEqual(result['profiles_tried'], ['Default'])
+        self.type_text.assert_called_once_with('Next question')
+        self.assertEqual(self.click.call_count, 2)

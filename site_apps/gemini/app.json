@@ -2,7 +2,10 @@
   "api_version": 1,
   "id": "gemini",
   "name": "Gemini Web",
-  "version": "0.2.1",
+  "version": "0.3.0",
+  "profile_policy": "rotate_on_limit",
+  "handoff_mode": "manual",
+  "rolling_parameters": {"reply": "continuation"},
   "operations": {
     "inspect": {
       "description": "Inspect Gemini Web or open an existing chat in the selected Chrome profile. Return the chat ID, active account, model, visible controls, and any displayed usage-limit or reset information.",
@@ -18,7 +21,7 @@
       }
     },
     "reply": {
-      "description": "Send one text follow-up in an existing Gemini chat on the selected Chrome profile. Reuse the same request ID, chat, and prompt to recover an unconfirmed result without resending.",
+      "description": "Send one text follow-up in an existing Gemini chat. Provide a portable continuation checkpoint to enable handoff after confirmed pre-send model quota exhaustion. Reuse the job or original request ID to recover an unconfirmed result.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -34,6 +37,16 @@
             "type": "string",
             "pattern": "^[a-zA-Z0-9_-]{1,80}$",
             "description": "Unique ID for this follow-up. Keep it for retries and reconciliation."
+          },
+          "continuation": {
+            "type": "object",
+            "description": "Optional context you authorize the destination account to receive.",
+            "properties": {
+              "model": {"type": "string", "description": "Exact model label shown by inspect."},
+              "checkpoint": {"type": "string", "description": "Complete portable text context needed to continue the task."}
+            },
+            "required": ["model", "checkpoint"],
+            "additionalProperties": false
           }
         },
         "required": ["chat", "prompt", "request_id"],

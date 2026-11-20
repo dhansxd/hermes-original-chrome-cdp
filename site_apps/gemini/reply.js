@@ -1,6 +1,7 @@
 (origin, chat, snapshot, control) => {
     const page = snapshot(origin);
-    if (page.chat_id !== chat || page.page === 'signed_out') return {chat_id: page.chat_id};
+    if (location.origin !== origin || page.page === 'signed_out' ||
+        (chat !== null && page.chat_id !== chat)) return {chat_id: page.chat_id};
 
     const visible = node => node && node.getClientRects().length > 0 &&
         getComputedStyle(node).visibility === 'visible' && !node.closest('[aria-hidden="true"]');
@@ -46,6 +47,8 @@
         email: page.account.status === 'identified' ? page.account.email : null,
         document: performance.timeOrigin,
         model: page.model,
+        quota: page.quota,
+        send_disabled: sends.length === 1 && sends[0].matches(':disabled,[aria-disabled="true"]'),
         editor: editor?.innerText.trim() ?? null,
         focused: editor !== null && document.activeElement === editor,
         busy,
