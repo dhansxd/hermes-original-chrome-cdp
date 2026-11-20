@@ -1,14 +1,88 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 12, 16 November 2026.
+Revisi PRD 13, 20 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-**Pengembangan lanjutan dijeda untuk persiapan reset Mac pengguna.** Permintaan
-terakhir adalah menyimpan kode, kebutuhan, keputusan, hasil dan pekerjaan tertunda
-di GitHub. [HANDOFF.md](HANDOFF.md) menjadi titik masuk pemulihan setelah reset.
-Implementasi Gemini, fitur Flow berikutnya dan produksi konten menunggu arahan
-pengguna untuk melanjutkan. Checklist di bawah mempertahankan status buktinya.
+**Status saat ini adalah diskusi dan audit.** Checklist aktif di bawah mencatat
+pekerjaan untuk tahap implementasi berikutnya. [HANDOFF.md](HANDOFF.md) menyimpan
+catatan pemulihan dari 16 November. Bukti versi lama tetap berguna sebagai
+pembanding perilaku.
+
+### Kontrak browser dan ekstensi
+
+- Satu tugas memakai satu jendela Chrome asli dan sambungan CDP yang sama
+  sejak aksi pertama sampai seluruh permintaan selesai. Submit, cek progres,
+  pembacaan hasil, unduhan, dan pengiriman yang diminta berlangsung dalam
+  pekerjaan itu. Status `running` adalah progres. Setelah hasil dan langkah
+  yang diminta terverifikasi, Hermes memberi jawaban akhir dan plugin
+  melepaskan jendela milik tugas. Stop dan kegagalan terminal memakai cleanup
+  yang sesuai. Jika aturan perpindahan profil yang sudah disetujui terpicu,
+  verifikasi hasil permintaan sumber sebelum melanjutkan di profil tujuan.
+- Sesi Hermes baru memakai katalog tool dan skill yang tersedia untuk
+  menemukan browser dan panduan situs. Provider Chrome asli dipilih melalui
+  konfigurasi Hermes. Percakapan, memori, dan prompt pribadi pengguna
+  tidak menjadi syarat untuk menemukan tool atau panduan.
+- Ekstensi memetakan kontrol UI dan menjelaskan cara memakainya. Semua aksi
+  berjalan dalam browser yang sama. Gunakan kontrol ekstensi yang tersedia
+  untuk situsnya. Jika suatu kontrol belum dipetakan, lanjutkan dengan DOM
+  terarah melalui `browser_exec` pada sesi itu, lalu screenshot jika perlu.
+  Situs tanpa ekstensi memakai tool browser biasa.
+- Profil, login, dan cookie tetap dikelola Chrome. Pertahankan profil terpilih,
+  startup dan izin debugging yang sudah diatur, serta isolasi jendela antaragen
+  dan jendela manual. Perubahan cukup pada ruang lingkup yang diminta dan
+  tetap memakai core Hermes dan 9Router dari upstream.
+
+### Hasil audit acuan
+
+- Commit awal `8f90d78` membedakan giliran berakhir dari tugas selesai melalui
+  `finish_browser()`. Commit `3e1e5c1` menambahkan penyelesaian eksplisit pada
+  desain Chrome khusus saat itu. Riwayat ini menjadi acuan batas penyelesaian
+  tugas. Pada Chrome bersama, cleanup harus tetap mengikuti kepemilikan target.
+- Implementasi situs pembanding mempertahankan klien atau worker dan target
+  selama pekerjaan, menunggu hasil, lalu mengumpulkan artefak sebelum cleanup.
+  Bukti penerimaan perlu mengukur pekerjaan lengkap termasuk hasil yang diminta.
+- Pada plugin saat ini, sesi situs berstatus `pending` bisa bertahan saat giliran
+  berakhir. Regresi yang perlu diselesaikan adalah Hermes memberi jawaban akhir
+  saat masih menunggu hasil, lalu meninggalkan jendela. Menguji penutupan
+  jendela saja tidak membuktikan pekerjaan selesai.
+
+### Urutan perbaikan dan verifikasi
+
+1. [ ] Ulangi tes dari sesi Hermes baru dengan perintah yang hanya menyebut tugas.
+   Mulai dengan situs umum. Verifikasi pemilihan Chrome asli, satu jendela
+   milik tugas, hasil yang diminta, dan cleanup terarah.
+2. [ ] Uji situs dengan ekstensi satu per satu. Verifikasi Hermes menemukan
+   paket, membaca panduan yang relevan, dan memakai kontrol yang tersedia.
+   Jika ada fallback, buktikan kontrol dan fallback memakai jendela yang sama.
+3. [ ] Perbaiki regresi penyelesaian tugas. Uji progres yang berlangsung cukup
+   lama. Tugas yang masih berjalan harus tetap dilanjutkan. Verifikasi hasil
+   dan setiap unduhan atau pengiriman yang diminta sebelum jawaban akhir.
+   Setelah itu ukur cleanup jendela milik tugas dan pastikan jendela lain utuh.
+4. [ ] Perjelas panduan Flow dalam paket situs. Panel yang tertutup berarti
+   kontrol belum terlihat. Gunakan `configure` untuk membaca pilihan setelah
+   mode dan model terpilih. Di Klasik, gunakan UI untuk spesifikasi yang
+   tersedia dan isi prompt dengan deskripsi konten. Di Agent, gunakan kontrol
+   yang tersedia dan sampaikan spesifikasi tanpa kontrol sebagai instruksi,
+   lalu verifikasi hasil.
+5. [ ] Catat kontrol yang terbukti belum dipetakan berdasarkan tugas yang
+   benar-benar memakai fallback. Catat situs, halaman atau mode, serta tindakan
+   yang diperlukan. Bedakan panel tertutup dan opsi yang tidak tersedia untuk
+   model terpilih. Jadikan catatan ini bahan patch saat diminta.
+
+### Fitur setelah perbaikan lulus
+
+- [ ] Biarkan jendela tertentu tersedia untuk pengguna ketika diminta secara
+  eksplisit atau ketika tujuan tugas jelas mengharuskan pengguna melanjutkan
+  di jendela itu. Pekerjaan Hermes selesai setelah halaman atau tindakan yang
+  diminta benar-benar siap digunakan. Menyiapkan video untuk ditonton hanyalah
+  salah satu contoh. Status `running` sendiri tidak memicu fitur ini.
+- [ ] Gunakan identitas jendela yang tepat untuk menutupnya ketika pengguna
+  meminta pada giliran berikutnya. Uji bahwa jendela yang dipakai pengguna
+  tetap tersedia, penutupan berikutnya hanya mengenai jendela yang dirujuk,
+  dan tugas biasa tetap menjalankan cleanup setelah selesai.
+
+### Bukti historis hingga 16 November 2026
 
 **Perbaikan startup satu jendela per sesi tersedia pada host 0.10.3.** Pengguna meminta
 jendela awal untuk izin CDP dan pemeriksaan profil dipakai langsung sebagai

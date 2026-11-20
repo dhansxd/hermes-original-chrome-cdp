@@ -5,6 +5,9 @@
 - Use one owned window in the original Chrome for the entire task. Reuse its
   CDP session for clicks, typing, progress checks, result collection and any
   requested delivery. Keep the other agents' and manual windows independent.
+- Make the browser tool and installed site guides discoverable in a fresh
+  Hermes session through the normal tool and skill catalogs. Keep browser
+  routing independent of conversation memory and personal prompts.
 - Treat pending work as progress. Verify the requested outcome and complete
   every requested step before the final answer. Close the task's owned browser
   resources at completion, and use the existing cleanup for Stop or failure.
@@ -16,10 +19,13 @@
 - Treat examples as examples. Add only behavior the user requests. Read the
   repository history and existing site integrations before changing their
   contracts. Keep Hermes and 9Router core on their upstream code.
+- Follow the active checklist in [PLAN.md](PLAN.md#1-status-dan-langkah-berikutnya).
+  Treat leaving a window available for the user's continued use as a later
+  feature, after the current regressions are fixed and verified.
 
 ## Working in this repository
 
-- Read HANDOFF.md for the reset-recovery handoff and the current development pause.
+- Read HANDOFF.md for the historical reset-recovery handoff.
 - Read PLAN.md for the agreed scope and verification baseline.
 - Read and apply the user's coding guidelines before modifying code.
 - Make the smallest change that addresses an observed issue or requested feature.
