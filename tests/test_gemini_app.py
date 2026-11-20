@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 from test_profiles import ChromeFixture
 import browser_apps
 import plugin
+from rolling import RollingJob
 
 
 class GeminiAppTests(ChromeFixture):
@@ -237,10 +238,10 @@ class GeminiAppTests(ChromeFixture):
         blocked = {**draft, 'point': None, 'send_disabled': True, 'quota': {'notices': [self.notice]}}
         return [route, self.account_snapshot(base), route, base, base, focused, blocked]
 
-    def destination_states(self, *, document=200):
+    def destination_states(self, *, document=200, email='destination@example.test'):
         _, source, _, _, _ = self.reply_states()
         route = {'origin': 'https://gemini.google.com', 'path': '/app/other-account-chat'}
-        base = {**source, 'chat_id': None, 'email': 'destination@example.test', 'document': 200,
+        base = {**source, 'chat_id': None, 'email': email, 'document': 200,
                 'users': 0, 'answers': 0, 'latest': None}
         inspect = self.account_snapshot({**base, 'chat_id': 'c_other-account-chat'})
         focused = {**base, 'focused': True}
@@ -250,6 +251,10 @@ class GeminiAppTests(ChromeFixture):
         final = {**base, 'chat_id': 'c_destination', 'document': document, 'users': 1, 'answers': 1,
                  'latest': {'prompt': prompt, 'answer': 'Continued answer', 'finished': True}}
         return [route, inspect, route, base, base, focused, draft, final]
+
+    def wrong_model_states(self):
+        route, inspect, navigation, base, *_ = self.destination_states(email='other@example.test')
+        return [route, inspect, navigation, {**base, 'model': 'Different model'}]
 
     def portable_reply(self):
         return self.reply(continuation={'model': 'Fixture model', 'checkpoint': 'Portable context'})
@@ -295,6 +300,91 @@ class GeminiAppTests(ChromeFixture):
         self.assertEqual(result['data']['chat_id'], 'c_destination')
         self.assertEqual(self.type_text.call_count, 2)
         self.assertEqual(self.click.call_count, 3)
+
+    def test_manual_handoff_can_choose_another_profile_after_wrong_model(self):
+        self.js.side_effect = self.quota_states()
+        original = self.portable_reply()
+        self.js.side_effect = self.wrong_model_states()
+        waiting = self.managed_job(original['job'], target='Profile 2')
+        self.assertTrue(waiting['awaiting_profile'], waiting)
+        self.assertEqual(waiting['job'], original['job'])
+        self.assertEqual(waiting['quota'], original['quota'])
+        self.assertEqual(waiting['handoff'], original['handoff'])
+        self.assertEqual(waiting['source_profile'], 'Default')
+        self.assertIn('selected model', waiting['message'])
+        self.assertEqual(self.click.call_count, 1)
+        self.assertTrue(self.managed_job(original['job'])['awaiting_profile'])
+
+        self.js.side_effect = self.destination_states()
+        result = self.managed_job(original['job'], target='Profile 10')
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['profile'], 'Profile 10')
+        self.assertEqual(result['data']['chat_id'], 'c_destination')
+        self.assertEqual(self.click.call_count, 3)
+
+    def test_manual_handoff_can_retry_a_corrected_destination_model(self):
+        self.js.side_effect = self.quota_states()
+        original = self.portable_reply()
+        self.js.side_effect = self.wrong_model_states()
+        first = self.managed_job(original['job'], target='Profile 2')
+        self.assertTrue(first['awaiting_profile'], first)
+        self.js.side_effect = self.destination_states(email='other@example.test')
+        result = self.managed_job(original['job'], target='Profile 2')
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['profile'], 'Profile 2')
+        self.assertEqual(self.type_text.call_count, 2)
+
+    def test_automatic_handoff_skips_a_destination_that_proved_no_send(self):
+        self.settings.update({'handoff_mode.gemini': 'automatic',
+                              'rolling_profiles.gemini': ['Profile 2', 'Profile 10']})
+        self.js.side_effect = [*self.quota_states(), *self.wrong_model_states(), *self.destination_states()]
+        result = self.portable_reply()
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['profiles_tried'], ['Default', 'Profile 2', 'Profile 10'])
+        self.assertEqual(result['profile'], 'Profile 10')
+        self.assertEqual(self.click.call_count, 3)
+
+    def test_recovery_reads_saved_destination_block_before_trying_next_profile(self):
+        self.settings.update({'handoff_mode.gemini': 'automatic',
+                              'rolling_profiles.gemini': ['Profile 2', 'Profile 10']})
+        wrong_model = self.wrong_model_states()
+        self.js.side_effect = [*self.quota_states(), *wrong_model]
+        outcome = RollingJob.outcome
+
+        def interrupted(job, value):
+            if value.get('status') == 'failed' and job.not_submitted(value):
+                raise RuntimeError('Interrupted before saving host outcome')
+            return outcome(job, value)
+
+        with patch.object(RollingJob, 'outcome', interrupted):
+            pending = self.portable_reply()
+        self.assertEqual(pending['status'], 'needs_inspection', pending)
+        self.assertEqual(pending['profiles_tried'], ['Default', 'Profile 2'])
+        self.assertEqual(self.click.call_count, 1)
+        self.js.side_effect = [*wrong_model[:2], *self.destination_states()]
+        result = self.managed_job(pending['job'])
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['profiles_tried'], ['Default', 'Profile 2', 'Profile 10'])
+        self.assertEqual(self.click.call_count, 3)
+
+    def test_automatic_handoff_reconciles_uncertain_send_on_its_destination(self):
+        self.settings.update({'handoff_mode.gemini': 'automatic',
+                              'rolling_profiles.gemini': ['Profile 2', 'Profile 10']})
+        *destination, final = self.destination_states()
+        self.js.side_effect = [*self.quota_states(), *destination]
+        self.click.side_effect = [None, None, RuntimeError('Lost connection after clicking Send')]
+        pending = self.portable_reply()
+        self.assertEqual(pending['status'], 'needs_inspection', pending)
+        self.assertEqual(pending['profiles_tried'], ['Default', 'Profile 2'])
+
+        route = {'origin': 'https://gemini.google.com', 'path': '/app/destination'}
+        self.js.side_effect = [route, self.account_snapshot(final), final]
+        result = self.managed_job(pending['job'])
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['profiles_tried'], ['Default', 'Profile 2'])
+        self.assertEqual(result['data']['answer'], 'Continued answer')
+        self.assertEqual(self.click.call_count, 3)
+        self.assertEqual(self.type_text.call_count, 2)
 
     def test_quota_banner_with_enabled_send_stays_on_original_profile(self):
         self.settings.update({'handoff_mode.gemini': 'automatic', 'rolling_profiles.gemini': ['Profile 2']})

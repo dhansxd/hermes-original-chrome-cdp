@@ -85,6 +85,12 @@ request ID, timeout, or incomplete evidence leads to source reconciliation.
 Definitive non-quota refusals can return `failed` with a rejected request and
 its evidence.
 
+A destination that proves it stopped before submission can return `failed`
+with `request.state: "not_submitted"` and evidence. For a configured manual or
+automatic handoff, the host retains the original packet. Manual mode awaits
+a target and automatic mode moves to the next configured profile. Save the
+proof so `resume` can report it after an interruption.
+
 ## Destination handoff
 
 The host passes `handoff` a packet containing the original operation/params,

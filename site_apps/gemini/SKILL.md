@@ -78,7 +78,10 @@ rolling_profiles:
   gemini: [Profile 2, Profile 10]
 ```
 
-Select the same text model in your destination profiles. Confirmed
-replies include the destination chat ID. To observe an unconfirmed request, pass
-the saved job ID alone. Fresh-chat recovery requires the original observed
-document until the destination chat ID has been verified.
+Select the same text model in your destination profiles. If a destination
+confirms that it stopped before Send, manual mode keeps the job available for
+another profile or a retry after fixing the model. Automatic mode moves to
+the next configured profile. Confirmed replies include the destination chat ID.
+To observe an unconfirmed request, pass the saved job ID alone. Fresh-chat
+recovery requires the original observed document until the destination chat ID
+has been verified.

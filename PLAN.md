@@ -462,8 +462,10 @@ opsi yang tersedia pada akun.
 - [ ] **GEM-05** Laporkan bukti limit UI dan waktu reset yang ditampilkan. Simpan
   status pekerjaan, lalu lanjutkan lintas akun menggunakan mode manual atau
   otomatis. Jalur `reply` dengan checkpoint dan blokir Send diuji lewat fixture
-  lokal. Bukti limit nyata pada UI serta rekonsiliasi setelah Send tetap bagian
-  dari penerimaan yang terbuka.
+  lokal. Gemini 0.3.1 mempertahankan job saat profil tujuan terbukti berhenti
+  sebelum Send. Regresi mencakup perubahan profil manual, kandidat otomatis,
+  pemulihan setelah proses terputus, dan hasil belum pasti setelah Send.
+  Bukti limit serta rekonsiliasi nyata pada UI tetap bagian penerimaan terbuka.
 
 Source mandiri juga memiliki musik, temporary chat, dan tahapan Research. Cakupan
 migrasinya dicatat per operasi ketika diimplementasikan. Daftar operasi paket

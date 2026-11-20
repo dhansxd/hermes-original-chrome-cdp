@@ -153,6 +153,9 @@ class RollingJob:
         packet = self.record['handoff']
         source = packet['source']
         quota = source.get('quota') or source.get('result', {}).get('quota', {})
+        attempt_result = self.attempt.get('result', {})
+        if message is None and self.blocked_destination(attempt_result):
+            message = attempt_result.get('message')
         return self.finish({'status': 'quota_exhausted', 'awaiting_profile': True,
                             'source_profile': source['profile'], 'quota': quota,
                             'handoff': packet['remaining'],
@@ -275,7 +278,8 @@ class RollingJob:
                     if not account.get('evidence') or account.get('id') != self.attempt['account']['id']:
                         return self.inspect('The source service account changed or is unavailable.')
                     observed = self.module.resume(self.context, copy.deepcopy(record))
-                    if self.not_submitted(observed) and not self.attempt.get('request_id'):
+                    if (self.not_submitted(observed) and not self.attempt.get('request_id')
+                            and not self.blocked_destination(observed)):
                         if phase == 'handoff' and not isinstance(observed.get('params'), dict):
                             return self.inspect('Source reconciliation must return prepared destination params.')
                         self.record['current_params'] = observed.get('params', self.record['current_params'])
@@ -284,6 +288,8 @@ class RollingJob:
                         observed = self.submit()
                     if not self.outcome(observed):
                         return self.record['result']
+                    if self.blocked_destination(observed):
+                        return self.roll(target_profile, skip_attempt=self.attempt)
                 return self.roll(target_profile)
             except Exception as error:
                 return self.inspect(str(error), error={'type': type(error).__name__, 'message': str(error)})
@@ -294,6 +300,18 @@ class RollingJob:
     def not_submitted(value):
         request = value.get('request', {}) if isinstance(value, dict) else {}
         return request.get('state') == 'not_submitted' and bool(request.get('evidence'))
+
+    def blocked_destination(self, value):
+        packet = self.record.get('handoff')
+        return (self.mode is not None and bool(packet)
+                and self.attempt['profile'] != packet['source']['profile']
+                and not self.attempt.get('request_id') and value.get('status') == 'failed'
+                and self.not_submitted(value) and not value['request'].get('id'))
+
+    def ready_for_handoff(self):
+        with self.host.provider.lock:
+            self.context._choice().pending = False
+        self.record['phase'] = 'awaiting_profile' if self.mode == 'manual' else 'probing'
 
     def submit(self):
         if self.attempt.get('request_id'):
@@ -341,10 +359,12 @@ class RollingJob:
                 and (not known or request.get('terminal') is True)):
             self.store.quota(self.attempt['account']['id'], quota['scope'],
                              {**quota, 'observed_at': time.time()})
-            with self.host.provider.lock:
-                self.context._choice().pending = False
-            self.record['phase'] = 'awaiting_profile' if self.mode == 'manual' else 'probing'
+            self.ready_for_handoff()
             self.save_handoff(value)
+            return True
+        if self.blocked_destination(value):
+            self.ready_for_handoff()
+            self.save()
             return True
         if state in {'accepted', 'completed'} and isinstance(identifier, str) and identifier:
             self.accepted(identifier, request.get('data'))
@@ -362,13 +382,15 @@ class RollingJob:
             self.inspect('The provider outcome requires source reconciliation.', provider_result=value)
         return False
 
-    def roll(self, target_profile):
+    def roll(self, target_profile, *, skip_attempt=None):
         if self.record['phase'] == 'awaiting_profile':
             if target_profile is None:
                 return self.wait_for_profile()
             if target_profile == self.record['handoff']['source']['profile']:
                 return self.wait_for_profile('Choose a different Chrome profile for the handoff.')
         visited, accounts = set(), set()
+        if skip_attempt is not None:
+            visited.add((skip_attempt['profile'], tuple(skip_attempt['identity'])))
         round_start = len(self.record['attempts'])
         source_refusal = bool(self.record['phase'] == 'probing' and self.record['attempts']
                               and self.attempt.get('result', {}).get('status') == 'quota_exhausted')

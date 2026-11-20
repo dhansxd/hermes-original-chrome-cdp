@@ -165,6 +165,18 @@ def _native(context, script, action, baseline=None, navigation=''):
     return None
 
 
+def _pre_send_failure(path, journal, key, receipt, data, outcome, *, destination):
+    result = {'status': 'failed', 'data': data, 'message': outcome['message']}
+    if destination:
+        result['request'] = {'state': 'not_submitted', 'evidence': outcome['message']}
+        journal[key] = {**receipt, 'result': result}
+        _save(path, journal)
+    elif key in journal:
+        del journal[key]
+        _save(path, journal)
+    return result
+
+
 def _reply(context, path, key, request_id, chat, prompt, script, navigation, *, expected, observe_only):
     journal = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     receipt = journal.get(key)
@@ -176,26 +188,31 @@ def _reply(context, path, key, request_id, chat, prompt, script, navigation, *, 
                 or (expected and receipt.get('expected') not in (None, expected))):
             return {'status': 'failed', 'data': data,
                     'message': 'Use the original Chrome profile, account, model and prompt to reconcile this request.'}
-        if receipt.get('result'):
-            if (receipt['result']['status'] == 'quota_exhausted' and context.job_id
+        result = receipt.get('result')
+        if result:
+            if (result['status'] == 'quota_exhausted' and context.job_id
                     and receipt.get('job') != context.job_id):
                 return {'status': 'failed', 'data': data,
                         'message': 'Resume the original browser_app job for this quota refusal.'}
-            return {**receipt['result'], 'cached': True}
-        action = 'observe'
-    else:
+            if observe_only or result.get('request', {}).get('state') != 'not_submitted':
+                return {**result, 'cached': True}
+            receipt = None
+    action = 'observe'
+    if not receipt:
         if observe_only:
             return {'status': 'needs_inspection', 'data': data,
                     'message': 'Gemini has no saved send receipt to reconcile. The request was not repeated.'}
         if any(not item.get('result') for item in journal.values()):
             return {'status': 'failed', 'data': data,
                     'message': 'This chat has an unresolved reply. Reconcile the original request first.'}
+        receipt = {'profile': profile, 'prompt_hash': prompt_hash, 'job': context.job_id, 'expected': expected}
         prepared = _native(context, script, 'ready', navigation=navigation)
+        if prepared and prepared['status'] == 'not_submitted':
+            return _pre_send_failure(path, journal, key, receipt, data, prepared, destination=chat is None)
         if not prepared or prepared['status'] != 'ready':
             return {'status': 'failed', 'data': data, 'message':
                     (prepared or {}).get('message', 'The original Gemini chat could not be prepared.')}
-        receipt = {'profile': profile, 'prompt_hash': prompt_hash, 'baseline': prepared['baseline'],
-                   'job': context.job_id, 'expected': expected}
+        receipt['baseline'] = prepared['baseline']
         journal[key] = receipt
         _save(path, journal)
         action = 'send'
@@ -214,9 +231,7 @@ def _reply(context, path, key, request_id, chat, prompt, script, navigation, *, 
         _save(path, journal)
         return receipt['result']
     if outcome and outcome['status'] == 'not_submitted' and action == 'send':
-        del journal[key]
-        _save(path, journal)
-        return {'status': 'failed', 'data': data, 'message': outcome['message']}
+        return _pre_send_failure(path, journal, key, receipt, data, outcome, destination=chat is None)
     return {'status': 'needs_inspection', 'data': data,
             'message': 'Gemini reply is unconfirmed. Repeat this request ID on its original profile to observe it.'}
 

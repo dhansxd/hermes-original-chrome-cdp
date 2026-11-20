@@ -142,7 +142,7 @@ def managed_reply(context, params, *, observe_only=False):
         return {**value, 'request': {'state': 'rejected'},
                 'quota': {**value['notice'], 'scope': quota_scope(options['model']), 'exhausted': True},
                 'handoff': {'source_chat': chat}}
-    if value['status'] == 'failed':
+    if value['status'] == 'failed' and 'request' not in value:
         return {**value, 'request': {'state': 'rejected', 'evidence': 'Gemini did not confirm a send.'}}
     return value
 
