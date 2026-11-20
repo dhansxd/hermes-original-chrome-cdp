@@ -29,7 +29,7 @@
         }
         const lines = Array.from(user.querySelectorAll('.query-text-line'));
         const body = answer.querySelector('message-content, [data-test-id="response-content"]');
-        const finished = Array.from(answer.querySelectorAll(
+        const finished = visible(answer.querySelector('.response-footer.complete')) || Array.from(answer.querySelectorAll(
             'button[aria-label="Copy response"],button[aria-label="Salin respons"],' +
             'button[aria-label="Good response"],button[aria-label="Respons bagus"],' +
             'button[data-test-id="copy-button"],button[data-test-id="good-response-button"]'

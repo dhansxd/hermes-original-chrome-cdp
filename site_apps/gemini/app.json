@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "gemini",
   "name": "Gemini Web",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "operations": {
     "inspect": {
       "description": "Inspect Gemini Web or open an existing chat in the selected Chrome profile. Return the chat ID, active account, model, visible controls, and any displayed usage-limit or reset information.",
