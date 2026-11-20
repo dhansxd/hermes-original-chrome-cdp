@@ -62,8 +62,15 @@ def project_url(value):
 
 
 def observed_project(url):
+    if not isinstance(url, str):
+        return None
     route = re.split(r'[?#]', url, maxsplit=1)[0].removesuffix('/')
     return route if PROJECT_URL.fullmatch(route) else None
+
+
+def recorded_project(checkpoint):
+    value = checkpoint.get('project')
+    return observed_project(value) or project_url(value)
 
 
 def project_matches(project):
@@ -310,18 +317,25 @@ def tile_key(tile):
     return tile.get('key') or tile.get('id') or tile.get('src')
 
 
-def open_output(ui, tile, prompt, mode):
+def open_output(ui, tile, prompt, mode, project):
     if tile['kind'] == 'image' and tile.get('id'):
         selector = f'flow-{tile["kind"]}-tile:has([data-media-id="{tile["id"]}"]) > .container'
     else:
         selector = f'flow-video-tile img[src={json.dumps(tile["src"])}]'
-    ui.click(selector)
+    if ui.click(selector, project=project) is False:
+        raise RuntimeError('Flow left the original project before opening the result.')
     ui.wait("/\\/edit\\//.test(location.pathname)")
+    url = ui.read('location.href')
+    path = re.split(r'[?#]', url, maxsplit=1)[0].removesuffix('/')
+    source, _, asset = path.partition('/edit/')
+    if not asset or observed_project(source) != project:
+        raise RuntimeError('The Flow result opened outside the original project.')
     prompts = ui.read("Array.from(document.querySelectorAll('.prompt-text')).map(e=>e.innerText)")
     if mode == 'classic' and not any(' '.join(text.split()) == ' '.join(prompt.split()) for text in prompts):
         raise RuntimeError('The native result prompt does not match this job')
-    tile['edit_url'] = ui.read('location.href')
-    tile['id'] = tile.get('id') or tile['edit_url'].rsplit('/', 1)[-1]
+    tile['edit_url'] = url
+    tile['id'] = tile.get('id') or path.rsplit('/', 1)[-1]
+    return path
 
 
 def quota_rejection(context, checkpoint, evidence):
@@ -339,24 +353,46 @@ def quota_rejection(context, checkpoint, evidence):
                         'composer': checkpoint.get('composer', {})}}
 
 
+def observation_pending(checkpoint, message):
+    identifier = checkpoint.get('request_id')
+    request = {'state': 'accepted', 'id': identifier} if identifier else {'state': 'unknown'}
+    return {'status': 'needs_inspection', 'request': request, 'message': message}
+
+
 def observe_generation(context, ui, checkpoint):
+    project = recorded_project(checkpoint)
     state = ui.snapshot()
+    if observed_project(state['url']) != project:
+        return observation_pending(checkpoint, 'Flow is outside the original project.')
     baseline = set(checkpoint['baseline'])
     outputs = [tile for tile in state['tiles'] if tile['kind'] == checkpoint['kind']
                and tile_key(tile) and tile_key(tile) not in baseline
                and tile.get('id') not in checkpoint.get('reference_ids', [])]
     previous = {tile_key(tile): tile for tile in checkpoint.get('outputs', [])}
-    if len(outputs) > checkpoint['count']:
-        identifier = checkpoint.get('request_id')
-        request = {'state': 'accepted', 'id': identifier} if identifier else {'state': 'unknown'}
-        return {'status': 'needs_inspection', 'request': request,
-                'message': 'More new native outputs exist than this job requested. Inspect their attribution before continuing.'}
+    by_id = {tile['id']: key for key, tile in previous.items() if tile.get('id')}
+    current = {}
     for tile in outputs:
-        key = tile_key(tile)
+        key = by_id.get(tile.get('id')) or tile_key(tile)
+        source = tile.get('src')
+        # A tile can acquire its native ID after it first appears with only a poster URL.
+        if key not in previous and source in previous and not previous[source].get('id'):
+            key = source
         known = previous.get(key, {})
-        tile.update({name: known[name] for name in ('id', 'edit_url') if name in known}, key=key)
+        if key in current or (known.get('id') and tile.get('id') and known['id'] != tile['id']):
+            return observation_pending(checkpoint, 'Flow displayed conflicting identities for a source result.')
+        tile.update({name: known[name] for name in ('id', 'edit_url') if known.get(name)}, key=key)
+        current[key] = tile
+    observed = {**previous, **current}
+    if len(observed) > checkpoint['count']:
+        return observation_pending(checkpoint,
+            'More new native outputs exist than this job requested. Inspect their attribution before continuing.')
+    if previous.keys() - current.keys():
+        checkpoint['outputs'] = list(observed.values())
+        context.checkpoint(checkpoint)
+        return observation_pending(checkpoint, 'Previously observed Flow outputs are missing from the source project.')
+    for tile in outputs:
         if tile['kind'] == 'video' and tile['ready'] and not tile.get('id'):
-            open_output(ui, tile, checkpoint['prompt'], checkpoint['settings']['mode'])
+            open_output(ui, tile, checkpoint['prompt'], checkpoint['settings']['mode'], project)
             ui.click('button.back-button')
             ui.wait("!location.pathname.includes('/edit/')")
     checkpoint['outputs'] = outputs
@@ -374,6 +410,8 @@ def observe_generation(context, ui, checkpoint):
         r'insufficient credits|not enough credits|kredit tidak cukup|kredit Anda (?:telah )?habis', text, re.I)), None)
     evidence = evidence or checkpoint.get('quota_evidence')
     if evidence and not outputs:
+        if identifier:
+            return observation_pending(checkpoint, 'Flow displayed a quota notice without a terminal source result.')
         return quota_rejection(context, checkpoint, evidence)
     if evidence:
         checkpoint['quota_evidence'] = evidence
@@ -386,13 +424,16 @@ def observe_generation(context, ui, checkpoint):
             receipt = context.directory / 'downloads' / (tile['id'] + '.json')
             saved = json.loads(receipt.read_text()) if receipt.exists() else {}
             if not saved:
-                open_output(ui, tile, checkpoint['prompt'], checkpoint['settings']['mode'])
-                ui.click('button[aria-label="Download media"],button[aria-label="Download media asset"]')
+                asset = open_output(ui, tile, checkpoint['prompt'], checkpoint['settings']['mode'], project)
+                if ui.click('button[aria-label="Download media"],button[aria-label="Download media asset"]',
+                            project=asset) is False:
+                    return observation_pending(checkpoint, 'Flow left the original result before download.')
                 original = ui.read("Array.from(document.querySelectorAll('[role=menuitem]')).filter(e=>e.getClientRects().length)"
                     ".filter(e=>/Ukuran asli|Original size/i.test(e.innerText)).map(e=>e.querySelector('.label')?.textContent.trim())")
                 if len(original) != 1 or not original[0]:
                     raise RuntimeError('The native original-size download option is unavailable')
-                action = f'flow_click("[role=menuitem]", {original[0]!r})'
+                action = (f'if not flow_click("[role=menuitem]", {original[0]!r}, project={asset!r}):\n'
+                          "    raise RuntimeError('Flow left the original result before download.')")
             else:
                 action = ''  # The collector reconciles the persisted original GUID.
             file = collect(ui, context.directory, tile['id'], action)
@@ -573,7 +614,10 @@ def resume(context, job):
         return entities.finish_character(context, UI(context), checkpoint)
     if checkpoint.get('submit_intent') and owns_checkpoint:
         checkpoint.setdefault('count', job['params'].get('count', 1))
-        ui = ensure(context, {'project': checkpoint['project']})
+        try:
+            ui = ensure(context, {'project': recorded_project(checkpoint)}, inspect_only=True)
+        except (RuntimeError, ValueError) as error:
+            return observation_pending(checkpoint, str(error))
         return observe_generation(context, ui, checkpoint)
     return {'status': 'needs_inspection', 'data': ensure(context, job['params']).snapshot(),
             'message': 'Inspect the saved operation before starting another operation'}

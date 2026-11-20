@@ -167,13 +167,14 @@ class FlowAppTests(unittest.TestCase):
 
     def test_resume_observes_source_without_generation(self):
         context = Mock(job_id='job')
+        source = self.app.project_url('source')
         record = {'params': {}, 'attempts': [{'request_id': 'native'}], 'checkpoint': {
-            'job': 'job', 'submit_intent': True, 'request_id': 'native', 'project': 'source'}}
+            'job': 'job', 'submit_intent': True, 'request_id': 'native', 'project': source + '/?hl=id'}}
         with patch.object(self.app, 'ensure') as ensure, \
                 patch.object(self.app, 'observe_generation', return_value={'status': 'running'}) as observe, \
                 patch.object(self.app, 'generate') as generate:
             self.assertEqual(self.app.resume(context, record)['status'], 'running')
-            ensure.assert_called_once_with(context, {'project': 'source'})
+            ensure.assert_called_once_with(context, {'project': source}, inspect_only=True)
             observe.assert_called_once()
             generate.assert_not_called()
 
@@ -199,13 +200,38 @@ class FlowAppTests(unittest.TestCase):
 
     def test_result_open_uses_direct_container_when_nested_prompt_has_container(self):
         ui = Mock()
-        ui.read.side_effect = [['exact prompt'], 'https://flow.google.com/project/id/edit/native']
-        self.app.open_output(ui, {'kind': 'image', 'id': 'media'}, 'exact prompt', 'classic')
-        ui.click.assert_called_once_with('flow-image-tile:has([data-media-id="media"]) > .container')
+        project = self.app.project_url('id')
+        asset = project + '/edit/native'
+        ui.read.side_effect = [asset + '?hl=id', ['exact prompt']]
+        self.assertEqual(self.app.open_output(ui, {'kind': 'image', 'id': 'media'},
+                                             'exact prompt', 'classic', project), asset)
+        ui.click.assert_called_once_with('flow-image-tile:has([data-media-id="media"]) > .container',
+                                         project=project)
+
+    def test_result_edit_redirect_does_not_read_prompt_from_another_project(self):
+        ui = Mock()
+        ui.read.return_value = self.app.project_url('wrong') + '/edit/native'
+        with self.assertRaisesRegex(RuntimeError, 'outside the original project'):
+            self.app.open_output(ui, {'kind': 'image', 'id': 'media'}, 'scene', 'classic',
+                                 self.app.project_url('source'))
+        ui.read.assert_called_once_with('location.href')
+
+    def test_resume_does_not_observe_a_project_that_cannot_be_verified(self):
+        context = Mock(job_id='job')
+        record = {'params': {}, 'attempts': [{'request_id': 'native'}], 'checkpoint': {
+            'job': 'job', 'submit_intent': True, 'request_id': 'native', 'project': 'source'}}
+        with patch.object(self.app, 'ensure', side_effect=RuntimeError('Unexpected project')) as ensure, \
+                patch.object(self.app, 'observe_generation') as observe:
+            result = self.app.resume(context, record)
+        self.assertEqual(result['status'], 'needs_inspection')
+        self.assertEqual(result['request'], {'state': 'accepted', 'id': 'native'})
+        ensure.assert_called_once_with(context, {'project': self.app.project_url('source')}, inspect_only=True)
+        observe.assert_not_called()
 
     def test_pending_tile_refreshes_readiness_without_overwriting_it_from_checkpoint(self):
         ui = Mock()
-        ui.snapshot.return_value = {'tiles': [{'kind': 'image', 'id': 'native', 'ready': True}], 'notices': []}
+        ui.snapshot.return_value = {'url': self.app.project_url('source'), 'notices': [],
+                                    'tiles': [{'kind': 'image', 'id': 'native', 'ready': True}]}
         context = Mock()
         checkpoint = {'baseline': [], 'kind': 'image', 'request_id': 'native', 'count': 2,
                       'outputs': [{'kind': 'image', 'id': 'native', 'ready': False}],
@@ -213,10 +239,33 @@ class FlowAppTests(unittest.TestCase):
         self.assertEqual(self.app.observe_generation(context, ui, checkpoint)['status'], 'running')
         self.assertTrue(checkpoint['outputs'][0]['ready'])
 
+    def test_source_output_identity_survives_gaining_an_id_after_a_poster_url(self):
+        ui = Mock()
+        poster = 'https://assets.example.test/poster'
+        tile = {'kind': 'image', 'id': 'native', 'src': poster, 'ready': False}
+        ui.snapshot.return_value = {'url': self.app.project_url('source'), 'tiles': [tile], 'notices': []}
+        checkpoint = {'project': 'source', 'kind': 'image', 'count': 2, 'baseline': [], 'settings': {},
+                      'outputs': [{**tile, 'id': None}], 'notices_before': []}
+        result = self.app.observe_generation(Mock(), ui, checkpoint)
+        self.assertEqual(result['status'], 'running')
+        self.assertEqual(result['request']['id'], 'native')
+        self.assertEqual(checkpoint['outputs'][0]['key'], poster)
+
+    def test_resume_mismatched_snapshot_preserves_known_request_without_collecting(self):
+        ui = Mock()
+        ui.snapshot.return_value = {'url': self.app.project_url('wrong')}
+        context = Mock()
+        with patch.object(self.app, 'collect') as collect:
+            result = self.app.observe_generation(context, ui, {'project': 'source', 'request_id': 'native'})
+        self.assertEqual(result['status'], 'needs_inspection')
+        self.assertEqual(result['request'], {'state': 'accepted', 'id': 'native'})
+        context.checkpoint.assert_not_called()
+        collect.assert_not_called()
+
     def test_old_quota_notice_does_not_trigger_rolling_for_this_request(self):
         text = 'Not enough credits'
         ui = Mock()
-        ui.snapshot.return_value = {'tiles': [], 'notices': [text]}
+        ui.snapshot.return_value = {'url': self.app.project_url('source'), 'tiles': [], 'notices': [text]}
         checkpoint = {'baseline': [], 'kind': 'image', 'count': 1, 'project': 'source', 'settings': {},
                       'notices_before': [text]}
         self.assertEqual(self.app.observe_generation(Mock(), ui, checkpoint)['status'], 'needs_inspection')
@@ -727,14 +776,16 @@ class FlowAppTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             context = Mock(directory=Path(root))
             ui = Mock()
-            ui.snapshot.return_value = {'tiles': [{'kind': 'image', 'id': 'native', 'ready': True}],
+            project = self.app.project_url('source')
+            ui.snapshot.return_value = {'url': project, 'tiles': [{'kind': 'image', 'id': 'native', 'ready': True}],
                                         'notices': ['Not enough credits']}
             ui.read.side_effect = [['Ukuran asli'], '/project/source']
             checkpoint = {'operation': 'generate_image', 'project': 'source', 'prompt': 'scene',
                           'kind': 'image', 'count': 3, 'baseline': [], 'notices_before': [],
                           'settings': {'mode': 'classic'}, 'portable_references': [{'path': '/source/reference.png'}]}
             file = {'path': '/source/completed.png'}
-            with patch.object(self.app, 'open_output'), patch.object(self.app, 'collect', return_value=file), \
+            with patch.object(self.app, 'open_output', return_value=project + '/edit/native'), \
+                    patch.object(self.app, 'collect', return_value=file), \
                     patch.object(self.app, 'verify', return_value=file):
                 result = self.app.observe_generation(context, ui, checkpoint)
             self.assertEqual(result['status'], 'quota_exhausted')
@@ -747,7 +798,8 @@ class FlowAppTests(unittest.TestCase):
     def test_quota_notice_preserves_pending_source_outputs(self):
         context = Mock()
         ui = Mock()
-        ui.snapshot.return_value = {'tiles': [{'kind': 'image', 'id': 'native', 'ready': False}],
+        ui.snapshot.return_value = {'url': self.app.project_url('source'),
+                                    'tiles': [{'kind': 'image', 'id': 'native', 'ready': False}],
                                     'notices': ['Not enough credits']}
         checkpoint = {'operation': 'generate_image', 'project': 'source', 'kind': 'image', 'count': 2,
                       'baseline': [], 'notices_before': [], 'settings': {}}
@@ -755,6 +807,55 @@ class FlowAppTests(unittest.TestCase):
         self.assertEqual(result['status'], 'running')
         self.assertEqual(result['request']['id'], 'native')
         self.assertNotIn('handoff', result)
+
+    def test_quota_notice_cannot_end_an_accepted_job_with_missing_results(self):
+        for show_completed in (False, True):
+            with self.subTest(show_completed=show_completed):
+                context, ui = Mock(), Mock()
+                completed = {'kind': 'image', 'id': 'done', 'ready': True}
+                pending = {'kind': 'image', 'id': 'pending', 'ready': False}
+                checkpoint = {'project': 'source', 'kind': 'image', 'count': 3, 'baseline': [],
+                              'outputs': [completed, pending], 'request_id': 'native'}
+                ui.snapshot.return_value = {'url': self.app.project_url('source'),
+                                            'tiles': [completed.copy()] if show_completed else [],
+                                            'notices': ['Not enough credits']}
+                with patch.object(self.app, 'collect') as collect:
+                    result = self.app.observe_generation(context, ui, checkpoint)
+                self.assertEqual(result['status'], 'needs_inspection')
+                self.assertEqual(result['request'], {'state': 'accepted', 'id': 'native'})
+                self.assertEqual([tile['id'] for tile in checkpoint['outputs']], ['done', 'pending'])
+                self.assertNotIn('quota_evidence', checkpoint)
+                self.assertNotIn('handoff', result)
+                context.checkpoint.assert_called_once()
+                collect.assert_not_called()
+
+    def test_accepted_receipt_without_saved_tiles_is_not_terminal_on_generic_quota(self):
+        ui = Mock()
+        ui.snapshot.return_value = {'url': self.app.project_url('source'), 'tiles': [],
+                                    'notices': ['Not enough credits']}
+        checkpoint = {'project': 'source', 'kind': 'image', 'count': 1, 'baseline': [],
+                      'request_id': 'native'}
+        result = self.app.observe_generation(Mock(), ui, checkpoint)
+        self.assertEqual(result['status'], 'needs_inspection')
+        self.assertEqual(result['request'], {'state': 'accepted', 'id': 'native'})
+        self.assertNotIn('handoff', result)
+
+    def test_missing_source_tile_does_not_lose_other_newly_observed_outputs(self):
+        ui, context = Mock(), Mock()
+        first = {'kind': 'image', 'id': 'first', 'ready': False}
+        second = {'kind': 'image', 'id': 'second', 'ready': False}
+        state = {'url': self.app.project_url('source'), 'notices': []}
+        ui.snapshot.side_effect = [{**state, 'tiles': [second.copy()]},
+                                   {**state, 'tiles': [first.copy(), second.copy()]}]
+        checkpoint = {'project': 'source', 'kind': 'image', 'count': 3, 'baseline': [],
+                      'outputs': [first], 'request_id': 'first', 'settings': {}}
+
+        pending = self.app.observe_generation(context, ui, checkpoint)
+        self.assertEqual(pending['status'], 'needs_inspection')
+        self.assertEqual([tile['id'] for tile in checkpoint['outputs']], ['first', 'second'])
+        resumed = self.app.observe_generation(context, ui, checkpoint)
+        self.assertEqual(resumed['status'], 'running')
+        self.assertEqual(resumed['request']['id'], 'first')
 
     def test_video_upload_recovery_uses_native_stem_without_reuploading(self):
         with tempfile.TemporaryDirectory() as root:
@@ -888,9 +989,10 @@ class FlowAppTests(unittest.TestCase):
 
     def test_extra_unattributed_outputs_never_trigger_terminal_quota_handoff(self):
         ui = Mock()
-        ui.snapshot.return_value = {'tiles': [
+        ui.snapshot.return_value = {'url': self.app.project_url('source'), 'tiles': [
             {'kind': 'image', 'id': 'one'}, {'kind': 'image', 'id': 'two'}], 'notices': ['Not enough credits']}
-        value = self.app.observe_generation(Mock(), ui, {'kind': 'image', 'baseline': [], 'count': 1})
+        value = self.app.observe_generation(Mock(), ui, {'project': 'source', 'kind': 'image',
+                                                         'baseline': [], 'count': 1})
         self.assertEqual(value['status'], 'needs_inspection')
         self.assertNotIn('handoff', value)
 

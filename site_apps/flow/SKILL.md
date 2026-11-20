@@ -44,6 +44,9 @@ Example call arguments follow.
 
 Resume by keeping `job` from the result at the tool's top level and passing
 `params: {}`. Recovery observes the original project and download receipt.
+If Flow redirects to another project or a previously observed output is
+temporarily missing, recovery asks for inspection on the source job.
+A quota notice alone leaves an accepted request with missing outputs pending.
 It does not repeat Generate. Stop and tool timeouts require this recovery path.
 
 ## Agent mode
