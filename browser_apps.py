@@ -15,9 +15,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 if __package__:
-    from .rolling import JobStore, RollingJob
+    from .rolling import HANDOFF_MODES, JobStore, RollingJob
 else:
-    from rolling import JobStore, RollingJob
+    from rolling import HANDOFF_MODES, JobStore, RollingJob
 
 
 APP_TOOL = 'browser_app'
@@ -42,6 +42,9 @@ def read_package(root, identifier):
     operations = metadata.get('operations')
     if metadata.get('profile_policy') is not None and metadata['profile_policy'] != 'rotate_on_limit':
         raise ValueError('Supported profile_policy is rotate_on_limit, or omit it for ordinary execution.')
+    if ('handoff_mode' in metadata and (metadata['handoff_mode'] not in HANDOFF_MODES
+                                       or metadata.get('profile_policy') != 'rotate_on_limit')):
+        raise ValueError('handoff_mode must be manual or automatic and requires rotate_on_limit.')
     if not isinstance(operations, dict):
         raise ValueError('Extension operations must be an object.')
     for name, details in operations.items():
@@ -348,9 +351,17 @@ class AppHost:
                         self.active.add(context)
                     with loaded_package(directory, source) as module:
                         if metadata.get('profile_policy') == 'rotate_on_limit':
-                            result = RollingJob(self, context, module).execute(operation, params, args.get('job'))
+                            mode = metadata.get('handoff_mode')
+                            if mode is not None:
+                                configured = self.get_setting('handoff_mode.' + identifier)
+                                if configured is not None:
+                                    mode = configured
+                                if mode not in HANDOFF_MODES:
+                                    raise ValueError('handoff_mode.' + identifier + ' must be manual or automatic.')
+                            result = RollingJob(self, context, module, mode=mode).execute(
+                                operation, params, args.get('job'), target_profile=args.get('target_profile'))
                         else:
-                            if args.get('job'):
+                            if args.get('job') or args.get('target_profile') is not None:
                                 raise ValueError('Job recovery requires a rotate_on_limit package.')
                             value = module.run(context, operation, params)
                             if not isinstance(value, dict) or 'status' not in value:
@@ -405,7 +416,8 @@ SCHEMA = {
                    'remove disables and deletes its source after cleanup finishes. Artifacts and '
                    'checkpoints remain under plugin data. Retry a management action when cleanup_pending '
                    'is true. chrome_profiles accepts app to configure this app\'s profile independently. '
-                   'rotate_on_limit packages roll on evidenced quota refusal. A job ID binds each '
+                   'rotate_on_limit packages continue on evidenced quota refusal. Packages with '
+                   'manual handoff wait for an explicit target_profile. A job ID binds each '
                    'request to its source profile/account. Pass job with the owning operation/session '
                    'to reconcile or continue it. describe lists this conversation\'s recoverable jobs.',
     'parameters': {'type': 'object', 'properties': {
@@ -414,6 +426,7 @@ SCHEMA = {
         'operation': {'type': 'string', 'description': 'Operation declared by the selected package.'},
         'params': {'type': 'object', 'description': 'Operation arguments, following describe.'},
         'job': {'type': 'string', 'description': 'Resume a rotate_on_limit job returned by run or describe. Reconciles its source request before further submission.'},
+        'target_profile': {'type': 'string', 'description': 'Explicit Chrome directory ID for a manual handoff. Use only with a job reporting awaiting_profile.'},
         'session': {'type': 'string', 'description': 'Your session alias. Each app and agent has '
                                                     'its own private browser session.'},
     }},

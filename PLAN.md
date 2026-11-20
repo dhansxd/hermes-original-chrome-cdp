@@ -379,13 +379,16 @@ agent memilih sendiri apakah menunggu reset atau meminta kelanjutan dengan
 profil tujuan eksplisit. Tahap `inspect` melaporkan petunjuk akun dan kuota yang
 terlihat. Kelanjutan eksplisit mengikuti GEM-05.
 
-Kebijakan yang direncanakan untuk kedua paket menyediakan pilihan manual dan
-otomatis. Mode manual menyerahkan pemilihan tujuan kepada agent. Mode otomatis
-memakai urutan profil yang dikonfigurasi setelah limit dikonfirmasi layanan.
-Pekerjaan berstatus belum pasti tetap diperiksa pada profil asal dalam kedua mode.
+Flow menyediakan pilihan manual dan otomatis. Mode manual menjadi default dan
+menunggu profil tujuan yang ditentukan secara eksplisit melalui `target_profile`
+bersama ID job. Mode otomatis mengikuti daftar `rolling_profiles.flow` setelah
+layanan mengonfirmasi limit dan dapat diaktifkan dengan `handoff_mode.flow`.
+Pekerjaan berstatus belum pasti tetap diperiksa pada profil asal dalam kedua
+mode. Penerapan pola yang sama pada Gemini mengikuti GEM-05.
 
-Kandidat default mencakup seluruh profil yang dapat mengakses layanan, dalam urutan
-alami direktori. Profil awal atau urutan pilihan pengguna dapat dikonfigurasi.
+Untuk paket tanpa deklarasi mode handoff, kandidat default mencakup seluruh
+profil yang dapat mengakses layanan dalam urutan alami direktori. Profil awal
+dan urutan pilihan pengguna dapat dikonfigurasi.
 
 1. Pakai akun aktif selama masih dapat melakukan operasi yang diminta.
 2. Saat layanan menyatakan kuota/kredit habis atau tidak mencukupi, catat akun aktif,

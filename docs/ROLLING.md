@@ -100,6 +100,17 @@ profiles use this same destination preparation contract.
 
 ## Profile order and recovery
 
+Packages may declare `handoff_mode` as `manual` or `automatic` in their manifest.
+For those packages, the user can override the default for new jobs with
+`handoff_mode.<app>` in plugin settings. After confirmed quota exhaustion,
+manual jobs expose `awaiting_profile: true` and accept an explicit
+`target_profile` with the owning job, operation, and session. Automatic jobs use
+only the configured `rolling_profiles.<app>` in order for handoff. An
+unavailable starting profile requires inspection. Either mode reconciles
+uncertain work on its recorded profile before handoff.
+
+Packages that omit `handoff_mode` use the original candidate policy below.
+
 Candidates come from fresh Chrome metadata in natural directory order. Configure
 preferred order in plugin settings when needed.
 

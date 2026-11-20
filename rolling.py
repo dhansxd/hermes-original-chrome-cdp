@@ -14,6 +14,11 @@ else:
     from profiles import get_profile, list_profiles, profile_directory
 
 
+HANDOFF_MODES = ('manual', 'automatic')
+RECONCILE_PHASES = {'submitting', 'pending', 'handoff'}
+ACTIVE_PHASES = RECONCILE_PHASES | {'awaiting_profile'}
+
+
 class JobStore:
     def __init__(self, root, write_json):
         self.root, self.write_json = root, write_json
@@ -58,7 +63,9 @@ class JobStore:
 
     def summaries(self, owner):
         return [{'job': record['id'], 'operation': record['operation'], 'session_alias': record['alias'],
-                 'phase': record['phase'], 'profile': record['attempts'][-1]['profile'] if record['attempts'] else None}
+                 'phase': record['phase'],
+                 'profile': (record['handoff']['source']['profile'] if record['phase'] == 'awaiting_profile'
+                             else record['attempts'][-1]['profile'] if record['attempts'] else None)}
                 for record in self.pending(owner)]
 
     def quota(self, account, scope, value=None):
@@ -79,9 +86,10 @@ class JobStore:
 
 
 class RollingJob:
-    def __init__(self, host, context, module):
+    def __init__(self, host, context, module, *, mode=None):
         self.host, self.context, self.module = host, context, module
         self.store = host.jobs(context.app)
+        self.mode = mode
         self.record = None
 
     @property
@@ -132,7 +140,7 @@ class RollingJob:
             except RuntimeError:
                 pass
             else:
-                choice.pending = phase in {'submitting', 'pending', 'handoff'}
+                choice.pending = phase in RECONCILE_PHASES
         workspace = self.store.root.parent / self.record['directory_key']
         self.store.write_json(workspace / 'result.json', result)
         return result
@@ -140,6 +148,16 @@ class RollingJob:
     def inspect(self, message, **details):
         return self.finish({'status': 'needs_inspection', 'error': {'message': message}, **details},
                            self.record['phase'])
+
+    def wait_for_profile(self, message=None):
+        packet = self.record['handoff']
+        source = packet['source']
+        quota = source.get('quota') or source.get('result', {}).get('quota', {})
+        return self.finish({'status': 'quota_exhausted', 'awaiting_profile': True,
+                            'source_profile': source['profile'], 'quota': quota,
+                            'handoff': packet['remaining'],
+                            'message': message or 'Pass this job with an explicit target_profile to continue.'},
+                           'awaiting_profile')
 
     def bind(self, profile, identity=None):
         current = get_profile(profile, self.host.provider.data)
@@ -149,21 +167,29 @@ class RollingJob:
         self.context._choice().directory_key = self.record['directory_key']
         return current
 
-    def candidates(self):
+    def candidates(self, target_profile):
         profiles = list_profiles(self.host.provider.data)
+        by_id = {profile.id: profile for profile in profiles}
+        start = self.record['next_profile']
+        if target_profile is not None:
+            return [by_id[target_profile]] if target_profile in by_id else []
+        if self.mode == 'manual' or (self.mode == 'automatic' and not self.record.get('handoff')):
+            return [by_id[start]] if start in by_id else []
         preferred = self.host.get_setting('rolling_profiles.' + self.context.app) or []
         if not isinstance(preferred, list) or any(not isinstance(item, str) for item in preferred):
             raise ValueError('rolling_profiles must contain a list of Chrome directory IDs.')
-        by_id = {profile.id: profile for profile in profiles}
+        if self.mode == 'automatic':
+            source = self.record['handoff']['source']['profile']
+            return [by_id[identifier] for identifier in dict.fromkeys(preferred)
+                    if identifier in by_id and identifier != source]
         order = list(dict.fromkeys([*preferred, *by_id]))
         order = [identifier for identifier in order if identifier in by_id]
-        start = self.record['next_profile']
         if start in order:
             index = order.index(start)
             order = order[index:] + order[:index]
         return [by_id[identifier] for identifier in order]
 
-    def execute(self, operation, params, identifier=None):
+    def execute(self, operation, params, identifier=None, *, target_profile=None):
         for name in ('identify', 'handoff', 'resume'):
             if not callable(getattr(self.module, name, None)):
                 raise ValueError('rotate_on_limit packages must define identify, handoff and resume callbacks.')
@@ -171,6 +197,10 @@ class RollingJob:
         owner, alias = self.context.session_id, choice.alias
         if not owner:
             raise ValueError('Rolling jobs require the calling Hermes conversation identity.')
+        if target_profile is not None:
+            if not self.mode or not identifier or not target_profile:
+                raise ValueError('Choose a target_profile with an explicit manual handoff job ID.')
+            target_profile = profile_directory(target_profile)
         with self.store.lease(owner, alias) as acquired:
             if not acquired:
                 return {'success': True, 'status': 'running', 'app': self.context.app,
@@ -183,8 +213,8 @@ class RollingJob:
                 pending = self.store.pending(owner, alias)
                 record = next((item for item in pending if item['operation'] == operation
                                and item['params'] == params), None)
-                active = next((item for item in pending if item['phase'] in {'submitting', 'pending', 'handoff'}), None)
-                if active and record is not active:
+                active = next((item for item in pending if item['phase'] in ACTIVE_PHASES), None)
+                if active is not None and record is not active:
                     return {'success': False, 'status': 'needs_inspection', 'job': active['id'],
                             'message': 'This alias owns an unresolved provider request. Resume its job or use another alias.'}
                 if record is None:
@@ -215,16 +245,30 @@ class RollingJob:
                               'next_profile': next_profile, 'policy': policy,
                               'phase': 'probing', 'attempts': [],
                               'checkpoint': json.loads(checkpoint.read_text()) if checkpoint.exists() else None}
+                    if self.mode is not None:
+                        record['handoff_mode'] = self.mode
                     self.store.save(record)
             self.record = record
+            self.mode = record.get('handoff_mode')
+            if target_profile is not None and (self.mode != 'manual' or record['phase'] != 'awaiting_profile'):
+                return {'success': False, 'status': 'needs_inspection', 'job': record['id'],
+                        'message': 'A target_profile requires an awaiting manual handoff. Check the job without target_profile first.'}
             if record['phase'] == 'done':
                 return {**record['result'], 'cached': True}
+            if identifier and self.mode is not None:
+                active = next((item for item in self.store.pending(owner, alias)
+                               if item['id'] != identifier and item['phase'] in ACTIVE_PHASES), None)
+                if active is not None:
+                    return {'success': False, 'status': 'needs_inspection', 'job': active['id'],
+                            'message': 'This alias has an active job. Resume that job or use another alias.'}
             self.context._choice().directory_key = record['directory_key']
             self.context.directory
             self.context._rolling = self
             try:
-                if record['phase'] in {'submitting', 'pending', 'handoff'}:
+                if record['phase'] in RECONCILE_PHASES:
                     phase = record['phase']
+                    if phase == 'handoff':
+                        self.check_handoff_files(record['handoff'])
                     self.bind(self.attempt['profile'], self.attempt['identity'])
                     probe = self.module.identify(self.context, operation, copy.deepcopy(record['params']))
                     account = probe.get('account', {})
@@ -240,7 +284,7 @@ class RollingJob:
                         observed = self.submit()
                     if not self.outcome(observed):
                         return self.record['result']
-                return self.roll()
+                return self.roll(target_profile)
             except Exception as error:
                 return self.inspect(str(error), error={'type': type(error).__name__, 'message': str(error)})
             finally:
@@ -273,6 +317,12 @@ class RollingJob:
             'directory': str(self.context.directory)}
         self.save()
 
+    @staticmethod
+    def check_handoff_files(packet):
+        files = packet['remaining'].get('files', [])
+        if not isinstance(files, list) or any(not isinstance(path, str) or not os.path.isfile(path) for path in files):
+            raise ValueError('Handoff local files are unavailable.')
+
     def outcome(self, value):
         if not isinstance(value, dict):
             self.inspect('The package must return a structured provider-request outcome.')
@@ -293,7 +343,7 @@ class RollingJob:
                              {**quota, 'observed_at': time.time()})
             with self.host.provider.lock:
                 self.context._choice().pending = False
-            self.record['phase'] = 'probing'
+            self.record['phase'] = 'awaiting_profile' if self.mode == 'manual' else 'probing'
             self.save_handoff(value)
             return True
         if state in {'accepted', 'completed'} and isinstance(identifier, str) and identifier:
@@ -312,16 +362,24 @@ class RollingJob:
             self.inspect('The provider outcome requires source reconciliation.', provider_result=value)
         return False
 
-    def roll(self):
+    def roll(self, target_profile):
+        if self.record['phase'] == 'awaiting_profile':
+            if target_profile is None:
+                return self.wait_for_profile()
+            if target_profile == self.record['handoff']['source']['profile']:
+                return self.wait_for_profile('Choose a different Chrome profile for the handoff.')
         visited, accounts = set(), set()
         round_start = len(self.record['attempts'])
         source_refusal = bool(self.record['phase'] == 'probing' and self.record['attempts']
                               and self.attempt.get('result', {}).get('status') == 'quota_exhausted')
         while True:
-            candidates = [profile for profile in self.candidates()
+            candidates = [profile for profile in self.candidates(target_profile)
                           if (profile.id, profile.identity) not in visited]
             if not candidates:
-                exhausted = source_refusal or any(attempt.get('quota', {}).get('exhausted')
+                if target_profile is not None:
+                    return self.wait_for_profile('The requested profile is unavailable or has insufficient quota. Choose another target_profile.')
+                packet = self.record.get('handoff') if self.mode == 'automatic' else None
+                exhausted = bool(packet) or source_refusal or any(attempt.get('quota', {}).get('exhausted')
                                 or attempt.get('result', {}).get('status') == 'quota_exhausted'
                                 for attempt in self.record['attempts'][round_start:])
                 status = 'quota_exhausted' if exhausted else 'needs_inspection'
@@ -332,10 +390,11 @@ class RollingJob:
                         known = self.store.quota(*key)
                         if known.get('exhausted'):
                             quotas[key] = known
-                return self.finish({'status': status,
-                                    'exhausted': list(quotas.values()),
-                                    'message': 'All current candidates are exhausted or unavailable. Resume this job after availability changes.'},
-                                   'quota_exhausted' if exhausted else 'probing')
+                result = {'status': status, 'exhausted': list(quotas.values()),
+                          'message': 'All current candidates are exhausted or unavailable. Resume this job after availability changes.'}
+                if packet:
+                    result.update(source_profile=packet['source']['profile'], handoff=packet['remaining'])
+                return self.finish(result, 'quota_exhausted' if exhausted else 'probing')
             profile = candidates[0]
             visited.add((profile.id, profile.identity))
             if not self.record['attempts'] and profile.id != self.record['next_profile']:
@@ -348,12 +407,13 @@ class RollingJob:
                     continue
                 raise
             self.record['attempts'].append({'profile': profile.id, 'identity': list(profile.identity)})
-            self.record['phase'] = 'probing'
+            if target_profile is None:
+                self.record['phase'] = 'probing'
             self.save()
             probe = self.module.identify(self.context, self.record['operation'], copy.deepcopy(self.record['params']))
             if probe.get('available') is False and probe.get('evidence'):
                 self.attempt['unavailable'] = copy.deepcopy(probe)
-                if not self.record.get('handoff'):
+                if self.mode is None and not self.record.get('handoff'):
                     self.save_handoff(probe)
                 self.save()
                 continue
@@ -363,36 +423,38 @@ class RollingJob:
                 raise ValueError('identify must provide service account evidence and the operation quota scope.')
             self.attempt.update(account=copy.deepcopy(account), scope=quota['scope'])
             key = (account['id'], quota['scope'])
-            if key in accounts:
+            source = self.record.get('handoff', {}).get('source', {})
+            same_account = self.mode is not None and account['id'] == source.get('account', {}).get('id')
+            if key in accounts or same_account:
                 self.attempt['duplicate_account'] = True
                 self.save()
+                if target_profile is not None and same_account:
+                    return self.wait_for_profile('The requested profile uses the same service account. Choose a different account.')
                 continue
             accounts.add(key)
             cached = self.store.quota(*key)
             if quota.get('available') is False and quota.get('evidence'):
                 self.attempt['quota'] = {**quota, 'exhausted': True, 'observed_at': time.time()}
                 self.store.quota(*key, self.attempt['quota'])
-                if not self.record.get('handoff'):
-                    self.save_handoff(probe)
-                self.save()
-                continue
-            if quota.get('available') is True and quota.get('evidence'):
+            elif quota.get('available') is True and quota.get('evidence'):
                 self.store.quota(*key, {**quota, 'exhausted': False, 'observed_at': time.time()})
             elif cached.get('exhausted'):
                 self.attempt['quota'] = cached
+            if 'quota' in self.attempt:
                 if not self.record.get('handoff'):
+                    if self.mode == 'manual':
+                        self.record['phase'] = 'awaiting_profile'
                     self.save_handoff(probe)
+                    if self.mode == 'manual':
+                        return self.wait_for_profile()
                 self.save()
                 continue
             if self.record.get('handoff'):
+                packet = copy.deepcopy(self.record['handoff'])
+                self.check_handoff_files(packet)
                 self.record['phase'] = 'handoff'
                 self.save()
-                packet = copy.deepcopy(self.record['handoff'])
                 packet['target'] = {'profile': profile.id, 'account': copy.deepcopy(account)}
-                remaining = packet['remaining']
-                files = remaining.get('files', [])
-                if not isinstance(files, list) or any(not isinstance(path, str) or not os.path.isfile(path) for path in files):
-                    raise ValueError('Handoff local files are unavailable.')
                 prepared = self.module.handoff(self.context, packet)
                 if prepared.get('request', {}).get('state') in {'accepted', 'completed'}:
                     self.outcome(prepared)
@@ -403,3 +465,5 @@ class RollingJob:
                 self.save()
             if not self.outcome(self.submit()):
                 return self.record['result']
+            if self.mode == 'manual':
+                return self.wait_for_profile()

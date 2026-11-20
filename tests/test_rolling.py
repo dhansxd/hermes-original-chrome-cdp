@@ -42,16 +42,161 @@ class RollingTests(ChromeFixture):
         values = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
         return [value for value in values if kind is None or value['kind'] == kind]
 
-    def invoke(self, params=None, job=None, task='A', chat='chat-A', alias='work', turn='turn'):
+    def invoke(self, params=None, job=None, task='A', chat='chat-A', alias='work', turn='turn',
+               target_profile=None):
         args = {'action': 'run', 'app': 'fixture', 'operation': 'generate', 'session': alias,
                 'params': params or {'prompt': 'fixture', 'project': 'source-project'}}
         if job:
             args['job'] = job
+        if target_profile is not None:
+            args['target_profile'] = target_profile
         with patch.dict(os.environ, {}, clear=True):
             prepared = self.host.prepare_call('browser_app', args, task, session_id=chat,
                 session_key='route-' + task, turn_id=turn, config=self.config)
         self.assertEqual(prepared['action'], 'modify', prepared)
         return json.loads(self.host.handle({**args, **prepared['args']}, task_id=task, session_id=chat))
+
+    def enable_handoff_modes(self):
+        path = self.directory / 'app.json'
+        metadata = json.loads(path.read_text())
+        metadata['handoff_mode'] = 'manual'
+        path.write_text(json.dumps(metadata))
+
+    def test_manual_handoff_keeps_partial_results_until_explicit_target_after_reload(self):
+        self.enable_handoff_modes()
+        self.scenario['profiles']['Default'].update(mode='partial', reset_at='2030-01-01')
+        self.save_scenario()
+        first = self.invoke(params={'prompt': 'fixture', 'count': 3})
+        self.assertTrue(first['awaiting_profile'], first)
+        self.assertEqual(first['source_profile'], 'Default')
+        self.assertEqual(first['quota']['reset_at'], '2030-01-01')
+        self.assertEqual(first['handoff']['remaining_count'], 2)
+        self.assertEqual([event['profile'] for event in self.events('identify')], ['Default'])
+        self.assertFalse(self.events('handoff'))
+
+        self.provider.unload()
+        self.install()
+        described = json.loads(self.host.handle({'action': 'describe', 'app': 'fixture'}, session_id='chat-A'))
+        self.assertEqual(described['jobs'][0]['phase'], 'awaiting_profile')
+        self.settings['handoff_mode.fixture'] = 'automatic'
+        self.assertTrue(self.invoke(job=first['job'])['awaiting_profile'])
+        alternative = self.invoke(params={'prompt': 'another'})
+        self.assertEqual(alternative['job'], first['job'])
+        self.assertEqual(alternative['status'], 'needs_inspection')
+
+        done = self.invoke(job=first['job'], target_profile='Profile 10')
+        self.assertTrue(done['success'], done)
+        self.assertEqual([event['profile'] for event in self.events('run')], ['Default', 'Profile 10'])
+        self.assertEqual(self.events('run')[-1]['params']['count'], 2)
+        packet = self.events('handoff')[0]['packet']
+        self.assertEqual(packet['remaining'], first['handoff'])
+        self.assertEqual(Path(packet['remaining']['files'][0]).read_text(), 'preserve completed fixture')
+        self.assertTrue(self.invoke(job=first['job'])['cached'])
+
+    def test_manual_handoff_rejects_missing_job_and_wrong_owner_or_alias(self):
+        self.enable_handoff_modes()
+        self.assertEqual(self.invoke(target_profile='Profile 2')['status'], 'failed')
+        self.assertFalse(self.events())
+        self.scenario['profiles']['Default']['available'] = False
+        self.save_scenario()
+        first = self.invoke()
+        self.assertTrue(first['awaiting_profile'], first)
+        self.assertFalse(self.events('run'))
+        for request in ({'task': 'B', 'chat': 'chat-B'}, {'alias': 'other'}):
+            result = self.invoke(job=first['job'], target_profile='Profile 2', **request)
+            self.assertEqual(result['status'], 'failed')
+        self.assertFalse(self.events('handoff'))
+
+    def test_manual_handoff_probes_only_explicit_profile_and_rejects_same_account(self):
+        self.enable_handoff_modes()
+        self.scenario['profiles']['Default'].update(account='same', mode='quota')
+        self.scenario['profiles']['Profile 2'].update(account='same', available=True)
+        self.save_scenario()
+        job = self.invoke()['job']
+        for target in ('Default', 'Profile 42', 'Profile 2'):
+            result = self.invoke(job=job, target_profile=target)
+            self.assertTrue(result['awaiting_profile'], result)
+            self.assertEqual(result['source_profile'], 'Default')
+        described = json.loads(self.host.handle({'action': 'describe', 'app': 'fixture'}, session_id='chat-A'))
+        self.assertEqual(described['jobs'][0]['profile'], 'Default')
+        self.assertEqual([event['profile'] for event in self.events('identify')], ['Default', 'Profile 2'])
+        self.assertFalse(self.events('handoff'))
+
+    def test_manual_handoff_stops_after_target_quota_rejection(self):
+        self.enable_handoff_modes()
+        for profile in ('Default', 'Profile 2'):
+            self.scenario['profiles'][profile]['mode'] = 'quota'
+        self.save_scenario()
+        first = self.invoke()
+        second = self.invoke(job=first['job'], target_profile='Profile 2')
+        self.assertTrue(second['awaiting_profile'], second)
+        self.assertEqual(second['source_profile'], 'Profile 2')
+        self.assertEqual([event['profile'] for event in self.events('run')], ['Default', 'Profile 2'])
+        done = self.invoke(job=first['job'], target_profile='Profile 10')
+        self.assertTrue(done['success'], done)
+
+    def test_manual_target_cannot_move_an_unresolved_request(self):
+        self.enable_handoff_modes()
+        self.scenario['profiles']['Default'].update(mode='accepted', resume='quota')
+        self.save_scenario()
+        pending = self.invoke()
+        target = self.invoke(job=pending['job'], target_profile='Profile 2')
+        self.assertEqual(target['status'], 'needs_inspection')
+        self.assertFalse(self.events('resume'))
+        check = self.invoke(job=pending['job'])
+        self.assertEqual(check['status'], 'needs_inspection')
+        self.assertFalse(self.events('handoff'))
+        self.assertEqual([event['profile'] for event in self.events('resume')], ['Default'])
+        self.assertEqual([event['profile'] for event in self.events('run')], ['Default'])
+
+    def test_automatic_handoff_uses_only_configured_profiles_in_order(self):
+        self.enable_handoff_modes()
+        self.settings.update({'handoff_mode.fixture': 'automatic', 'rolling_profiles.fixture': ['Profile 10']})
+        for profile in ('Default', 'Profile 10'):
+            self.scenario['profiles'][profile]['mode'] = 'quota'
+        self.save_scenario()
+        result = self.invoke()
+        self.assertEqual(result['status'], 'quota_exhausted', result)
+        self.assertEqual(result['source_profile'], 'Profile 10')
+        waiting = self.invoke(job=result['job'])
+        self.assertEqual(waiting['status'], 'quota_exhausted', waiting)
+        self.assertEqual([event['profile'] for event in self.events('run')], ['Default', 'Profile 10'])
+        self.assertEqual(self.events('handoff')[0]['packet']['target']['profile'], 'Profile 10')
+
+    def test_automatic_handoff_skips_same_account_and_continues_remaining_outputs(self):
+        self.enable_handoff_modes()
+        self.settings.update({'handoff_mode.fixture': 'automatic',
+                              'rolling_profiles.fixture': ['Profile 2', 'Profile 10', 'Default']})
+        self.scenario['profiles']['Default'].update(account='same', mode='partial')
+        self.scenario['profiles']['Profile 2'].update(account='same', available=True)
+        self.save_scenario()
+        result = self.invoke(params={'prompt': 'fixture', 'count': 3})
+        self.assertTrue(result['success'], result)
+        self.assertEqual([event['profile'] for event in self.events('identify')], ['Default', 'Profile 2', 'Profile 10'])
+        self.assertEqual([event['profile'] for event in self.events('run')], ['Default', 'Profile 10'])
+        self.assertEqual(self.events('run')[-1]['params']['count'], 2)
+
+    def test_automatic_handoff_requires_confirmed_quota(self):
+        self.enable_handoff_modes()
+        self.settings.update({'handoff_mode.fixture': 'automatic', 'rolling_profiles.fixture': ['Profile 2']})
+        self.scenario['profiles']['Default']['unavailable'] = True
+        self.save_scenario()
+        result = self.invoke()
+        self.assertEqual(result['status'], 'needs_inspection')
+        self.assertEqual([event['profile'] for event in self.events('identify')], ['Default'])
+        self.assertFalse(self.events('handoff'))
+        self.assertFalse(self.events('run'))
+
+    def test_existing_job_still_recovers_after_package_enables_modes(self):
+        self.scenario['profiles']['Default']['mode'] = 'accepted'
+        self.save_scenario()
+        pending = self.invoke()
+        self.enable_handoff_modes()
+        result = self.invoke(job=pending['job'])
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['profile'], 'Default')
+        self.assertEqual(result['request']['id'], pending['request']['id'])
+        self.assertFalse(self.events('handoff'))
 
     def test_a_b_c_rolling_maps_destination_context(self):
         self.scenario['profiles']['Default']['mode'] = 'quota'

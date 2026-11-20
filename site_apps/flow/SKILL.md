@@ -49,6 +49,35 @@ temporarily missing, recovery asks for inspection on the source job.
 A quota notice alone leaves an accepted request with missing outputs pending.
 It does not repeat Generate. Stop and tool timeouts require this recovery path.
 
+## Continue on another profile after quota exhaustion
+
+Flow defaults to manual handoff. After confirmed quota exhaustion,
+`awaiting_profile: true` means the job is ready for a destination. Use
+`source_profile` to identify the source, `quota` for confirmed information
+including reset when available, and `handoff` for saved results and remaining
+work. Ask for or use the user's explicit choice of a different Chrome profile
+and Flow account. Use `chrome_profiles` action `list` for Chrome directory IDs.
+
+```json
+{"action":"run","app":"flow","operation":"generate_video","session":"production","job":"saved-job-id","target_profile":"Profile 2","params":{}}
+```
+
+To opt in for new jobs, merge these settings under
+`plugins.entries.original-chrome-default.settings` in Hermes configuration.
+List the profiles authorized for automatic continuation in the desired order.
+
+```yaml
+handoff_mode:
+  flow: automatic
+rolling_profiles:
+  flow: [Profile 2, Profile 10]
+```
+
+Switch back with `handoff_mode.flow: manual`. A saved job keeps its original
+mode. Both modes retain completed files and continue the remaining work.
+When the job has an uncertain submission or destination preparation, resume
+with its job ID alone to reconcile the recorded profile first.
+
 ## Agent mode
 
 `mode: "agent"` uses native Agent settings and automatic approval as authorized

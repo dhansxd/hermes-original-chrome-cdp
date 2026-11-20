@@ -1,5 +1,5 @@
 name: original-chrome-default
-version: 0.10.12
+version: 0.10.13
 manifest_version: 2
 api_version: 1
 homepage: https://github.com/dhansxd/hermes-original-chrome-cdp
@@ -22,10 +22,14 @@ provides_hooks:
   - on_human_input_request
   - on_human_input_resolved
 config_schema:
+  handoff_mode:
+    type: dict
+    default: {}
+    description: Choose manual or automatic continuation for packages that declare a handoff mode.
   rolling_profiles:
     type: dict
     default: {}
-    description: Preferred Chrome directory order per rotate_on_limit app. Other current profiles follow in natural order.
+    description: Chrome directory order for automatic handoff. Packages with no handoff mode also try other current profiles.
   apps_disabled:
     type: dict
     default: {}
