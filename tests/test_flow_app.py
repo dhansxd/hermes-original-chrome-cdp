@@ -819,7 +819,8 @@ class FlowAppTests(unittest.TestCase):
         ui.wait = Mock()
         ui.mode('classic')
         self.assertIn('flow-agent-panel', ui.click.call_args_list[0].args[0])
-        self.assertEqual(ui.click.call_args_list[1].args, ('button.agent-mode-chip',))
+        self.assertEqual(ui.click.call_args_list[1].args,
+                         ('button.agent-mode-chip, flow-agent-mode-switch button',))
         self.assertIn('flow-agent-panel', ui.wait.call_args_list[0].args[0])
 
     def test_empty_error_retains_exception_type(self):

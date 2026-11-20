@@ -16,7 +16,7 @@ ORIGIN = 'https://flow.google.com'
 PROJECT_URL = re.compile(r'https://flow\.google\.com/project/[a-zA-Z0-9-]+')
 ACCOUNT_READY = """!!document.querySelector('[aria-label="Detail akun"],[aria-label="Account details"]')"""
 PROJECT_READY = """Array.from(document.querySelectorAll(
-    'button.agent-mode-chip, button.settings-trigger-button, flow-agent-panel'
+    'button.agent-mode-chip, button.settings-trigger-button, flow-agent-panel, flow-generate-icon-button button'
 )).some(node => node.getClientRects().length && getComputedStyle(node).visibility === 'visible')"""
 GENERATIONS = {'generate_image': 'image', 'generate_video': 'video'}
 GROUPS = {

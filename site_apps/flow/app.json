@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "flow",
   "name": "Google Flow",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "profile_policy": "rotate_on_limit",
   "operations": {
     "inspect": {

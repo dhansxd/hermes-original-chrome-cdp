@@ -12,7 +12,8 @@ SNAPSHOT = r'''(() => {
     copy.querySelectorAll('mat-icon,svg,[aria-hidden=true]').forEach(n=>n.remove());
     return copy.textContent.trim().replace(/\s+/g,' ').replace(/^🍌\s*/,'');
   };
-  const agent = document.querySelector('button.agent-mode-chip')?.getAttribute('aria-pressed') === 'true'
+  const agent = Array.from(document.querySelectorAll('button.agent-mode-chip, flow-agent-mode-switch button'))
+    .some(button => visible(button) && button.getAttribute('aria-pressed') === 'true')
     || Array.from(document.querySelectorAll('flow-agent-panel')).some(visible);
   const pane = Array.from(document.querySelectorAll('flow-prompt-box-settings,flow-settings-view')).find(visible);
   const groupSelector = pane?.tagName === 'FLOW-PROMPT-BOX-SETTINGS' ? 'flow-toggles' : 'mat-button-toggle-group';
@@ -129,9 +130,8 @@ class UI:
             self.click('flow-agent-panel button.header-action[aria-label="Tutup"],'
                        'flow-agent-panel button.header-action[aria-label="Close"]')
             self.wait("!Array.from(document.querySelectorAll('flow-agent-panel')).some(e=>e.getClientRects().length)")
-        self.click('button.agent-mode-chip')
-        self.wait("document.querySelector('button.agent-mode-chip')?.getAttribute('aria-pressed') === "
-                  + json.dumps('true' if mode == 'agent' else 'false'))
+        self.click('button.agent-mode-chip, flow-agent-mode-switch button')
+        self.wait(f'({SNAPSHOT}).mode === {json.dumps(mode)}')
 
     def settings(self, mode):
         if mode == 'classic':
