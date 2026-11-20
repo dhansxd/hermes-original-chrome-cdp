@@ -1,5 +1,5 @@
 name: original-chrome-default
-version: 0.10.16
+version: 0.10.17
 manifest_version: 2
 api_version: 1
 homepage: https://github.com/dhansxd/hermes-original-chrome-cdp
@@ -41,7 +41,7 @@ config_schema:
   apps_directory:
     type: str
     default: ''
-    description: User-owned site packages directory. Empty uses ~/.hermes/browser-apps.
+    description: User-owned site packages directory. Empty uses browser-apps under the active Hermes profile.
   profile_directory:
     type: str
     default: Default

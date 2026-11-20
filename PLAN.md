@@ -556,6 +556,8 @@ identitas media dan file asli dapat dikaitkan dengan permintaan asal.
   Observasi Dock selama penerimaan mencatat satu ikon Chrome pada sampel valid.
 - [ ] **REL-01** Kedua paket awal tersedia pada instalasi bersih dan dapat dipanggil
   Hermes. Catat versi host/paket, source, dan permukaan CLI/kanal yang diuji.
+  Tambahan pada 0.10.17 memastikan penyalinan awal paket mengikuti direktori
+  profil Hermes aktif, termasuk `HERMES_HOME` kustom.
 - [ ] **REL-02** Update host mempertahankan paket pengguna, lalu tambah/update/
   disable/remove extension tambahan melalui kontrak yang sama.
 - [ ] **REL-03** README, tutorial, template dan panduan menjelaskan ekstensi,

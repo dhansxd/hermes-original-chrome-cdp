@@ -14,6 +14,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from hermes_constants import get_hermes_home
+
 if __package__:
     from .rolling import HANDOFF_MODES, JobStore, RollingJob
 else:
@@ -313,7 +315,7 @@ class AppHost:
     def root(self):
         configured = self.get_setting('apps_directory')
         if configured is None or configured == '':
-            return Path.home() / '.hermes' / 'browser-apps'
+            return get_hermes_home() / 'browser-apps'
         if not isinstance(configured, str):
             raise ValueError('apps_directory must name the user extension directory.')
         return Path(configured).expanduser().resolve()

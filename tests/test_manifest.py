@@ -12,6 +12,7 @@ class ManifestTests(unittest.TestCase):
             'agent.browser_provider': {'BrowserProvider'},
             'gateway.session_context': {'get_session_env'},
             'hermes_cli.config': {'load_config_readonly'},
+            'hermes_constants': {'get_hermes_home'},
             'tools.browser_supervisor': {'SUPERVISOR_REGISTRY'},
         }
         core = {'agent', 'gateway', 'hermes_cli', 'hermes_constants', 'tools', 'utils', 'pm', 'browser_harness'}

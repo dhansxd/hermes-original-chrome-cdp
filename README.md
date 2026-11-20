@@ -25,8 +25,9 @@ Agent rolling both produced original MP4 files, with the Agent test run by Herme
 Provider quota-reset acceptance and the Gemini package follow the open checklist in
 [PLAN.md](PLAN.md).
 
-On first package discovery, the bundled Flow template is copied to
-`~/.hermes/browser-apps/flow`, or the configured `apps_directory`. Existing user
+On first package discovery, bundled site packages are copied to `browser-apps/`
+in the active Hermes profile, or the configured `apps_directory`. The default
+profile uses `~/.hermes/browser-apps`. Existing user
 packages and persistent disable/remove choices are preserved during host updates.
 The installed copy is editable independently of this plugin. Read its current
 operations and guide with `browser_app` action `describe`, app `flow`.
@@ -127,7 +128,7 @@ current IDs and display names from Chrome metadata. The final component of
 | `browser.auto_local_for_private_urls: false` | Keeps Hermes's private-URL sidecar from choosing another browser backend |
 | `browser.use_real_profile: false` | Leaves profile attachment to this provider |
 | `plugins.entries.original-chrome-default.settings.profile_directory` | Default existing Chrome profile for new sessions |
-| `plugins.entries.original-chrome-default.settings.apps_directory` | External package root, defaulting to `~/.hermes/browser-apps` |
+| `plugins.entries.original-chrome-default.settings.apps_directory` | External package root, defaulting to `browser-apps/` in the active Hermes profile |
 
 Clear competing `browser.cdp_url`, `BROWSER_CDP_URL`, `BU_CDP_URL`, and `BU_CDP_WS`
 overrides when selecting this provider. Hermes's normal private-URL permissions
@@ -215,7 +216,8 @@ agents share the same Chrome profile.
 {"action": "run", "app": "my-site", "operation": "inspect", "session": "work", "params": {}}
 ```
 
-Create packages in `~/.hermes/browser-apps/<id>/`, or configure `apps_directory`.
+Create packages in `browser-apps/<id>/` within the active Hermes profile, or
+configure `apps_directory`.
 The package contains `app.json`, `app.py`, and an optional `SKILL.md`. The ID must
 match its directory and use letters, numbers, underscores, or hyphens. The first
 character is a letter or number. `describe` supplies operation parameter schemas

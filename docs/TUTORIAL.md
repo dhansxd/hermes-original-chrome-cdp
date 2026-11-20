@@ -197,11 +197,12 @@ generation parameters. Credit balances are observations from the current page.
 
 ## Create a website extension
 
-Version 0.8.0 provides `browser_app`. Your packages live in `~/.hermes/browser-apps`,
+Your packages live in `browser-apps/` within the active Hermes profile,
 independently of the installed plugin. A different root can be set through
 `plugins.entries.original-chrome-default.settings.apps_directory`.
 
-Create `~/.hermes/browser-apps/my-site/app.json` with the following content.
+In the default profile, create `~/.hermes/browser-apps/my-site/app.json` with
+the following content.
 
 ```json
 {

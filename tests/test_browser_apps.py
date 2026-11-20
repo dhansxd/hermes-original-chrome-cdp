@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import browser_apps
 import plugin
@@ -55,6 +57,20 @@ class BrowserAppTests(unittest.TestCase):
         args.update(prepared['args'])
         result = json.loads(self.host.handle(args, task_id=task, session_id=chat))
         return result
+
+    def test_bundled_site_packages_default_to_the_current_hermes_profile(self):
+        self.settings.pop('apps_directory')
+        self.host.bundled_source = Path(browser_apps.__file__).parent / 'site_apps'
+        for profile in (self.root / 'profile-a', self.root / 'profile-b'):
+            token = set_hermes_home_override(profile)
+            try:
+                result = json.loads(self.host.handle({'action': 'list'}))
+            finally:
+                reset_hermes_home_override(token)
+            self.assertTrue(result['success'], result)
+            self.assertEqual(Path(result['directory']), profile / 'browser-apps')
+            self.assertTrue((profile / 'browser-apps' / 'gemini' / 'app.json').is_file())
+            self.assertTrue((profile / 'browser-apps' / 'flow' / 'app.json').is_file())
 
     def test_catalog_and_guide_do_not_execute_package(self):
         directory = self.package(source='raise RuntimeError("must not execute on discovery")')
