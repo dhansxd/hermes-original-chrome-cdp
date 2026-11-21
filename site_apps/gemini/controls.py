@@ -1,5 +1,6 @@
 """Small Gemini UI actions on the Chrome page owned by this browser session."""
 
+import fcntl
 import json
 from pathlib import Path
 
@@ -34,7 +35,8 @@ receipt = None
 
 def read(kind, name=None, label=None):
     global receipt
-    inputs = ','.join(json.dumps(value) for value in (origin, selectors, kind, name, label, research_state, saved_submission))
+    inputs = ','.join(json.dumps(value) for value in (
+        origin, selectors, kind, name, label, research_state, saved_submission, dispatch_send))
     state = js('(' + ui + ')(' + inputs + ')')
     if state.get('_research_receipt'):
         receipt = state['_research_receipt']
@@ -146,7 +148,12 @@ def run():
                     'data': {'control': argument, 'clicked': False, 'mode_active': True}}
     state = choose_tool(argument) if argument in tool_items else wait_for('control', argument)
     if state['reason'] != 'ready':
-        return blocked(argument, state)
+        result = blocked(argument, state)
+        if dispatch_send and state['reason'] != 'research_submission_pending':
+            result['_send_not_dispatched'] = True
+        return result
+    if state.get('_research_intent'):
+        return {'status': 'ok', '_research_intent': state['_research_intent']}
     click(state)
     if argument == 'deep_research':
         active = wait_for('research_mode')
@@ -168,28 +175,14 @@ print(marker + json.dumps(result, ensure_ascii=False))
 '''
 
 
-def execute(context, origin, operation, argument=None, *, navigation=''):
-    # Keep the selected mode specific to this owned browser session. A replaced
-    # document must not silently downgrade a research submission to ordinary chat.
-    marker = context.directory / 'deep-research-selected'
-    checkpoint = context.directory / 'checkpoint.json'
-    if operation == 'click' and argument == 'deep_research':
-        marker.touch()
+def load_submission(checkpoint):
     try:
-        research_state = marker.read_text() or 'selected'
-    except FileNotFoundError:
-        research_state = None
-    saved_submission = None
-    if research_state == 'submitted':
-        try:
-            saved_submission = json.loads(checkpoint.read_text()).get('research_submission')
-        except (FileNotFoundError, ValueError, AttributeError):
-            pass
-    values = {
-        'origin': origin, 'selectors': SELECTORS, 'ui': CONTROL_UI, 'op': operation,
-        'argument': argument, 'tool_items': sorted(TOOL_ITEMS), 'marker': MARKER,
-        'research_state': research_state, 'saved_submission': saved_submission,
-    }
+        return json.loads(checkpoint.read_text()).get('research_submission')
+    except (FileNotFoundError, ValueError, AttributeError):
+        return None
+
+
+def run_native(context, values, navigation=''):
     code = navigation + ''.join(f'{key} = {value!r}\n' for key, value in values.items()) + NATIVE
     result = context.browser_exec(code, timeout_s=25)
     if result.get('success') and not result.get('exit_code', 0):
@@ -201,21 +194,58 @@ def execute(context, origin, operation, argument=None, *, navigation=''):
             except ValueError:
                 value = None
             if isinstance(value, dict):
-                changed_page = value.pop('_changed_page', False)
-                same_submission = value.pop('_same_submission', True)
-                receipt = value.pop('_research_receipt', None)
-                if value.get('status') == 'ok' and (changed_page or
-                        (operation == 'click' and argument in TOOL_ITEMS - {'deep_research'})):
-                    marker.unlink(missing_ok=True)
-                    checkpoint.unlink(missing_ok=True)
-                elif not same_submission and research_state == 'submitted':
-                    marker.write_text('')
-                    checkpoint.unlink(missing_ok=True)
-                elif operation == 'click' and argument == 'send' and value.get('data', {}).get('mode_active'):
-                    checkpoint.unlink(missing_ok=True)
-                    marker.write_text('submitted')
-                elif research_state == 'submitted' and receipt and receipt != saved_submission:
-                    context.checkpoint({'research_submission': receipt})
                 return value
     return {'status': 'needs_inspection', 'data': {'reason': 'action_unconfirmed'},
             'message': 'Inspect this browser session before repeating the action.'}
+
+
+def dispatch_research(context, checkpoint, values, intent, previous):
+    # Serialize research sends for this owner across the checkpoint and click.
+    with (checkpoint.parent / 'research-send.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if load_submission(checkpoint) != previous:
+            return {'status': 'needs_inspection', 'data': {'reason': 'research_submission_pending'},
+                    'message': 'Check the existing submission in this browser session.'}
+        context.checkpoint({'research_submission': intent})
+        result = run_native(context, {**values, 'research_state': 'submitted',
+                                      'saved_submission': intent, 'dispatch_send': True})
+        if result.pop('_send_not_dispatched', False):
+            context.checkpoint({'research_submission': previous})
+        return result
+
+
+def execute(context, origin, operation, argument=None, *, navigation=''):
+    # Keep the selected mode specific to this owned browser session. A replaced
+    # document must not silently downgrade a research submission to ordinary chat.
+    marker = context.directory / 'deep-research-selected'
+    checkpoint = context.directory / 'checkpoint.json'
+    if operation == 'click' and argument == 'deep_research':
+        marker.touch()
+    try:
+        research_state = marker.read_text() or 'selected'
+    except FileNotFoundError:
+        research_state = None
+    saved_submission = load_submission(checkpoint)
+    if saved_submission:
+        research_state = 'submitted'
+    values = {
+        'origin': origin, 'selectors': SELECTORS, 'ui': CONTROL_UI, 'op': operation,
+        'argument': argument, 'tool_items': sorted(TOOL_ITEMS), 'marker': MARKER,
+        'research_state': research_state, 'saved_submission': saved_submission, 'dispatch_send': False,
+    }
+    result = run_native(context, values, navigation)
+    intent = result.pop('_research_intent', None)
+    if intent:
+        return dispatch_research(context, checkpoint, values, intent, saved_submission)
+    changed_page = result.pop('_changed_page', False)
+    same_submission = result.pop('_same_submission', True)
+    receipt = result.pop('_research_receipt', None)
+    if result['status'] == 'ok' and (changed_page or (operation == 'click' and argument in TOOL_ITEMS - {'deep_research'})):
+        marker.unlink(missing_ok=True)
+        checkpoint.unlink(missing_ok=True)
+    elif not same_submission and research_state == 'submitted' and not (saved_submission or {}).get('prompt_hash'):
+        marker.write_text('')
+        checkpoint.unlink(missing_ok=True)
+    elif research_state == 'submitted' and receipt and receipt != saved_submission:
+        context.checkpoint({'research_submission': receipt})
+    return result

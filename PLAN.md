@@ -244,8 +244,32 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      ulang, uji menolak chat lain dan giliran yang salah, lalu membaca
      kembali progres, melakukan satu konfirmasi, dan membuka laporan yang
      benar. Uji terpisah melewati batas idle dengan skrip tunggu yang
-     bergantian membaca halaman dan hanya menunggu. Patch ada di repo
-     lokal. Pemasangan dan uji Telegram versi ini masih terbuka.
+     bergantian membaca halaman dan hanya menunggu. Hermes memasang host
+     0.11.6 dari commit `a6a2f99` setelah melepas versi sebelumnya.
+     Paket Gemini 0.4.7 cocok dengan bundel commit tersebut dan gateway
+     mengonfirmasi katalog baru berlaku pada sesi berikutnya.
+     Uji Telegram mengirim topik sekali. Pembacaan hasil pertama pukul
+     22.14 WIB mengembalikan `research_submission_unconfirmed`. DOM
+     menampilkan topik yang dikirim, sementara penanda `submitted` belum
+     mempunyai checkpoint. Jejak tool belum memuat perintah navigasi atau
+     muat ulang sebelum kegagalan itu. Uji DOM sintetis mereproduksi
+     kegagalan saat dokumen berganti sebelum checkpoint. Dengan checkpoint
+     yang cocok, pembacaan pada dokumen pengganti mengembalikan `running`.
+     Penyebab hilangnya konteks pada uji Telegram belum terkonfirmasi.
+     Jendela juga tercatat ditutup oleh Hermes setelah 141 detik idle.
+   - [x] Pulihkan kiriman Deep Research sebelum giliran pertama terverifikasi.
+     Gunakan pola balasan Gemini dari commit `f679cf0` dan aturan di
+     [HANDOFF.md](HANDOFF.md): simpan intent, hash topik, dan jangkar
+     percakapan sebelum klik Kirim. Pada jendela dan profil asal, cocokkan
+     giliran baru terhadap jangkar tersebut sebelum menyimpan identitasnya.
+     Jika hasil pengiriman belum pasti, periksa sumber tanpa mengirim ulang.
+     Uji pergantian dokumen tepat setelah klik Kirim, pergantian dari chat
+     baru ke URL percakapan, dan penolakan giliran yang tidak cocok.
+     Host 0.11.7 dan Gemini 0.4.8 lulus 441 tes otomatis. Uji Chrome asli
+     pada halaman lokal membuktikan pemulihan sebelum pembacaan pertama
+     baik di chat yang dimuat ulang maupun setelah chat baru mendapat URL.
+     Uji juga menolak topik yang berbeda dan draft yang berubah sebelum klik.
+     Pengujian Gemini Web sampai laporan diterima di Telegram masih terbuka.
    - Temuan Telegram 0.11.2 di percakapan yang sudah ada: setelah satu
      submit Deep Research, 32 panggilan `observe` tanpa selector membaca
      teks “Membuat rencana riset” pada sesi yang sama hingga pengguna

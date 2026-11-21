@@ -166,16 +166,25 @@ class GeminiAppTests(ChromeFixture):
         selection = self.call(action='run', operation='click', params={'control': 'deep_research'})
         self.assertEqual(selection['data'], {'control': 'deep_research', 'clicked': False, 'mode_active': True})
         self.click.assert_not_called()
-        self.js.return_value = {'reason': 'ready', 'mode_active': True, 'point': [2, 3]}
+        self.js.side_effect = [self.research_send_state(), {'reason': 'ready', 'mode_active': True, 'point': [2, 3]}]
         self.assertTrue(self.call(action='run', operation='click', params={'control': 'send'})['data']['mode_active'])
+        self.js.side_effect = None
         self.js.return_value = {'reason': 'running', 'stage': 'awaiting_response', 'chat_id': 'c_test'}
         with patch('browser_apps.OBSERVATION_INTERVAL', 0):
             self.assertEqual(self.call(operation='read_result')['data']['stage'], 'awaiting_response')
         self.assertIn('"submitted"', self.js.call_args.args[0].splitlines()[-1])
 
     def test_research_reader_restores_only_a_verified_receipt_from_its_session(self):
-        self.js.return_value = {'reason': 'ready', 'mode_active': True, 'point': [2, 3]}
+        prepared = self.research_send_state()
+        intent = prepared['_research_intent']
+
+        def verify_checkpoint(x, y):
+            persisted, = (self.data / 'plugin-data/browser-apps/gemini').glob('*/checkpoint.json')
+            self.assertEqual(json.loads(persisted.read_text()), {'research_submission': intent})
+        self.click.side_effect = verify_checkpoint
+        self.js.side_effect = [prepared, {'reason': 'ready', 'mode_active': True, 'point': [2, 3]}]
         self.call(action='run', operation='click', params={'control': 'send'})
+        self.js.side_effect = None
         receipt = {'chat': 'c_fixture', 'id': 'verified-topic'}
         with patch('browser_apps.OBSERVATION_INTERVAL', 0):
             self.js.return_value = {'reason': 'running', 'stage': 'planning', 'chat_id': 'c_fixture',
@@ -183,6 +192,7 @@ class GeminiAppTests(ChromeFixture):
             result = self.call(operation='read_result')
             self.assertNotIn('_research_receipt', result)
             self.assertNotIn('verified-topic', self.js.call_args.args[0])
+            self.assertIn(json.dumps(intent), self.js.call_args.args[0])
             persisted, = (self.data / 'plugin-data/browser-apps/gemini').glob('*/checkpoint.json')
             self.assertEqual(json.loads(persisted.read_text()), {'research_submission': receipt})
             self.js.return_value = {'reason': 'running', 'stage': 'plan_ready', 'chat_id': 'c_fixture',
@@ -193,6 +203,37 @@ class GeminiAppTests(ChromeFixture):
         self.assertEqual(resumed['session'], result['session'])
         self.click.assert_called_once_with(2, 3)
         self.navigate.assert_not_called()
+
+    @staticmethod
+    def research_send_state():
+        return {'reason': 'ready', 'mode_active': True, 'point': [2, 3], '_research_intent': {
+            'chat': None, 'home': '/app', 'previous': None, 'document': 42,
+            'prompt_hash': hashlib.sha256(b'Fixture topic').hexdigest(),
+        }}
+
+    def test_ambiguous_research_click_keeps_intent_for_reading(self):
+        prepared = self.research_send_state()
+        self.js.side_effect = [prepared, {'reason': 'ready', 'mode_active': True, 'point': [2, 3]}]
+
+        def lose_click_result(tool, args, **context):
+            result = self.native(tool, args, **context)
+            return {'success': False} if self.click.called else result
+
+        self.dispatch.side_effect = lose_click_result
+        result = self.call(operation='click', params={'control': 'send'})
+        self.assertEqual(result['data']['reason'], 'action_unconfirmed')
+        persisted, = (self.data / 'plugin-data/browser-apps/gemini').glob('*/checkpoint.json')
+        self.assertEqual(json.loads(persisted.read_text())['research_submission'], prepared['_research_intent'])
+        self.click.assert_called_once_with(2, 3)
+
+    def test_changed_research_composer_withholds_click_and_discards_intent(self):
+        self.js.side_effect = [self.research_send_state(), {'reason': 'research_composer_changed'}]
+        result = self.call(operation='click', params={'control': 'send'})
+        self.assertEqual(result['data']['reason'], 'research_composer_changed')
+        self.assertNotIn('_send_not_dispatched', result)
+        persisted, = (self.data / 'plugin-data/browser-apps/gemini').glob('*/checkpoint.json')
+        self.assertIsNone(json.loads(persisted.read_text())['research_submission'])
+        self.click.assert_not_called()
 
     def test_type_prompt_verifies_focus_and_preserves_send(self):
         ready = {'reason': 'ready', 'point': [10, 20], 'value': '', 'document': 10, 'chat_id': 'c_fixture'}

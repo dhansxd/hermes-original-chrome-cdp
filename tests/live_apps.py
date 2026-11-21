@@ -72,9 +72,9 @@ def verify_research_panel(call, session, url, source):
     # Render the research stages locally, without starting research or generating content.
     ui = (source / 'site_apps/gemini/controls.js').read_text()
     code = f"goto_url({(url + '/app/fixture')!r})\nui = {ui!r}\n" + r'''import json
-def read(kind='result', name=None, state=None, saved=None):
+def read(kind='result', name=None, state=None, saved=None, dispatch=False):
     selectors = {'composer': '[role=textbox][contenteditable=true]', 'send': '#send'}
-    params = ','.join(json.dumps(v) for v in (selectors, kind, name, None, state, saved))
+    params = ','.join(json.dumps(v) for v in (selectors, kind, name, None, state, saved, dispatch))
     return js('(' + ui + ')(location.origin,' + params + ')')
 js("""document.body.innerHTML = '<model-response><thinking-overlay>Membuat rencana riset</thinking-overlay></model-response>'""")
 assert read()['stage'] == 'planning'
@@ -101,20 +101,30 @@ assert read('control', 'send', 'selected')['reason'] == 'deep_research_not_activ
 js("""document.querySelector('fieldset').insertAdjacentHTML('beforeend',
     '<gem-button data-test-id="deselect-drawer-item-gem-button"><button aria-label="Batalkan pilihan Deep Research">Deep Research</button></gem-button>')""")
 assert read('research_mode')['reason'] == 'ready'
-send = read('control', 'send', 'selected')
-assert send['mode_active']
+intent = read('control', 'send', 'selected')['_research_intent']
+assert intent['chat'] == 'c_fixture' and intent['previous'] == 'previous'
+js("document.querySelector('[role=textbox]').innerText = 'Changed draft'")
+assert read('control', 'send', 'submitted', intent, True)['reason'] == 'research_composer_changed'
+js("document.querySelector('[role=textbox]').innerText = 'Same question'")
+send = read('control', 'send', 'submitted', intent, True)
 click_at_xy(*send['point'])
 assert js('window.sends') == 1
-assert read('control', 'send', 'submitted')['reason'] == 'research_submission_pending'
-assert read('result', state='submitted')['stage'] == 'awaiting_response'
-assert read('activate_research','start_research','submitted')['reason'] != 'clicked'
+assert read('control', 'send', 'submitted', intent)['reason'] == 'research_submission_pending'
+markup = js('document.body.innerHTML')
+opened = js('performance.timeOrigin')
+js('setTimeout(() => location.reload(), 0)')
+assert wait_for_element('#field', timeout=10)
+assert js('performance.timeOrigin') != opened
+js('document.body.innerHTML = ' + json.dumps(markup))
+assert read('result', state='submitted', saved=intent)['stage'] == 'awaiting_response'
+assert read('activate_research','start_research','submitted', intent)['reason'] != 'clicked'
 js("""document.body.insertAdjacentHTML('beforeend',
     '<div class="conversation-container" id="new"><user-query><p class="query-text-line">Other prompt</p></user-query></div>')""")
-assert read('result', state='submitted')['reason'] == 'research_prompt_mismatch'
+assert read('result', state='submitted', saved=intent)['reason'] == 'research_prompt_mismatch'
 js("""document.querySelector('#new p').textContent='Same question';
       document.querySelector('#new').insertAdjacentHTML('beforeend','<model-response><message-content>New reply</message-content></model-response>');
       document.body.insertAdjacentHTML('beforeend','<div class="conversation-container" id="later"><user-query>Another task</user-query><model-response><message-content>Unrelated answer</message-content></model-response></div>')""")
-assert read('result', state='submitted')['text'] == 'New reply'
+assert read('result', state='submitted', saved=intent)['text'] == 'New reply'
 js("""document.querySelector('#later').remove();
       document.querySelector('#new').insertAdjacentHTML('afterend', `
       <div class="conversation-container" id="topic">
@@ -178,8 +188,29 @@ assert read('result', state='submitted')['stage'] == 'report_available'
 assert read('activate_research', 'open_research_report', 'submitted')['reason'] == 'clicked'
 assert read('result', state='submitted')['text'] == 'Research report body'
 assert read('activate_research', 'open_research_report', 'submitted')['reason'] == 'already_clicked'
+
+# A first submission starts on /app, then loads a new conversation document.
+goto_url(js('location.origin') + '/app')
+js("""document.body.innerHTML = `
+    <fieldset><div role="textbox" contenteditable="true">Fresh topic</div><button id="send">Send</button>
+    <gem-button data-test-id="deselect-drawer-item-gem-button"><button aria-label="Deselect Deep Research">Deep Research</button></gem-button>
+    </fieldset>`;
+    document.querySelector('#send').onclick = () => location.assign('/app/new-chat');""")
+fresh = read('control', 'send', 'selected')['_research_intent']
+assert fresh['chat'] is None and fresh['previous'] is None
+send = read('control', 'send', 'submitted', fresh, True)
+click_at_xy(*send['point'])
+assert wait_for_element('#field', timeout=10)
+assert js('location.pathname') == '/app/new-chat'
+js("""document.body.innerHTML = `<div class="conversation-container" id="fresh-turn">
+    <user-query><p class="query-text-line">Fresh topic</p></user-query>
+    <model-response><thinking-overlay>Membuat rencana riset</thinking-overlay></model-response></div>`;""")
+fresh_result = read('result', state='submitted', saved=fresh)
+assert fresh_result['stage'] == 'planning'
+assert fresh_result['_research_receipt'] == {'chat': 'c_new-chat', 'home': '/app', 'id': 'fresh-turn'}
 '''
-    return call('parent', session=session, code=code)
+    result = call('parent', session=session, code=code)
+    assert result['success'] and result.get('exit_code', 0) == 0, result
 
 
 def verify():
