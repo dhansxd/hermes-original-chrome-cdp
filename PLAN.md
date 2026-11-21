@@ -1,6 +1,6 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 17, 21 November 2026.
+Revisi PRD 18, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
@@ -107,6 +107,19 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      Sebanyak 425 tes otomatis lulus. Fixture perpindahan profil juga
      memverifikasi pemulihan permintaan asal tanpa submit ulang dan jumlah
      jendela Chrome kembali ke kondisi awal.
+   - [x] Pasang commit `3be8e6f` dari GitHub dengan `hermes plugins install --ref`
+     di profil Hermes kosong. Aktifkan plugin, beri izin `tools.override`, pilih
+     provider ini, dan sertakan toolset Browser serta Terminal. Registry memuat
+     `browser_exec` dengan `site_control` dan tidak memuat `browser_app`.
+     Hermes menempatkan kedua paket situs di profil uji. Dalam percakapan baru
+     melalui 9Router, Gemini membuka menu alat lewat kontrol `tools_menu`;
+     pembacaan DOM pada sesi yang sama mengonfirmasi “Buat gambar” dan “Buat video”.
+     Ada percobaan ekstra: model sempat menaruh JSON kontrol di `code`. Python
+     mengembalikan output kosong. Klik baru terverifikasi setelah model mengirim
+     permintaan lewat `site_control`. Sesi baru kedua melalui CLI dan konfigurasi
+     provider 9Router menggunakan `open_chat`, `model_picker` dan pembacaan DOM
+     untuk melaporkan pilihan model. Tanpa toolset Terminal, Hermes menyaring
+     `browser_exec` dari katalog percakapan.
    - [ ] Lulus `hermes plugins validate` untuk katalog publik. Hermes mendukung
      perluasan handler melalui izin `tools.override` pada profil pengguna.
      Validator katalog tetap melaporkan benturan nama `browser_exec` ketika
@@ -116,6 +129,31 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
    lama. Tugas yang masih berjalan harus tetap dilanjutkan. Verifikasi hasil
    dan setiap unduhan atau pengiriman yang diminta sebelum jawaban akhir.
    Setelah itu ukur cleanup jendela milik tugas dan pastikan jendela lain utuh.
+   - [x] Pada instalasi GitHub di atas, Hermes melalui 9Router menjalankan
+     tugas di situs uji lokal lewat Chrome asli. Satu kali submit, tiga status
+     tertunda, lalu kode hasil acak muncul di halaman dan diterima di jawaban
+     akhir. Selama 61 detik, 156 sampel jendela dan identitas dokumen yang
+     dibaca pada setiap operasi menunjukkan satu jendela yang sama. Setelah
+     giliran selesai jumlah jendela kembali ke kondisi awal.
+   - [x] Ulangi dengan model uji yang sengaja mengirim empat kandidat jawaban
+     akhir saat pekerjaan masih berjalan. Hermes meneruskan keempatnya dalam
+     giliran yang sama dan mengembalikan kode hasil sesudah situs siap. Pada
+     keluaran streaming, teks progres masih dapat terlihat. Satu jendela
+     pembanding tetap terbuka saat jendela tugas ditutup.
+   - [x] Uji unduh dan kirim berkas melalui UI Chrome. Hermes lewat 9Router
+     menunggu laporan siap, mengunduh berkas, mengunggahnya ke kotak penerima
+     di situs uji lokal, lalu mengembalikan nomor tanda terima di chat.
+     Penerima dan penguji mencocokkan seluruh 3.001 byte. Satu dokumen dan
+     satu jendela dipakai dari submit sampai pengiriman, dengan dua jendela
+     pembanding kembali utuh sesudah cleanup. Pengiriman lampiran ke Telegram
+     pada instalasi utama masih belum diuji dengan cabang ini.
+   - Pada percobaan berkas pertama, isi unduhan dan tanda terima benar, tetapi
+     pemeriksaan jendela pembanding gagal. Percobaan terpisah mereproduksi
+     penutupan jendela pembanding yang tidak melakukan panggilan browser selama
+     120 detik. Log `tools.browser_session_lifecycle` mencatat pembersihan sesi
+     tersebut karena inaktivitas. Jendela pembanding yang terus memeriksa
+     dokumennya mempertahankan dokumen yang sama. Batas bawaan Hermes ini
+     perlu diperhitungkan untuk pekerjaan dengan jeda panjang antarpanggilan.
 4. [x] Perjelas panduan Flow dalam paket situs. Panel yang tertutup berarti
    kontrol belum terlihat. Gunakan `configure` untuk membaca pilihan setelah
    mode dan model terpilih. Di Klasik, gunakan UI untuk spesifikasi yang
