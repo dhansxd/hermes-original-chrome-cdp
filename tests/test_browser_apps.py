@@ -268,10 +268,15 @@ class BrowserAppTests(unittest.TestCase):
         with patch('browser_apps.OBSERVATION_INTERVAL', 0):
             session = self.invoke(operation='click', params={'status': 'running'})['session']
             inspect = self.invoke(operation='read_result', params={'status': 'needs_inspection'})
+            self.dispatch.return_value = json.dumps({'success': True, 'output': json.dumps({
+                'visible': 'Research still in progress', 'result': None})})
+            follow = json.loads(self.host.handle(inspect['next_control'] | {'session': session},
+                task_id='A', session_id='chat-A', turn_id='turn'))
         work = self.host.running_work('A', 'chat-A', 'turn')
         self.assertIn(session, work)
         self.assertFalse(work[session][2])
         self.assertEqual(inspect['next_control'], {'app': 'fixture', 'action': 'observe'})
+        self.assertEqual(follow['next_control'], inspect['next_control'])
         self.assertEqual(inspect['session'], session)
 
     def test_native_wait_checks_the_current_site_result_until_complete(self):
@@ -328,10 +333,11 @@ class BrowserAppTests(unittest.TestCase):
         native.reset_mock()
         self.dispatch.return_value = json.dumps({'success': True, 'output': json.dumps({
             'visible': 'Still researching', 'result': None})})
-        with patch('browser_apps.monotonic', return_value=1020):
-            result = json.loads(self.dispatch_native({'session': session, 'code': wait}, native, **owner))
-        self.assertEqual((result['status'], result['page']['visible']), ('running', 'Still researching'))
-        self.assertEqual(result['session'], session)
+        for index, code in enumerate((wait, 'import time\ntime.sleep(120)'), 1):
+            with patch('browser_apps.monotonic', return_value=1000 + index * 20):
+                result = json.loads(self.dispatch_native({'session': session, 'code': code}, native, **owner))
+            self.assertEqual((result['status'], result['page']['visible']), ('running', 'Still researching'))
+            self.assertEqual(result['session'], session)
         native.assert_not_called()
 
     def test_stop_during_dom_observation_preserves_peer_and_prevents_page_read(self):

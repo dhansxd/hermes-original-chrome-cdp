@@ -72,9 +72,9 @@ def verify_research_panel(call, session, url, source):
     # Render the research stages locally, without starting research or generating content.
     ui = (source / 'site_apps/gemini/controls.js').read_text()
     code = f"goto_url({(url + '/app/fixture')!r})\nui = {ui!r}\n" + r'''import json
-def read(kind='result', name=None, state=None):
+def read(kind='result', name=None, state=None, saved=None):
     selectors = {'composer': '[role=textbox][contenteditable=true]', 'send': '#send'}
-    params = ','.join(json.dumps(v) for v in (selectors, kind, name, None, state))
+    params = ','.join(json.dumps(v) for v in (selectors, kind, name, None, state, saved))
     return js('(' + ui + ')(location.origin,' + params + ')')
 js("""document.body.innerHTML = '<model-response><thinking-overlay>Membuat rencana riset</thinking-overlay></model-response>'""")
 assert read()['stage'] == 'planning'
@@ -119,17 +119,34 @@ js("""document.querySelector('#later').remove();
       document.querySelector('#new').insertAdjacentHTML('afterend', `
       <div class="conversation-container" id="topic">
         <user-query><p class="query-text-line">Research topic</p></user-query>
-        <model-response><message-content>Research plan only</message-content>
-          <deep-research-confirmation-widget><button>Mulai penelitian</button></deep-research-confirmation-widget>
-        </model-response>
+        <model-response><thinking-overlay>Membuat rencana riset</thinking-overlay></model-response>
       </div>`);
-      const start = document.querySelector('#topic button');
-      start.onclick = () => {window.starts++; start.disabled = true};
       window[Symbol.for('hermes.gemini.researchSubmission')] = {chat: 'c_fixture', id: 'topic'};""")
+planning = read('result', state='submitted')
+assert planning['stage'] == 'planning'
+saved = planning['_research_receipt']
+assert saved == {'chat': 'c_fixture', 'id': 'topic'}
+markup = js('document.body.innerHTML')
+original_document = js('performance.timeOrigin')
+js('setTimeout(() => location.reload(), 0)')
+assert wait_for_element('#field', timeout=10)
+assert js('performance.timeOrigin') != original_document
+js('document.body.innerHTML = ' + json.dumps(markup))
+js("history.replaceState(null, '', '/app/different-chat')")
+assert read('result', state='submitted', saved=saved)['reason'] == 'research_submission_unconfirmed'
+js("history.replaceState(null, '', '/app/fixture')")
+assert read('result', state='submitted', saved={**saved, 'id': 'another-turn'})['reason'] == 'research_turn_not_visible'
+assert read('result', state='submitted', saved=saved)['stage'] == 'planning'
+assert read('control', 'send', 'submitted', saved=saved)['reason'] == 'research_submission_pending'
+js("""document.querySelector('#topic model-response').innerHTML = `
+      <message-content>Research plan only</message-content>
+      <deep-research-confirmation-widget><button>Mulai penelitian</button></deep-research-confirmation-widget>`;
+      const start = document.querySelector('#topic button');
+      window.starts=0; start.onclick = () => {window.starts++; start.disabled = true};""")
 assert read('result', state='submitted')['stage'] == 'plan_ready'
 assert read('activate_research', 'start_research', 'submitted')['reason'] == 'clicked'
 assert read('activate_research', 'start_research', 'submitted')['reason'] == 'already_clicked'
-assert js('window.starts') == 2
+assert js('window.starts') == 1
 assert read('result', state='submitted')['stage'] == 'research_in_progress'
 js("""document.querySelector('#topic').insertAdjacentHTML('afterend', `
       <div class="conversation-container" id="other">
@@ -266,7 +283,8 @@ plugins:
                         assert run('channel', platform='telegram')['document'] == first[2]['document']
                     if index == 8:
                         call('parent', session='same', code="js(\"document.getElementById('receipt').hidden = false\")")
-                    progress = call('parent', session='same', code=wait, timeout_s=40)
+                    code = wait if index % 2 == 0 else 'import time\ntime.sleep(120)'
+                    progress = call('parent', session='same', code=code, timeout_s=40)
                     assert progress['session'] == repeat['session']
                     assert progress['status'] == ('ok' if index == 8 else 'running'), progress
                 assert progress['page']['result'] == 'Fixture ready'

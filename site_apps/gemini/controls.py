@@ -29,17 +29,23 @@ MARKER = 'GEMINI_CONTROL='
 NATIVE = r'''
 import json, time
 
+receipt = None
+
 
 def read(kind, name=None, label=None):
-    inputs = ','.join(json.dumps(value) for value in (origin, selectors, kind, name, label, research_state))
-    return js('(' + ui + ')(' + inputs + ')')
+    global receipt
+    inputs = ','.join(json.dumps(value) for value in (origin, selectors, kind, name, label, research_state, saved_submission))
+    state = js('(' + ui + ')(' + inputs + ')')
+    if state.get('_research_receipt'):
+        receipt = state['_research_receipt']
+    return state
 
 
-def wait_for(kind, name=None, label=None, *, seconds=2):
+def wait_for(kind, name=None, label=None, *, seconds=2, retry=('missing', 'outside_gemini')):
     deadline = time.monotonic() + seconds
     while True:
         state = read(kind, name, label)
-        if state['reason'] not in {'missing', 'outside_gemini'} or time.monotonic() >= deadline:
+        if state['reason'] not in retry or time.monotonic() >= deadline:
             return state
         time.sleep(.15)
 
@@ -83,7 +89,7 @@ def run():
             return blocked('chat', page)
         return {'status': 'ok', 'data': {'chat_id': page['chat_id']}, '_changed_page': navigated}
     if op == 'read_result':
-        state = read('result')
+        state = wait_for('result', seconds=4, retry=('research_turn_not_visible',))
         if state['reason'] == 'running':
             data = {'chat_id': state['chat_id']}
             if state.get('stage'):
@@ -129,7 +135,7 @@ def run():
         click(choice)
         return {'status': 'ok', 'data': {'control': 'model_picker', 'clicked': True}}
     if argument in {'start_research', 'open_research_report'}:
-        state = read('activate_research', argument)
+        state = wait_for('activate_research', argument, seconds=4, retry=('research_turn_not_visible',))
         if state['reason'] in {'clicked', 'already_clicked'}:
             return {'status': 'running', 'data': {'control': argument, 'clicked': state['reason'] == 'clicked'}}
         return blocked(argument, state)
@@ -155,7 +161,10 @@ def run():
             'data': {'control': argument, 'clicked': True}}
 
 
-print(marker + json.dumps(run(), ensure_ascii=False))
+result = run()
+if receipt:
+    result['_research_receipt'] = receipt
+print(marker + json.dumps(result, ensure_ascii=False))
 '''
 
 
@@ -163,16 +172,23 @@ def execute(context, origin, operation, argument=None, *, navigation=''):
     # Keep the selected mode specific to this owned browser session. A replaced
     # document must not silently downgrade a research submission to ordinary chat.
     marker = context.directory / 'deep-research-selected'
+    checkpoint = context.directory / 'checkpoint.json'
     if operation == 'click' and argument == 'deep_research':
         marker.touch()
     try:
         research_state = marker.read_text() or 'selected'
     except FileNotFoundError:
         research_state = None
+    saved_submission = None
+    if research_state == 'submitted':
+        try:
+            saved_submission = json.loads(checkpoint.read_text()).get('research_submission')
+        except (FileNotFoundError, ValueError, AttributeError):
+            pass
     values = {
         'origin': origin, 'selectors': SELECTORS, 'ui': CONTROL_UI, 'op': operation,
         'argument': argument, 'tool_items': sorted(TOOL_ITEMS), 'marker': MARKER,
-        'research_state': research_state,
+        'research_state': research_state, 'saved_submission': saved_submission,
     }
     code = navigation + ''.join(f'{key} = {value!r}\n' for key, value in values.items()) + NATIVE
     result = context.browser_exec(code, timeout_s=25)
@@ -187,13 +203,19 @@ def execute(context, origin, operation, argument=None, *, navigation=''):
             if isinstance(value, dict):
                 changed_page = value.pop('_changed_page', False)
                 same_submission = value.pop('_same_submission', True)
+                receipt = value.pop('_research_receipt', None)
                 if value.get('status') == 'ok' and (changed_page or
                         (operation == 'click' and argument in TOOL_ITEMS - {'deep_research'})):
                     marker.unlink(missing_ok=True)
+                    checkpoint.unlink(missing_ok=True)
                 elif not same_submission and research_state == 'submitted':
                     marker.write_text('')
+                    checkpoint.unlink(missing_ok=True)
                 elif operation == 'click' and argument == 'send' and value.get('data', {}).get('mode_active'):
+                    checkpoint.unlink(missing_ok=True)
                     marker.write_text('submitted')
+                elif research_state == 'submitted' and receipt and receipt != saved_submission:
+                    context.checkpoint({'research_submission': receipt})
                 return value
     return {'status': 'needs_inspection', 'data': {'reason': 'action_unconfirmed'},
             'message': 'Inspect this browser session before repeating the action.'}

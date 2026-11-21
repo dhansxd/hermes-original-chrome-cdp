@@ -173,6 +173,27 @@ class GeminiAppTests(ChromeFixture):
             self.assertEqual(self.call(operation='read_result')['data']['stage'], 'awaiting_response')
         self.assertIn('"submitted"', self.js.call_args.args[0].splitlines()[-1])
 
+    def test_research_reader_restores_only_a_verified_receipt_from_its_session(self):
+        self.js.return_value = {'reason': 'ready', 'mode_active': True, 'point': [2, 3]}
+        self.call(action='run', operation='click', params={'control': 'send'})
+        receipt = {'chat': 'c_fixture', 'id': 'verified-topic'}
+        with patch('browser_apps.OBSERVATION_INTERVAL', 0):
+            self.js.return_value = {'reason': 'running', 'stage': 'planning', 'chat_id': 'c_fixture',
+                                    '_research_receipt': receipt}
+            result = self.call(operation='read_result')
+            self.assertNotIn('_research_receipt', result)
+            self.assertNotIn('verified-topic', self.js.call_args.args[0])
+            persisted, = (self.data / 'plugin-data/browser-apps/gemini').glob('*/checkpoint.json')
+            self.assertEqual(json.loads(persisted.read_text()), {'research_submission': receipt})
+            self.js.return_value = {'reason': 'running', 'stage': 'plan_ready', 'chat_id': 'c_fixture',
+                                    'control': 'start_research', '_research_receipt': receipt}
+            resumed = self.call(operation='read_result')
+            self.assertIn(json.dumps(receipt), self.js.call_args.args[0])
+            self.assertEqual(resumed['next_control']['params']['control'], 'start_research')
+        self.assertEqual(resumed['session'], result['session'])
+        self.click.assert_called_once_with(2, 3)
+        self.navigate.assert_not_called()
+
     def test_type_prompt_verifies_focus_and_preserves_send(self):
         ready = {'reason': 'ready', 'point': [10, 20], 'value': '', 'document': 10, 'chat_id': 'c_fixture'}
         self.js.side_effect = [ready, {**ready, 'focused': True}, {**ready, 'value': 'Fixture prompt'}]

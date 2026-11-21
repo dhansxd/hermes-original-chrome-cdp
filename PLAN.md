@@ -217,7 +217,35 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      Uji Chrome asli dengan batas idle 120 detik melampaui batas itu tanpa
      mengganti jendela atau dokumen. Satu submit menghasilkan satu hasil.
      Uji Stop dan cleanup menjaga jendela lain. Seluruh 438 tes otomatis lulus.
-     Pemasangan patch host dan pengulangan di sesi Telegram baru tetap terbuka.
+     Host 0.11.5 dipasang melalui Hermes dari commit `ebe81f1` di cabang
+     perombakan setelah melepas 0.11.4. Gateway mengonfirmasi reload dengan
+     perubahan katalog berlaku pada sesi baru. Paket Gemini 0.4.6 aktif.
+     Uji ulang dari sesi Telegram baru mengirim topik sekali. Sesi browser
+     bertahan lebih dari 120 detik. Panggilan yang berisi tidur 120 detik lalu
+     membaca halaman dialihkan ke `read_result` dalam sekitar 12 detik.
+     Panggilan yang hanya tidur berjalan penuh, dengan jendela tetap terbuka
+     pada percobaan ini. Gemini belum menyediakan rencana dan Hermes memuat
+     ulang halaman. Sesudah muat ulang, pembaca mengembalikan
+     `research_submission_unconfirmed`. Hermes berhenti setelah kegagalan
+     identik berulang dan jendela tugas tertutup. Penerimaan laporan lewat
+     Telegram masih terbuka.
+   - [x] Pulihkan pembacaan Deep Research setelah muat ulang pada sesi yang
+     sama. Simpan identitas percakapan dan giliran kiriman yang sudah
+     terverifikasi dalam data sesi paket. Cocokkan keduanya di DOM sebelum
+     membaca progres, mengaktifkan konfirmasi, atau mengambil laporan.
+     Muat ulang saat Gemini masih bekerja harus dapat dilanjutkan tanpa
+     mengirim ulang topik atau mengambil hasil giliran lain. Jika identitas
+     tidak dapat dipulihkan, pertahankan fallback DOM pada keadaan yang bisa
+     diperiksa dan hentikan pengulangan pembaca dengan kegagalan identik.
+     Cakup skrip yang hanya menunggu pada jalur pemeriksaan tugas aktif.
+     Uji rangkaian topik, progres, muat ulang, konfirmasi, hasil dan cleanup
+     dengan satu jendela pada Chrome asli sebelum mengulang uji Telegram.
+     Seluruh 439 tes otomatis dan uji Chrome asli lulus. Setelah muat
+     ulang, uji menolak chat lain dan giliran yang salah, lalu membaca
+     kembali progres, melakukan satu konfirmasi, dan membuka laporan yang
+     benar. Uji terpisah melewati batas idle dengan skrip tunggu yang
+     bergantian membaca halaman dan hanya menunggu. Patch ada di repo
+     lokal. Pemasangan dan uji Telegram versi ini masih terbuka.
    - Temuan Telegram 0.11.2 di percakapan yang sudah ada: setelah satu
      submit Deep Research, 32 panggilan `observe` tanpa selector membaca
      teks “Membuat rencana riset” pada sesi yang sama hingga pengguna

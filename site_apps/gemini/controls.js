@@ -1,4 +1,4 @@
-(origin, selectors, kind, name, label, researchState = null) => {
+(origin, selectors, kind, name, label, researchState = null, savedSubmission = null) => {
     const chat = location.pathname.match(/^\/(?:u\/\d+\/)?app\/([a-zA-Z0-9-]+)\/?$/);
     const chatId = chat ? 'c_' + chat[1] : null;
     if (location.origin !== origin || !/^\/(?:u\/\d+\/)?app(?:\/|$)/.test(location.pathname)) {
@@ -28,17 +28,17 @@
                 /^(?:Deselect|Batalkan pilihan) Deep Research$/i.test(b.getAttribute('aria-label') || '')));
     }
     const submission = Symbol.for('hermes.gemini.researchSubmission');
-    const current = window[submission];
+    let current = window[submission];
     if (kind === 'research_mode') {
         return {reason: researchActive() ? 'ready' : 'missing', document: performance.timeOrigin,
-            chat_id: chatId, same_submission: !!current && (!current.chat || current.chat === chatId)};
+            chat_id: chatId, same_submission: (current && (!current.chat || current.chat === chatId)) ||
+                Boolean(chatId && savedSubmission?.chat === chatId)};
     }
     const labels = {
         start_research: ['Start research', 'Mulai riset', 'Mulai penelitian'],
         open_research_report: ['Open report', 'View report', 'Buka laporan', 'Lihat laporan'],
     };
     const unavailable = ':disabled, [aria-disabled="true"]';
-    const pending = (stage, control) => ({reason: 'running', chat_id: chatId, stage, control});
     const clicked = Symbol.for('hermes.gemini.researchActions');
     let turn = all('model-response').at(-1);
     const researchButtons = (control, response = turn) =>
@@ -48,10 +48,22 @@
         clean([...group?.querySelectorAll('user-query .query-text-line') || []].map(node => node.innerText).join('\n'));
     const readsResearch = kind === 'result' || kind === 'activate_research';
     const bound = researchState === 'submitted' || (researchState === 'selected' && !!current);
+    const withReceipt = result => {
+        if (!bound || !current?.id || !current.chat || current.chat !== chatId) return result;
+        const {chat, id, confirmation, started, finished} = current;
+        return {...result, _research_receipt: {chat, id, confirmation, started, finished}};
+    };
+    const pending = (stage, control) => withReceipt({reason: 'running', chat_id: chatId, stage, control});
     let planAccepted = false;
     if (readsResearch && bound) {
-        if (!current || (current.chat && current.chat !== chatId)) return {reason: 'research_submission_unconfirmed'};
         const groups = [...document.querySelectorAll('.conversation-container[id]')].filter(g => g.querySelector('user-query'));
+        if (!current && chatId && savedSubmission?.chat === chatId && savedSubmission.id) {
+            if (groups.filter(group => group.id === savedSubmission.id).length !== 1) {
+                return {reason: 'research_turn_not_visible'};
+            }
+            current = window[submission] = {...savedSubmission};
+        }
+        if (!current || (current.chat && current.chat !== chatId)) return {reason: 'research_submission_unconfirmed'};
         if (!current.id) {
             const before = current.previous ? groups.findIndex(g => g.id === current.previous) : -1;
             if (current.previous && before < 0) return {reason: 'research_submission_unconfirmed'};
@@ -78,10 +90,14 @@
         }
         planAccepted = Boolean(current.started || current.confirmation);
         if (planAccepted && name === 'start_research' && kind === 'activate_research') {
-            return {reason: 'already_clicked'};
+            return withReceipt({reason: 'already_clicked'});
         }
         if (current.confirmation) {
-            turn = groups.find(group => group.id === current.confirmation)?.querySelector('model-response');
+            const confirmed = groups[topicIndex + 1];
+            if (confirmed?.id !== current.confirmation || !labels.start_research.includes(queryText(confirmed))) {
+                return {reason: 'research_turn_not_visible'};
+            }
+            turn = confirmed.querySelector('model-response');
         }
         if (!turn) {
             if (!current.id && Date.now() - current.at > 15000) return {reason: 'research_submission_unconfirmed'};
@@ -110,7 +126,8 @@
         const reportText = visible(report) && report.innerText.trim();
         if (reportText) {
             if (bound && current) current.finished = true;
-            return {reason: 'ready', chat_id: chatId, text: reportText.slice(0, 4000), truncated: reportText.length > 4000};
+            return withReceipt({reason: 'ready', chat_id: chatId, text: reportText.slice(0, 4000),
+                truncated: reportText.length > 4000});
         }
         for (const control of ['open_research_report', 'start_research']) {
             const buttons = control === 'open_research_report' ? reportButtons : researchButtons(control);
@@ -132,15 +149,15 @@
         if (indicators.some(text => working.test(text))) return pending('research_in_progress');
         if (all('button[aria-label="Stop response"], button[aria-label="Hentikan respons"]').length ||
             turn?.getAttribute('aria-busy') === 'true') {
-            return {reason: 'running', chat_id: chatId};
+            return pending();
         }
         if (planAccepted) return pending('research_in_progress');
         if (visible(turn?.querySelector('deep-research-confirmation-widget'))) return {reason: 'research_plan_unconfirmed'};
         const body = turn?.querySelector('message-content, [data-test-id="response-content"]');
         const text = visible(body) ? body.innerText.trim() : '';
-        if (text && bound && current) current.finished = true;
-        return text ? {reason: 'ready', chat_id: chatId, text: text.slice(0, 4000), truncated: text.length > 4000} :
-            {reason: 'missing'};
+        if (!text) return bound ? pending('awaiting_response') : {reason: 'missing'};
+        if (bound) current.finished = true;
+        return withReceipt({reason: 'ready', chat_id: chatId, text: text.slice(0, 4000), truncated: text.length > 4000});
     }
 
     let nodes;
@@ -175,7 +192,7 @@
         (turn[clicked] ||= new Set()).add(name);
         if (bound && name === 'start_research') current.started = true;
         node.click();
-        return {reason: 'clicked'};
+        return withReceipt({reason: 'clicked'});
     }
     const state = {reason: 'ready', point: [x, y], expanded: node.getAttribute('aria-expanded') === 'true',
         document: performance.timeOrigin, chat_id: chatId};

@@ -72,7 +72,7 @@ def reads_site_progress(node):
 
 def waits_for_site_progress(tree):
     """Recognize the plain sleep-and-read scripts emitted for an already running site task."""
-    if len(tree.body) < 3:
+    if len(tree.body) < 2:
         return False
     source, wait, *reads = tree.body
     if isinstance(source, ast.Import) and [(name.name, name.asname) for name in source.names] == [('time', None)]:
@@ -736,7 +736,7 @@ class AppHost:
                             break
                         sleep(min(remaining, 0.25))
                     if action == 'observe':
-                        return json.dumps(self.observe_running(context, params, observed_work, can_read), ensure_ascii=False)
+                        return json.dumps(self.observe_running(context, params, observed_work), ensure_ascii=False)
                     with loaded_package(directory, source) as module:
                         rolling = uses_rolling(metadata, args)
                         if rolling:
@@ -806,7 +806,7 @@ class AppHost:
                         context._binding.active -= 1
                     context.active = False
 
-    def observe_running(self, context, params, observed_work, can_read):
+    def observe_running(self, context, params, observed_work):
         choice = context._choice()
         selector = params.get('result_selector', choice.result_selector)
         if set(params) - {'result_selector'} or not isinstance(selector, str):
@@ -834,9 +834,7 @@ class AppHost:
                 choice.pending = False
                 choice.running = None
             else:
-                if can_read and not selector:
-                    choice.can_read_result = True
-                    result['next_control'] = {'app': context.app, 'operation': 'read_result'}
+                result['next_control'] = progress_control(context.app, choice.can_read_result and not selector)
                 result['message'] = ('Continue this task in the same session. Supply params.result_selector on '
                                      'observe when you identify the unique finished result for this submission. '
                                      'Use DOM or screenshot as needed. Finish the requested delivery.')
