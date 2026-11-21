@@ -123,8 +123,13 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
    - [ ] Lulus `hermes plugins validate` untuk katalog publik. Hermes mendukung
      perluasan handler melalui izin `tools.override` pada profil pengguna.
      Validator katalog tetap melaporkan benturan nama `browser_exec` ketika
-     registrasi tersebut tercantum di manifest. Instalasi Telegram aktif belum
-     memakai cabang ini.
+     registrasi tersebut tercantum di manifest.
+   - [x] Pada 21 November 2026, plugin lama dilepas lewat Hermes sebelum
+     commit `36019f1` dipasang di profil Telegram. Gateway yang sudah dimulai
+     ulang melaporkan plugin 0.11.0 aktif dan Telegram terhubung. Katalog tool
+     untuk Telegram memuat `browser_exec` dengan `site_control`. Paket Gemini
+     0.4.2 dan Flow 0.4.3 cocok dengan berkas bawaan commit itu. Pengujian
+     menggunakan pesan Telegram pada versi ini masih menunggu.
 3. [ ] Perbaiki regresi penyelesaian tugas. Uji progres yang berlangsung cukup
    lama. Tugas yang masih berjalan harus tetap dilanjutkan. Verifikasi hasil
    dan setiap unduhan atau pengiriman yang diminta sebelum jawaban akhir.
