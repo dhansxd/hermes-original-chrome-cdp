@@ -1,6 +1,6 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 23, 21 November 2026.
+Revisi PRD 24, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
@@ -36,7 +36,10 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
   pekerjaan itu. Status `running` adalah progres. Setelah hasil dan langkah
   yang diminta terverifikasi, Hermes memberi jawaban akhir dan plugin
   melepaskan jendela milik tugas. Stop dan kegagalan terminal memakai cleanup
-  yang sesuai. Jika aturan perpindahan profil yang sudah disetujui terpicu,
+  yang sesuai. Tugas boleh memakai browser berkali-kali selama dibutuhkan.
+  Plugin tidak menetapkan batas jumlah aksi atau durasi total tugas. Batas
+  teknis per panggilan dan penghentian oleh Hermes tetap perlu diperhitungkan.
+  Jika aturan perpindahan profil yang sudah disetujui terpicu,
   verifikasi hasil permintaan sumber sebelum melanjutkan di profil tujuan.
 - Katalog tool dan panduan bawaan plugin cukup untuk sesi Hermes baru dengan
   perintah yang hanya menyatakan tugas. Gunakan provider Chrome asli melalui
@@ -191,6 +194,14 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      situs, hasil yang diterima pengguna, dan penutupan jendela tugas. Jika
      terhenti, catat operasi terakhir beserta hasilnya agar patch berikutnya
      memperbaiki penyebab yang teramati.
+   - [ ] Uji juga situs yang sah menampilkan status kerja yang sama untuk waktu
+     lama. Usulan implementasinya adalah menunggu perubahan hasil di halaman
+     atau job asal dengan jeda yang dapat dihentikan. Bila satu masa tunggu berakhir, lanjutkan
+     pengamatan pada sesi yang sama. Periksa jalur yang masih memilih
+     `describe` ketika `read_result` tidak tersedia dan gunakan pengamatan
+     yang sesuai situs atau panduan kelanjutan job. Uji lebih dari lima
+     pengamatan dengan satu submit, termasuk Stop saat menunggu. Verifikasi
+     status dari situs, hasil akhir, dan cleanup tanpa mengubah pengaman Hermes.
    - Telegram 0.11.0 berhasil memilih Deep Research dan menekan Send. Setelah
      satu `read_result` berstatus `running`, middleware menghasilkan lima
      panggilan `describe` berturut-turut. Hermes menghentikan giliran karena
