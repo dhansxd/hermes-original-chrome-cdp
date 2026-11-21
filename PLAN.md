@@ -1,6 +1,6 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 21, 21 November 2026.
+Revisi PRD 22, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
@@ -69,6 +69,15 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
 
 ### Hasil audit acuan
 
+- Pada plugin 0.11.1, ketujuh impor Hermes di kode runtime tercantum dalam
+  [daftar API publik Hermes v0.23.2](https://github.com/NousResearch/hermes-agent/blob/v0.23.2/hermes_cli/data/plugin_api.json).
+  Provider Chrome memakai `ctx.register_browser_provider`. Dengan izin
+  `tools.override`, kontrol situs memperluas `browser_exec` saat Hermes berjalan.
+  [Registrasi kontrol](plugin.py) juga membaca dan mengatur langsung atribut
+  entri tool di registry publik, termasuk skema dinamis dan batas waktu.
+  Saat memeriksa kompatibilitas versi Hermes baru, verifikasi atribut tersebut
+  dan panggilan ke handler bawaan. Daftar impor saja hanya memeriksa nama yang
+  diizinkan Hermes.
 - Hermes v0.23.2 sudah menyediakan `browser_exec` dan bisa memakai Chrome yang
   berjalan melalui endpoint CDP persisten (`browser.cdp_url`). Koneksi langsung
   memakai login yang sudah terbuka. Opsi terpisah `browser.use_real_profile`
