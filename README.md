@@ -228,6 +228,10 @@ Use the package's named session for related actions. If a control needs inspecti
 use the same native `browser_exec` session to use the
 same window. See the [Gemini package guide](site_apps/gemini/SKILL.md).
 
+Gemini Web can show that it is preparing a Deep Research plan and then reply
+that it is only a language model. The extension returns that reply as shown.
+A plan is ready for confirmation when Gemini displays its Start research button.
+
 The `site_control` request accepts `list`, `describe`, `run`, `enable`, `disable`,
 `remove`, and `record_missing_control`. Discovery and help read package metadata. Pass each request below as JSON text in
 `browser_exec.site_control`. Reuse the task's session

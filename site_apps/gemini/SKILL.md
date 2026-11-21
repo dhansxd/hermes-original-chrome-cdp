@@ -16,7 +16,10 @@ helpers in the same session.
 
 For Deep Research, use the topic from the request or the conversation. Ask for
 the topic if it is missing. Select `deep_research`, enter the topic, then send it
-once. Keep using `read_result` while the plan is being prepared. For a request
+once. A confirmed selection returns `mode_active: true`. If Send reports that
+Deep Research is inactive, inspect the composer in the same window and confirm
+the selection before sending. Use the same composer actions for a research
+follow-up. Keep using `read_result` while the plan is being prepared. For a request
 to run the research, follow its `next_control` when Gemini presents the plan's
 start button. Open a completed report when offered. A final refusal is a Gemini
 answer; report it honestly. If the research panel needs inspection, examine that

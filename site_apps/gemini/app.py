@@ -28,13 +28,16 @@ def navigation(chat, *, fresh=False):
 origin = {ORIGIN!r}
 chat = {chat!r}
 route = js("({{origin: location.origin, path: location.pathname}})")
+navigated = False
 base = re.match(r'^/(?:u/\\d+/)?app(?=/|$)', route['path']) if route['origin'] == origin else None
 home = base[0] if base else '/app'
 if chat:
     opened = re.fullmatch({CHAT_PATH!r}, route['path'])
     if route['origin'] != origin or not opened or 'c_' + opened[1] != chat:
+        navigated = True
         goto_url(origin + home + '/' + chat[2:])
 elif not base or ({fresh!r} and route['path'].rstrip('/') != home):
+    navigated = True
     goto_url(origin + home)
 '''
 

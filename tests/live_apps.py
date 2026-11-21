@@ -68,8 +68,9 @@ def verify_research_panel(call, session, url, source):
     # Render the research stages locally, without starting research or generating content.
     ui = (source / 'site_apps/gemini/controls.js').read_text()
     code = f"goto_url({(url + '/app/fixture')!r})\nui = {ui!r}\n" + r'''import json
-def read(kind='result', name=None):
-    params = ','.join(json.dumps(v) for v in ({}, kind, name, None))
+def read(kind='result', name=None, state=None):
+    selectors = {'composer': '[role=textbox][contenteditable=true]', 'send': '#send'}
+    params = ','.join(json.dumps(v) for v in (selectors, kind, name, None, state))
     return js('(' + ui + ')(location.origin,' + params + ')')
 js("""document.body.innerHTML = '<model-response><thinking-overlay>Membuat rencana riset</thinking-overlay></model-response>'""")
 assert read()['stage'] == 'planning'
@@ -85,6 +86,31 @@ js("""document.querySelector('model-response').innerHTML = '<button aria-control
 assert read()['stage'] == 'report_available'
 assert read('activate_research','open_research_report')['reason'] == 'clicked'
 assert read()['text'] == 'Finished report'
+js("""document.body.innerHTML = `
+<div class="conversation-container" id="previous"><user-query><p class="query-text-line">Same question</p></user-query>
+<model-response><message-content>Older answer</message-content><button>Mulai riset</button></model-response></div>
+<fieldset><div role="textbox" contenteditable="true">Same question</div><button id="send">Send</button></fieldset>
+<button aria-label="Deep Research">Deep Research</button>`;
+window.sends=0; document.querySelector('#send').onclick=()=>window.sends++;""")
+assert read('research_mode')['reason'] == 'missing'
+assert read('control', 'send', 'selected')['reason'] == 'deep_research_not_active'
+js("""document.querySelector('fieldset').insertAdjacentHTML('beforeend',
+    '<gem-button data-test-id="deselect-drawer-item-gem-button"><button aria-label="Batalkan pilihan Deep Research">Deep Research</button></gem-button>')""")
+assert read('research_mode')['reason'] == 'ready'
+send = read('control', 'send', 'selected')
+assert send['mode_active']
+click_at_xy(*send['point'])
+assert js('window.sends') == 1
+assert read('control', 'send', 'submitted')['reason'] == 'research_submission_pending'
+assert read('result', state='submitted')['stage'] == 'awaiting_response'
+assert read('activate_research','start_research','submitted')['reason'] != 'clicked'
+js("""document.body.insertAdjacentHTML('beforeend',
+    '<div class="conversation-container" id="new"><user-query><p class="query-text-line">Other prompt</p></user-query></div>')""")
+assert read('result', state='submitted')['reason'] == 'research_prompt_mismatch'
+js("""document.querySelector('#new p').textContent='Same question';
+      document.querySelector('#new').insertAdjacentHTML('beforeend','<model-response><message-content>New reply</message-content></model-response>');
+      document.body.insertAdjacentHTML('beforeend','<div class="conversation-container" id="later"><user-query>Another task</user-query><model-response><message-content>Unrelated answer</message-content></model-response></div>')""")
+assert read('result', state='submitted')['text'] == 'New reply'
 '''
     return call('parent', session=session, code=code)
 

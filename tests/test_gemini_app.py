@@ -116,9 +116,11 @@ class GeminiAppTests(ChromeFixture):
     def test_tool_click_uses_an_already_open_menu(self):
         self.js.side_effect = [
             {'reason': 'missing'},
+            {'reason': 'missing'},
             {'reason': 'ready', 'expanded': True},
             {'reason': 'ready', 'expanded': False, 'point': [15, 20]},
             {'reason': 'ready', 'point': [35, 40]},
+            {'reason': 'ready'},
         ]
         result = self.call(action='run', operation='click',
                            params={'control': 'deep_research'})
@@ -133,10 +135,11 @@ class GeminiAppTests(ChromeFixture):
             with self.subTest(focused=focused['focused']):
                 self.press_key.reset_mock()
                 self.js.side_effect = [
-                    {'reason': 'missing'}, {'reason': 'ready', 'expanded': True}, more,
+                    {'reason': 'missing'}, {'reason': 'missing'}, {'reason': 'ready', 'expanded': True}, more,
                     {'reason': 'missing'}, focused, {'reason': 'ready', 'point': [35, 40]},
+                    {'reason': 'ready'},
                 ]
-                with patch('time.monotonic', side_effect=[0, 1, 2]):
+                with patch('time.monotonic', side_effect=[0, 1, 2, 3]):
                     result = self.call(action='run', operation='click',
                                        params={'control': 'deep_research'})
                 self.assertTrue(result['success'], result)
@@ -144,6 +147,31 @@ class GeminiAppTests(ChromeFixture):
                     self.press_key.assert_called_once_with('ArrowRight')
                 else:
                     self.press_key.assert_not_called()
+
+    def test_unconfirmed_research_selection_keeps_send_guard(self):
+        self.js.side_effect = [{'reason': 'missing'}, {'reason': 'ready', 'point': [1, 1]},
+                               {'reason': 'missing'}]
+        with patch('time.monotonic', side_effect=[0, 3]):
+            selection = self.call(action='run', operation='click', params={'control': 'deep_research'})
+        self.assertEqual(selection['data']['reason'], 'deep_research_selection_unconfirmed')
+        self.js.side_effect = None
+        self.js.return_value = {'reason': 'deep_research_not_active'}
+        sent = self.call(action='run', operation='click', params={'control': 'send'})
+        self.assertEqual(sent['data']['reason'], 'deep_research_not_active')
+        self.assertIn('"selected"', self.js.call_args.args[0].splitlines()[-1])
+        self.click.assert_called_once_with(1, 1)
+
+    def test_active_research_selection_is_idempotent_and_send_binds_reader(self):
+        self.js.return_value = {'reason': 'ready'}
+        selection = self.call(action='run', operation='click', params={'control': 'deep_research'})
+        self.assertEqual(selection['data'], {'control': 'deep_research', 'clicked': False, 'mode_active': True})
+        self.click.assert_not_called()
+        self.js.return_value = {'reason': 'ready', 'mode_active': True, 'point': [2, 3]}
+        self.assertTrue(self.call(action='run', operation='click', params={'control': 'send'})['data']['mode_active'])
+        self.js.return_value = {'reason': 'running', 'stage': 'awaiting_response', 'chat_id': 'c_test'}
+        with patch('browser_apps.OBSERVATION_INTERVAL', 0):
+            self.assertEqual(self.call(operation='read_result')['data']['stage'], 'awaiting_response')
+        self.assertIn('"submitted"', self.js.call_args.args[0].splitlines()[-1])
 
     def test_type_prompt_verifies_focus_and_preserves_send(self):
         ready = {'reason': 'ready', 'point': [10, 20], 'value': '', 'document': 10, 'chat_id': 'c_fixture'}

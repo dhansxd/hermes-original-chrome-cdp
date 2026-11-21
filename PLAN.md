@@ -232,10 +232,17 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      Pada giliran manual, UI menampilkan `deep-research-confirmation-widget`
      dan tombol “Mulai penelitian”. Penyebab perbedaan respons belum diketahui.
      Jalur `reply` sempat berhenti sebelum mengetik. Pengiriman yang tercatat
-     memakai `type_prompt` dan `click(send)`; isinya cocok dengan teks di UI.
+     memakai `type_prompt` dan `click(send)` dengan isi yang cocok dengan teks di UI.
      Untuk diagnosis berikutnya, cocokkan indikator mode pada komposer sebelum
      Kirim, pesan yang benar-benar terkirim, dan hasil pada giliran itu.
      Bedakan rencana siap dikonfirmasi, laporan selesai, dan penolakan.
+   - Pada 0.11.4, ekstensi memeriksa indikator Deep Research pada komposer
+     setelah memilih mode dan sebelum mengirim. Pilihan yang sudah aktif
+     terkonfirmasi di Gemini Web asli, termasuk saat dipilih untuk kedua kali.
+     Pada halaman uji di Chrome asli, hilangnya mode mencegah klik Kirim.
+     Pembaca hasil menggunakan jawaban milik kiriman baru. Pada percakapan
+     Gemini asli, dua pesan identik memiliki identitas giliran berbeda dan
+     panel konfirmasi rencana berada pada giliran kedua.
    - [x] Uji situs lokal di Chrome asli melalui Hermes: satu paket tanpa
      pembaca hasil melewati enam pemeriksaan tertunda. Pemeriksaan ketujuh
      membaca hasil pada dokumen dan jendela yang sama. Uji isolasi dan

@@ -16,7 +16,8 @@ SELECTORS = {
                     '[aria-label="Create image"], [aria-label="Buat gambar"]',
     'create_video': 'gem-menu-item:has(mat-icon[fonticon="movie"]), '
                     '[aria-label="Create video"], [aria-label="Buat video"]',
-    'deep_research': 'gem-menu-item:has(mat-icon[fonticon="deep_research"]), [aria-label="Deep Research"]',
+    'deep_research': 'gem-menu-item:has(mat-icon[fonticon="deep_research"]), '
+                     'gem-menu-item[aria-label="Deep Research"], [role="menu"] [aria-label="Deep Research"]',
     'create_music': 'gem-menu-item:has(mat-icon[fonticon="music"]), '
                     '[aria-label="Create music"], [aria-label="Buat musik"]',
 }
@@ -30,7 +31,7 @@ import json, time
 
 
 def read(kind, name=None, label=None):
-    inputs = ','.join(json.dumps(value) for value in (origin, selectors, kind, name, label))
+    inputs = ','.join(json.dumps(value) for value in (origin, selectors, kind, name, label, research_state))
     return js('(' + ui + ')(' + inputs + ')')
 
 
@@ -80,7 +81,7 @@ def run():
         page = wait_for('page', label=argument, seconds=6)
         if page['reason'] != 'ready':
             return blocked('chat', page)
-        return {'status': 'ok', 'data': {'chat_id': page['chat_id']}}
+        return {'status': 'ok', 'data': {'chat_id': page['chat_id']}, '_changed_page': navigated}
     if op == 'read_result':
         state = read('result')
         if state['reason'] == 'running':
@@ -132,10 +133,24 @@ def run():
         if state['reason'] in {'clicked', 'already_clicked'}:
             return {'status': 'running', 'data': {'control': argument, 'clicked': state['reason'] == 'clicked'}}
         return blocked(argument, state)
+    if argument == 'deep_research':
+        mode = read('research_mode')
+        if mode['reason'] == 'ready':
+            return {'status': 'ok', '_same_submission': mode.get('same_submission'),
+                    'data': {'control': argument, 'clicked': False, 'mode_active': True}}
     state = choose_tool(argument) if argument in tool_items else wait_for('control', argument)
     if state['reason'] != 'ready':
         return blocked(argument, state)
     click(state)
+    if argument == 'deep_research':
+        active = wait_for('research_mode')
+        if (active['reason'] != 'ready' or active.get('document') != state.get('document')
+                or active.get('chat_id') != state.get('chat_id')):
+            return blocked(argument, {'reason': 'deep_research_selection_unconfirmed'})
+        return {'status': 'ok', '_same_submission': active.get('same_submission'),
+                'data': {'control': argument, 'clicked': True, 'mode_active': True}}
+    if argument == 'send' and state.get('mode_active'):
+        return {'status': 'running', 'data': {'control': 'send', 'clicked': True, 'mode_active': True}}
     return {'status': 'running' if argument == 'send' else 'ok',
             'data': {'control': argument, 'clicked': True}}
 
@@ -145,9 +160,19 @@ print(marker + json.dumps(run(), ensure_ascii=False))
 
 
 def execute(context, origin, operation, argument=None, *, navigation=''):
+    # Keep the selected mode specific to this owned browser session. A replaced
+    # document must not silently downgrade a research submission to ordinary chat.
+    marker = context.directory / 'deep-research-selected'
+    if operation == 'click' and argument == 'deep_research':
+        marker.touch()
+    try:
+        research_state = marker.read_text() or 'selected'
+    except FileNotFoundError:
+        research_state = None
     values = {
         'origin': origin, 'selectors': SELECTORS, 'ui': CONTROL_UI, 'op': operation,
         'argument': argument, 'tool_items': sorted(TOOL_ITEMS), 'marker': MARKER,
+        'research_state': research_state,
     }
     code = navigation + ''.join(f'{key} = {value!r}\n' for key, value in values.items()) + NATIVE
     result = context.browser_exec(code, timeout_s=25)
@@ -160,6 +185,15 @@ def execute(context, origin, operation, argument=None, *, navigation=''):
             except ValueError:
                 value = None
             if isinstance(value, dict):
+                changed_page = value.pop('_changed_page', False)
+                same_submission = value.pop('_same_submission', True)
+                if value.get('status') == 'ok' and (changed_page or
+                        (operation == 'click' and argument in TOOL_ITEMS - {'deep_research'})):
+                    marker.unlink(missing_ok=True)
+                elif not same_submission and research_state == 'submitted':
+                    marker.write_text('')
+                elif operation == 'click' and argument == 'send' and value.get('data', {}).get('mode_active'):
+                    marker.write_text('submitted')
                 return value
     return {'status': 'needs_inspection', 'data': {'reason': 'action_unconfirmed'},
             'message': 'Inspect this browser session before repeating the action.'}
