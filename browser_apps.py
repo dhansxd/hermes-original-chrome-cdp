@@ -433,7 +433,7 @@ class AppHost:
         if not (task_id and session_id):
             return {}
         with self.provider.lock:
-            return {choice.browser_name: (choice.app_id, choice.running)
+            return {choice.browser_name: (choice.app_id, choice.running, choice.can_read_result)
                     for choice in self.provider.profile_choices.values()
                     if not choice.finished and choice.pending and choice.running is not None
                     and choice.owner[:2] == (task_id, session_id)
@@ -451,17 +451,17 @@ class AppHost:
         work = self.running_work(task_id, session_id, turn_id)
         if not work:
             return response
-        session, (app, _) = next(iter(work.items()))
+        session, (app, _, can_read_result) = next(iter(work.items()))
         offered = {(tool.get('function') or {}).get('name') for tool in request.get('tools') or []}
-        arguments = {'site_control': json.dumps({'action': 'describe', 'app': app}), 'session': session}
+        control = {'app': app, 'operation': 'read_result'} if can_read_result else {'action': 'describe', 'app': app}
+        arguments = {'site_control': json.dumps(control), 'session': session}
         tool_name = 'browser_exec'
         if tool_name not in offered:
             if 'tool_call' not in offered:
                 return response
             tool_name = 'tool_call'
             arguments = {'calls': [{'name': 'browser_exec', 'arguments': arguments}]}
-        # Keep the same turn open through the normal tool dispatcher. The synthetic
-        # call only reports progress. It never replays the browser action.
+        # Observe through the same paced tool path without repeating the submission.
         from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
         call = ChatCompletionMessageFunctionToolCall(
             id='call_' + uuid.uuid4().hex[:24], type='function',
@@ -524,6 +524,8 @@ class AppHost:
                                 'message': 'Continue checking this existing work in this turn. Use the same '
                                            'session and job, without submitting again. Verify the outcome '
                                            'and finish any requested delivery before the final response.'}
+                            if active[2]:
+                                result['running_work']['next_control'] = {'app': identifier, 'operation': 'read_result'}
                 else:
                     operation = args.get('operation')
                     if not isinstance(operation, str) or operation not in metadata['operations']:
@@ -550,7 +552,8 @@ class AppHost:
                             break
                         sleep(min(remaining, 0.25))
                     with loaded_package(directory, source) as module:
-                        if uses_rolling(metadata, args):
+                        rolling = uses_rolling(metadata, args)
+                        if rolling:
                             mode = metadata.get('handoff_mode')
                             if mode is not None:
                                 configured = self.get_setting('handoff_mode.' + identifier)
@@ -581,6 +584,9 @@ class AppHost:
                             if choice.running is None:
                                 choice.running_since = now
                             choice.running = (result.get('operation', operation), result.get('job'))
+                            reader = metadata['operations'].get('read_result')
+                            choice.can_read_result = (reader is not None and not rolling
+                                                      and not reader.get('parameters', {}).get('required'))
                             choice.last_observation = now
                             result['running_seconds'] = int(now - choice.running_since)
                         elif choice.running is not None:

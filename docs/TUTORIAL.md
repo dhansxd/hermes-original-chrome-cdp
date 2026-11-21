@@ -357,6 +357,12 @@ context.checkpoint({'job_id': job_id, 'phase': 'waiting'})
 return {'status': 'running', 'data': {'job_id': job_id}}
 ```
 
+For ordinary operations, a package can expose a read-only `read_result` with
+no required arguments. If the model tries to end the turn while the operation
+is running, the plugin calls this reader on the same page. Return `running`
+while the page is busy, then return the observed result or `needs_inspection`
+when a UI step requires attention. Keep submission in the original action.
+
 `running` and `needs_inspection` preserve the owned browser session across turn
 end in the serving Hermes process. Continue through the same package and alias
 to retain the document, source profile and artifact directory. A completed result

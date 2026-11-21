@@ -5,7 +5,10 @@ description: Use mapped Chrome controls for Gemini Web and Google Flow tasks, in
 
 # Website controls in Original Chrome
 
-Use `browser_exec` throughout the browser task. Pass a site's mapped operation
+Use `browser_exec` throughout the browser task. Calls named `browser_app` in
+older chats now use the `site_control` parameter on `browser_exec`.
+For a request specifying Gemini Web, open Gemini with `open_chat` and use its
+controls in the same browser session. Pass a site's mapped operation
 as JSON text in the tool's `site_control` parameter. A site control runs alone. Use `code`
 with `site_control` omitted or null for an ordinary DOM or screenshot call. For example, in an open Gemini chat:
 

@@ -14,6 +14,11 @@ For example, `tools_menu` opens the tools menu and `model_picker` opens the
 model menu. Read any required labels from the open menu using the native DOM
 helpers in the same session.
 
+For Deep Research, use the topic from the request or the conversation. Ask for
+the topic if it is missing. Select `deep_research`, enter the topic, then send it
+once. While Gemini is working, use `read_result` in that window. Check the page
+for a research plan or a confirmation button before reporting a finished report.
+
 | Operation | Action |
 | --- | --- |
 | `open_chat` | Open Gemini Web or an existing conversation by ID |
@@ -34,6 +39,9 @@ returned `session` to native `browser_exec`. Inspect the relevant DOM or use a
 screenshot if needed, then continue with the same Chrome window. After Send,
 verify that the new response has appeared and finish any requested download
 before ending the turn. If Send is unconfirmed, check the chat before retrying.
+For an image request, verify the generated image in that response. Use Gemini's
+download control in the same window, record a missing mapping if DOM inspection
+was needed, and deliver the downloaded file when requested.
 
 ## Inspect the current page
 

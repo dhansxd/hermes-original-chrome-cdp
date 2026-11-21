@@ -103,7 +103,7 @@ class BrowserAppTests(unittest.TestCase):
         context = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn', 'api_mode': 'chat_completions'}
         args = {'action': 'describe', 'app': 'fixture', 'session': started['session']}
 
-        browser_args = {'session': started['session'], 'site_control': json.dumps({'action': 'describe', 'app': 'fixture'})}
+        browser_args = {'session': started['session'], 'site_control': json.dumps({'app': 'fixture', 'operation': 'read_result'})}
         for offered, expected_args in [('browser_exec', browser_args),
                 ('tool_call', {'calls': [{'name': 'browser_exec', 'arguments': browser_args}]})]:
             request = {'tools': [{'function': {'name': offered}}]}
@@ -121,6 +121,7 @@ class BrowserAppTests(unittest.TestCase):
         self.dispatch.assert_not_called()
         progress = json.loads(self.host.handle(args, task_id='A', session_id='chat-A'))
         self.assertEqual(progress['running_work']['session'], started['session'])
+        self.assertEqual(progress['running_work']['next_control'], {'app': 'fixture', 'operation': 'read_result'})
         for override in [{'task_id': 'B'}, {'session_id': 'chat-B'}, {'turn_id': 'another'}]:
             with self.subTest(override=override):
                 self.assertIs(self.host.continue_running(request, lambda _: response,
@@ -145,6 +146,45 @@ class BrowserAppTests(unittest.TestCase):
                             turn_exit_reason='guardrail_halt')
         self.assertNotIn(own['session'], self.provider.owners)
         self.assertIn(peer['session'], self.provider.owners)
+
+    def test_repeated_early_finals_read_the_page_until_its_result_changes(self):
+        from agent.tool_guardrails import ToolCallGuardrailConfig, ToolCallGuardrailController
+
+        self.package(operations={'click': {}, 'read_result': {}}, source="""def run(context, operation, params):
+    if operation == 'click':
+        return {'status': 'running'}
+    page = context.browser_exec('print(page_info())')
+    return {'status': 'running' if page['output'] == 'working' else 'ok', 'data': page['output']}
+""")
+        self.dispatch.side_effect = [json.dumps({'success': True, 'output': value})
+                                     for value in ['working'] * 6 + ['requested result']]
+        with patch('browser_apps.monotonic', return_value=1000):
+            session = self.invoke(operation='click')['session']
+        candidate = SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop',
+            message=SimpleNamespace(content='Still working', tool_calls=None))])
+        guard = ToolCallGuardrailController(ToolCallGuardrailConfig(hard_stop_enabled=True))
+        request = {'tools': [{'function': {'name': 'browser_exec'}}]}
+        owner = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn', 'api_mode': 'chat_completions'}
+        for count in range(7):
+            with patch('browser_apps.monotonic', return_value=1000 + (count + 1) * 20):
+                response = self.host.continue_running(request, lambda _: candidate, **owner)
+                call, = response.choices[0].message.tool_calls
+                args = json.loads(call.function.arguments)
+                self.assertEqual((call.function.name, args['session']), ('browser_exec', session))
+                self.assertEqual(guard.before_call('browser_exec', args).action, 'allow')
+                command = browser_apps.site_request(args)
+                self.assertEqual(command['operation'], 'read_result')
+                result = self.host.handle({**command, 'session': session}, **owner)
+                self.assertNotIn(guard.after_call('browser_exec', args, result).action, {'block', 'halt'})
+        self.assertEqual(json.loads(result)['data'], 'requested result')
+        self.assertEqual(self.dispatch.call_count, 7)
+        self.assertIs(self.host.continue_running(request, lambda _: candidate, **owner), candidate)
+
+    def test_pending_package_without_parameterless_reader_does_not_replay_an_action(self):
+        for reader in ({}, {'read_result': {'parameters': {'type': 'object', 'required': ['id']}}}):
+            self.package(operations={'click': {}, **reader})
+            session = self.invoke(operation='click', params={'status': 'running'})['session']
+            self.assertFalse(self.host.running_work('A', 'chat-A')[session][2])
 
     def test_bundled_site_packages_default_to_the_current_hermes_profile(self):
         self.settings.pop('apps_directory')

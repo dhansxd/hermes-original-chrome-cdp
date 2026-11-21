@@ -1,6 +1,6 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 18, 21 November 2026.
+Revisi PRD 19, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
@@ -128,12 +128,31 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      commit `36019f1` dipasang di profil Telegram. Gateway yang sudah dimulai
      ulang melaporkan plugin 0.11.0 aktif dan Telegram terhubung. Katalog tool
      untuk Telegram memuat `browser_exec` dengan `site_control`. Paket Gemini
-     0.4.2 dan Flow 0.4.3 cocok dengan berkas bawaan commit itu. Pengujian
-     menggunakan pesan Telegram pada versi ini masih menunggu.
+     0.4.2 dan Flow 0.4.3 cocok dengan berkas bawaan commit itu. Uji Telegram
+     kemudian mengonfirmasi `open_chat`, klik `tools_menu` dan inspeksi di sesi
+     baru. Pada percakapan dari versi lama, pencarian `browser_app` berhenti
+     sebelum membuka Gemini untuk permintaan gambar. Panduan migrasi pada
+     deskripsi tool dan skill mengarahkan percakapan tersebut ke `browser_exec`.
 3. [ ] Perbaiki regresi penyelesaian tugas. Uji progres yang berlangsung cukup
    lama. Tugas yang masih berjalan harus tetap dilanjutkan. Verifikasi hasil
    dan setiap unduhan atau pengiriman yang diminta sebelum jawaban akhir.
    Setelah itu ukur cleanup jendela milik tugas dan pastikan jendela lain utuh.
+   - Telegram 0.11.0 berhasil memilih Deep Research dan menekan Send. Setelah
+     satu `read_result` berstatus `running`, middleware menghasilkan lima
+     panggilan `describe` berturut-turut. Hermes menghentikan giliran karena
+     kelimanya membaca panduan yang sama. Patch 0.11.1 memanggil pembaca hasil
+     paket pada sesi asal untuk operasi biasa yang mendukung `read_result`
+     tanpa parameter wajib. Pengecekan itu mengikuti jeda observasi yang sudah
+     ada. Operasi dengan job dan pemilihan profil tetap mengikuti kontrak
+     kelanjutan masing-masing paket.
+     Dalam uji Hermes dengan aturan platform Telegram dan Chrome asli, model
+     uji mencoba mengakhiri giliran tujuh kali. Satu submit diikuti tujuh
+     pembacaan halaman lokal, selama 91 detik dari pembacaan pertama sampai
+     terakhir. Dokumen dan sesi tetap sama, hasil diterima dan jendela ditutup.
+     Pada uji 9Router terpisah dengan cuplikan riwayat percakapan lama,
+     Hermes membuka Gemini Web asli dan memilih `create_image` lewat
+     `browser_exec`. Uji ini berakhir pada pemilihan mode gambar. Sebanyak
+     427 tes otomatis lulus.
    - [x] Pada instalasi GitHub di atas, Hermes melalui 9Router menjalankan
      tugas di situs uji lokal lewat Chrome asli. Satu kali submit, tiga status
      tertunda, lalu kode hasil acak muncul di halaman dan diterima di jawaban

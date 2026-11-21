@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "gemini",
   "name": "Gemini Web",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "profile_policy": "rotate_on_limit",
   "handoff_mode": "manual",
   "rolling_parameters": {"reply": "continuation"},
@@ -25,7 +25,7 @@
       }
     },
     "click": {
-      "description": "Click a mapped Gemini control. Send returns running after the click and keeps this browser session for the result.",
+      "description": "Click a mapped Gemini control. For Deep Research, clarify the topic if the conversation does not supply one. After Send, use read_result in this session while Gemini is working.",
       "parameters": {
         "type": "object",
         "properties": {

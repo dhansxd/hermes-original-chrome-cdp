@@ -47,6 +47,7 @@ class SessionProfile:
     pending: bool = False
     retained: bool = False
     running: tuple[str, str | None] | None = None
+    can_read_result: bool = False
     running_since: float = 0.0
     last_observation: float = 0.0
     active: int = 0
@@ -534,12 +535,11 @@ def prepare_call(tool_name, args, task_id, *, session_id='', turn_id='', provide
     return {'action': 'modify', 'args': changes}
 
 
-SITE_HELP = ('A site_control request runs only that mapped operation. Use code with site_control omitted or null '
-             'to execute native Python. '
-             'The site_control field is JSON text, e.g. {"app":"gemini","operation":"open_chat"}. '
-             'For Gemini Web, Google Flow and other installed sites, use the site_control parameter for mapped '
-             'operations. Use action describe with the site ID to see the controls and guide. Open Gemini with '
-             'operation open_chat. Use code for DOM inspection, screenshots and ordinary browsing in the same session.')
+SITE_HELP = ('Use browser_exec directly for Gemini Web and Google Flow, including requests called '
+             'browser_app in older chats. To open Gemini pass site_control as JSON text: '
+             '{"app":"gemini","operation":"open_chat"}. To see a site guide use action describe with its app ID. '
+             'Use code with site_control omitted or null for DOM inspection, screenshots and ordinary '
+             'browsing in the same session.')
 
 
 def with_site_controls(schema):
@@ -599,7 +599,7 @@ def register(ctx):
         ctx.register_middleware('llm_execution', apps.continue_running)
     if hasattr(ctx, 'register_skill'):
         ctx.register_skill('site-controls', root / 'skills' / 'site-controls' / 'SKILL.md',
-                           description='Use mapped Chrome controls for Gemini Web and Google Flow tasks, '
+                           description='Use browser_exec.site_control for Gemini Web and Google Flow tasks, '
                                        'including images, video, Deep Research, chats and downloads.',
                            frontmatter={'platforms': ['macos'],
                                         'metadata': {'hermes': {'requires_toolsets': ['browser']}}})
@@ -611,7 +611,8 @@ def register(ctx):
                       check_fn=provider.is_available, schema={
         'name': PROFILE_TOOL,
         'description': 'Control profile selection for the Original Chrome CDP provider and each agent\'s '
-                       'named browser_exec sessions. '
+                       'named browser_exec sessions. For Gemini Web and Google Flow actions from older '
+                       'browser_app conversations, call browser_exec with site_control. '
                        'list refreshes directory IDs and display names from Chrome, reflecting profile additions, '
                        'removals and renames. Agents can share a profile or choose different profiles with separate '
                        'windows. select stores a choice for your session. Switching to a different profile closes '
