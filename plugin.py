@@ -50,6 +50,7 @@ class SessionProfile:
     can_read_result: bool = False
     running_since: float = 0.0
     last_observation: float = 0.0
+    result_selector: str = ''
     active: int = 0
     directory_key: str = ''
 
@@ -181,7 +182,7 @@ class ChromeProvider(BrowserProvider):
                 if tool_name == PROFILE_TOOL and app_id and existing and existing.app_id != app_id:
                     reuse = False  # Independent profile rules apply when starting a new task window.
                 if kwargs.get('require_existing') and (not reuse or existing.app_id not in ('', app_id)):
-                    return {'action': 'block', 'message': 'Record the missing control in its current owned site window.'}
+                    return {'action': 'block', 'message': 'Use the current owned site window for this action.'}
                 if reuse:
                     if existing.active and existing.owner != owner:
                         return {'action': 'block', 'message': 'The previous extension operation is still returning.'}

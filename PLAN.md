@@ -1,6 +1,6 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 25, 21 November 2026.
+Revisi PRD 26, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
@@ -189,21 +189,23 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
    lama. Tugas yang masih berjalan harus tetap dilanjutkan. Verifikasi hasil
    dan setiap unduhan atau pengiriman yang diminta sebelum jawaban akhir.
    Setelah itu ukur cleanup jendela milik tugas dan pastikan jendela lain utuh.
-   - [ ] Perbaiki cabang `continue_running` yang memilih `describe` sebagai
-     pemeriksaan progres saat `read_result` tidak tersedia. Panduan paket
-     menjelaskan cara kerja kontrol. Progres harus diamati pada tugas yang
-     sudah dikirim, melalui operasi status yang sesuai atau DOM halaman yang
-     sama, dengan screenshot bila diperlukan. Pertahankan sesi dan identitas
-     tugas agar pengamatan tidak mengirim ulang permintaan awal.
+   - [x] Pada 0.11.2, `continue_running` meneruskan permintaan ke pembaca
+     hasil paket bila tersedia. Jika paket tidak punya pembaca tanpa argumen
+     wajib, atau pembacaan hasil perlu inspeksi, `browser_exec` mengamati
+     DOM pada sesi milik tugas. Agen dapat menentukan selector hasil akhir
+     yang spesifik sekali dan memakainya pada pemeriksaan berikutnya. Job
+     yang memiliki ID tetap membutuhkan konfirmasi hasil melalui paketnya.
    - [ ] Periksa satu tugas nyata dari sesi Telegram baru di versi yang diuji.
      Cocokkan panggilan setelah status `running` dengan perubahan status di
      situs, hasil yang diterima pengguna, dan penutupan jendela tugas. Jika
      terhenti, catat operasi terakhir beserta hasilnya agar patch berikutnya
      memperbaiki penyebab yang teramati.
-   - [ ] Uji situs yang menampilkan status kerja yang sama untuk waktu lama,
-     termasuk saat paket tidak menyediakan pembaca hasil. Pastikan lebih dari
-     lima pengamatan tetap memantau satu permintaan di jendela yang sama.
-     Verifikasi hasil akhir dan cleanup, serta Stop pada pengujian terpisah.
+   - [x] Uji situs lokal di Chrome asli melalui Hermes: satu paket tanpa
+     pembaca hasil melewati enam pemeriksaan tertunda. Pemeriksaan ketujuh
+     membaca hasil pada dokumen dan jendela yang sama. Uji isolasi dan
+     cleanup lulus. Regresi terpisah memeriksa Stop ketika observasi sedang
+     menunggu dan memastikan jendela agen lain tetap tersedia. Pengiriman
+     melalui bot Telegram pada rilis ini masih memerlukan uji tersendiri.
    - Telegram 0.11.0 berhasil memilih Deep Research dan menekan Send. Setelah
      satu `read_result` berstatus `running`, middleware menghasilkan lima
      panggilan `describe` berturut-turut. Hermes menghentikan giliran karena

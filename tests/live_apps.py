@@ -29,7 +29,8 @@ class Fixture(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'text/html')
         self.end_headers()
-        self.wfile.write(b'<!doctype html><title>Extension fixture</title><input id=field>')
+        self.wfile.write(b'<!doctype html><title>Extension fixture</title><input id=field>'
+                         b'<output id=receipt hidden>Fixture ready</output>')
 
     def log_message(self, *args):
         pass
@@ -144,6 +145,19 @@ plugins:
                                  code='assert js("window.fixtureMarker")=="parent-fixture"')
                 assert inspected['session'] == repeat['session']
                 report['targeted_native_inspection_reuses_app_session'] = True
+                # The fixture has no mapped result reader. Hold the same page pending for six reads.
+                pending = run('parent', status='running')
+                assert pending['session'] == repeat['session']
+                for index in range(7):
+                    if index == 6:
+                        call('parent', session='same', code="js(\"document.getElementById('receipt').hidden = false\")")
+                    progress = call('parent', session='same', action='observe', app='fixture',
+                                    params={'result_selector': '#receipt'} if index == 0 else {})
+                    assert progress['session'] == repeat['session']
+                    assert progress['status'] == ('ok' if index == 6 else 'running'), progress
+                assert progress['page']['result'] == 'Fixture ready'
+                assert run('parent')['document'] == first[0]['document']
+                report['seven_paced_dom_observations_on_same_owned_document'] = True
                 ordinary = call('parent', tool='browser_exec', session='independent-task',
                                 code=f'goto_url({url!r}); js("window.ordinaryMarker=42")')
                 assert ordinary['session'] != repeat['session']

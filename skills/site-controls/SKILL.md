@@ -28,6 +28,13 @@ For a confirmed missing control on an installed site, use `site_control` with
 `page_or_mode`, `control`, and `fallback` (`dom` or `screenshot`). Check the
 relevant panel and model first. Record the finding before the final answer.
 
-Confirm the new result and finish any requested download before reporting
+After submitting once, follow the result control in that session. If a
+running task has no usable mapped reader, use the returned `observe` control
+to read the live page. Identify the finished result of this submission using
+the relevant DOM or screenshot. Supply its unique CSS selector in
+`params.result_selector` on the same `observe` control. The plugin reuses it
+on subsequent checks. For an existing job ID, follow its package's job check.
+
+Confirm the new result and finish any requested download and delivery before reporting
 completion. If the requested site fails, report what blocked it there and
 ask before substituting another generator or service.

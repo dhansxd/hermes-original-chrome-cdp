@@ -28,7 +28,7 @@ STATUSES = {'ok', 'running', 'quota_exhausted', 'needs_inspection', 'failed'}
 OBSERVATION_INTERVAL = 15
 
 
-CONTROL_ACTIONS = ('list', 'describe', 'run', 'record_missing_control', 'enable', 'disable', 'remove')
+CONTROL_ACTIONS = ('list', 'describe', 'run', 'observe', 'record_missing_control', 'enable', 'disable', 'remove')
 CONTROL_FIELDS = {'action', 'app', 'operation', 'params', 'job', 'target_profile', 'session'}
 CONTROL_SCHEMA = {
     'type': ['string', 'null'],
@@ -82,6 +82,34 @@ def uses_rolling(metadata, args):
     params = args.get('params', {})
     return parameter is not None and (args.get('job') is not None
         or args.get('target_profile') is not None or (isinstance(params, dict) and parameter in params))
+
+
+def observe_page(context, selector):
+    """Inspect the live owned page without navigating or submitting work."""
+    expression = """(selector => {
+        const visible = element => element.getClientRects().length > 0 &&
+            element.checkVisibility({visibilityProperty: true, opacityProperty: true});
+        const text = element => (element.innerText || element.getAttribute('aria-label') || '').trim();
+        const root = document.querySelector('main, [role="main"]') || document.body;
+        const status = Array.from(document.querySelectorAll('[role="status"], [role="progressbar"], [aria-busy="true"]'))
+            .filter(visible).slice(-5).map(text).join(' ').slice(-600);
+        const result = selector ? Array.from(document.querySelectorAll(selector)).filter(visible) : [];
+        const node = result.length === 1 ? result[0] : null;
+        let evidence = null;
+        if (node && !node.closest('[aria-busy="true"]') && !node.matches('html, body, main, [role="main"]')) {
+            if (node instanceof HTMLImageElement) evidence = node.complete && node.naturalWidth ? node.tagName : null;
+            else evidence = text(node).slice(-1200) || null;
+        }
+        return {visible: [status, root ? text(root).slice(-1800) : ''].filter(Boolean).join('\\n'),
+                result: evidence};
+    })""" + '(' + json.dumps(selector) + ')'
+    response = context.browser_exec('import json\nprint(json.dumps(js(' + repr(expression) + ')))')
+    if not response.get('success') or response.get('exit_code', 0):
+        raise RuntimeError(response.get('error') or response.get('output') or 'Could not inspect the current page.')
+    page = json.loads(response['output'])
+    if not isinstance(page, dict) or 'result' not in page or not isinstance(page.get('visible'), str):
+        raise ValueError('The current page did not return a DOM observation.')
+    return page
 
 
 def read_package(root, identifier):
@@ -335,7 +363,7 @@ class AppHost:
             if args.get('session') and args['session'] != command['session']:
                 return {'action': 'block', 'message': 'Use one browser session for this control.'}
             args = {**args, 'session': command['session']}
-        if command['action'] not in {'run', 'record_missing_control'}:
+        if command['action'] not in {'run', 'observe', 'record_missing_control'}:
             # Catalog and lifecycle commands do not acquire a browser or choose a profile.
             return {'action': 'modify', 'args': {'session': args.get('session') or 'default'}}
         if command['action'] == 'run':
@@ -346,7 +374,7 @@ class AppHost:
                 context['defer_profile'] = uses_rolling(metadata, command)
             except (OSError, ValueError, RuntimeError):
                 pass  # handle() returns the package error to Hermes.
-        context['require_existing'] = command['action'] == 'record_missing_control'
+        context['require_existing'] = command['action'] in {'observe', 'record_missing_control'}
         route = {'session': args.get('session'), 'app': command.get('app'), 'local': args.get('local')}
         return self.provider.prepare_call(tool_name, route, task_id, **context)
 
@@ -453,7 +481,7 @@ class AppHost:
             return response
         session, (app, _, can_read_result) = next(iter(work.items()))
         offered = {(tool.get('function') or {}).get('name') for tool in request.get('tools') or []}
-        control = {'app': app, 'operation': 'read_result'} if can_read_result else {'action': 'describe', 'app': app}
+        control = {'app': app, 'operation': 'read_result'} if can_read_result else {'action': 'observe', 'app': app}
         arguments = {'site_control': json.dumps(control), 'session': session}
         tool_name = 'browser_exec'
         if tool_name not in offered:
@@ -500,7 +528,7 @@ class AppHost:
                 result = self.manage(action, app_identifier(args.get('app')))
             elif action == 'record_missing_control':
                 result = self.record_missing_control(args, task_id, session_id)
-            elif action in {'describe', 'run'}:
+            elif action in {'describe', 'run', 'observe'}:
                 identifier = app_identifier(args.get('app'))
                 directory, metadata, source = read_package(self.root, identifier)
                 if action == 'describe':
@@ -526,9 +554,11 @@ class AppHost:
                                            'and finish any requested delivery before the final response.'}
                             if active[2]:
                                 result['running_work']['next_control'] = {'app': identifier, 'operation': 'read_result'}
+                            else:
+                                result['running_work']['next_control'] = {'app': identifier, 'action': 'observe'}
                 else:
                     operation = args.get('operation')
-                    if not isinstance(operation, str) or operation not in metadata['operations']:
+                    if action == 'run' and (not isinstance(operation, str) or operation not in metadata['operations']):
                         raise ValueError('Choose an operation from the site guide.')
                     params = args.get('params', {})
                     if not isinstance(params, dict):
@@ -538,6 +568,11 @@ class AppHost:
                             raise RuntimeError('This extension is changing lifecycle state.')
                         context = AppContext(self, identifier, args.get('session', ''), task_id, session_id)
                         context._binding = context._choice()
+                        if action == 'observe':
+                            # Hermes supplies the turn in pre_tool_call; its native handler can omit it.
+                            if not context._binding.running or kwargs.get('turn_id', context.turn_id) != context.turn_id:
+                                raise ValueError('No running work in this turn and site session.')
+                            observed_work = (context._binding.running, context._binding.running_since)
                         context._binding.active += 1
                         self.active.add(context)
                     # Pace observations of work in progress and allow Stop to invalidate the context.
@@ -545,12 +580,14 @@ class AppHost:
                         with self.provider.lock:
                             choice = context._choice()
                             observe = (choice.running is not None
-                                       and (operation == 'read_result'
+                                       and (action == 'observe' or operation == 'read_result'
                                             or (choice.running[1] and args.get('job') == choice.running[1])))
                             remaining = choice.last_observation + OBSERVATION_INTERVAL - monotonic() if observe else 0
                         if remaining <= 0:
                             break
                         sleep(min(remaining, 0.25))
+                    if action == 'observe':
+                        return json.dumps(self.observe_running(context, params, observed_work), ensure_ascii=False)
                     with loaded_package(directory, source) as module:
                         rolling = uses_rolling(metadata, args)
                         if rolling:
@@ -583,12 +620,15 @@ class AppHost:
                             now = monotonic()
                             if choice.running is None:
                                 choice.running_since = now
+                                choice.result_selector = ''
                             choice.running = (result.get('operation', operation), result.get('job'))
                             reader = metadata['operations'].get('read_result')
                             choice.can_read_result = (reader is not None and not rolling
                                                       and not reader.get('parameters', {}).get('required'))
                             choice.last_observation = now
                             result['running_seconds'] = int(now - choice.running_since)
+                            if not choice.can_read_result and not choice.running[1]:
+                                result['next_control'] = {'app': identifier, 'action': 'observe'}
                         elif choice.running is not None:
                             active_operation, active_job = choice.running
                             if active_job:
@@ -596,12 +636,15 @@ class AppHost:
                             else:
                                 observed = (operation == 'read_result'
                                             or (active_operation != 'click' and operation == active_operation))
-                            if observed:
+                            if observed and result['status'] == 'needs_inspection' and not active_job:
+                                choice.can_read_result = False
+                                result['next_control'] = {'app': identifier, 'action': 'observe'}
+                            elif observed:
                                 choice.running = None
                         if choice.running is not None:
                             choice.pending = True
             else:
-                raise ValueError('Choose list, describe, run, enable, disable, remove, or record_missing_control.')
+                raise ValueError('Choose an action from the site control schema.')
             return json.dumps(result, ensure_ascii=False)
         except Exception as error:
             return json.dumps({'success': False, 'status': 'failed',
@@ -615,6 +658,39 @@ class AppHost:
                         self.active.remove(context)
                         context._binding.active -= 1
                     context.active = False
+
+    def observe_running(self, context, params, observed_work):
+        choice = context._choice()
+        selector = params.get('result_selector', choice.result_selector)
+        if set(params) - {'result_selector'} or not isinstance(selector, str):
+            raise ValueError('Use an optional CSS result_selector for the visible, finished result of this request.')
+        page = observe_page(context, selector)
+        with self.provider.lock:
+            choice = context._choice()
+            if (choice.running, choice.running_since) != observed_work:
+                raise RuntimeError('The observed work changed during the page read.')
+            operation, job = choice.running
+            now = monotonic()
+            choice.last_observation = now
+            choice.result_selector = selector
+            result = {'success': True, 'status': 'running', 'session': context.session, 'page': page,
+                      'app': context.app, 'operation': operation, 'running_seconds': int(now - choice.running_since)}
+            if job:
+                result.update(job=job, next_control={'app': context.app, 'operation': operation, 'job': job},
+                              message='Check the existing job using its job ID to verify its result.')
+            elif selector and page['result'] is not None:
+                result['status'] = 'ok'
+                write_json(context.directory / 'result.json', {
+                    'success': True, 'status': 'ok', 'app': context.app, 'session': context.session,
+                    'operation': operation, 'data': {'result': page['result']},
+                })
+                choice.pending = False
+                choice.running = None
+            else:
+                result['message'] = ('Continue this task in the same session. Supply params.result_selector on '
+                                     'observe when you identify the unique finished result for this submission. '
+                                     'Use DOM or screenshot as needed. Finish the requested delivery.')
+            return result
 
 
 def write_json(path, value):

@@ -252,7 +252,13 @@ Use the same alias for related calls. Pass the returned private `session` to
 native `browser_exec` for DOM inspection, screenshots or other unmapped UI
 actions in the same Chrome window. While the package reports pending work,
 continue the task in that session until the requested result is ready and any
-requested delivery is complete. The package
+requested delivery is complete. For a running request, use the package's
+`read_result` if it takes no required arguments. When the response points to
+`{"action":"observe","app":"…"}`, that control reads the visible status and text
+in the owned page. Supply `params.result_selector` once you identify a CSS
+selector specific to the finished result of this submission. The plugin retains
+it across checks and reports success when a single visible match has result
+content. A job with its own ID uses the package's job result check. The package
 decides when navigation is necessary. The host loads
 the current source on each call and preserves the loaded module during an active
 operation. Relative imports such as `from .helpers import inspect_page` use the
