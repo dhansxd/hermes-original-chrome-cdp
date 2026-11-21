@@ -1,6 +1,6 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 22, 21 November 2026.
+Revisi PRD 23, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
@@ -75,9 +75,14 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
   `tools.override`, kontrol situs memperluas `browser_exec` saat Hermes berjalan.
   [Registrasi kontrol](plugin.py) juga membaca dan mengatur langsung atribut
   entri tool di registry publik, termasuk skema dinamis dan batas waktu.
-  Saat memeriksa kompatibilitas versi Hermes baru, verifikasi atribut tersebut
-  dan panggilan ke handler bawaan. Daftar impor saja hanya memeriksa nama yang
-  diizinkan Hermes.
+  Sebelum memakai versi Hermes baru, uji plugin yang sama pada instalasi uji
+  versi tersebut. Dari sesi baru, pakai kontrol situs lalu baca DOM pada
+  jendela yang sama. Jalankan dua agen pada satu profil Chrome dan pastikan
+  akhir tugas satu agen hanya menutup jendelanya sendiri. Jika hasilnya sesuai
+  kontrak, gunakan versi plugin yang sama. Patch kompatibilitas diperlukan
+  bila pengujian menunjukkan perilaku yang rusak. Bila kontrol gagal sementara
+  browsing umum berfungsi, periksa atribut registry dan pemanggilan handler
+  bawaan pada integrasi kontrol situs.
 - Hermes v0.23.2 sudah menyediakan `browser_exec` dan bisa memakai Chrome yang
   berjalan melalui endpoint CDP persisten (`browser.cdp_url`). Koneksi langsung
   memakai login yang sudah terbuka. Opsi terpisah `browser.use_real_profile`
@@ -693,7 +698,7 @@ catatan sumber permintaan, dan posisi pekerjaan disimpan terpisah dari source pa
 Kontrak lengkap terdapat di [docs/ROLLING.md](docs/ROLLING.md). Paket opt-in
 menyediakan `identify`, `run`, `handoff` dan `resume`. Penanda bukti berasal dari
 UI layanan yang diperiksa callback. Jurnal, quota per akun/scope dan cursor
-berada di plugin data. `browser_app describe` menampilkan job pemilik percakapan,
+berada di plugin data. Aksi `describe` melalui `browser_exec.site_control` menampilkan job pemilik percakapan,
 dan `run` menerima ID `job` untuk meneruskan rekonsiliasi. Callback produksi serta
 bukti kuota/media Google yang sebenarnya masih menjadi penerimaan GEM/FLO.
 

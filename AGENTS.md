@@ -51,6 +51,8 @@ and verification evidence before calling a checklist item complete.
 - During design discussions, update the active plan as requirements are clarified.
   Record the requested behavior, open implementation questions, and how the
   result will be verified. Keep proposals open until the user decides them.
+  When a confirmed rule conflicts with existing guidance, correct or remove the
+  conflicting instruction where it appears. Label historical behavior as such.
 - Make the smallest change that addresses an observed issue or requested feature.
 - State material assumptions and concrete success criteria. Reuse existing code
   and keep planning and verification proportional to the change.

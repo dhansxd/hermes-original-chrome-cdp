@@ -102,8 +102,8 @@ agen dan extension berjalan dengan izin proses Hermes.
   dan pembacaan DOM terarah. Pertahankan dokumen/jendela selama pekerjaan
   berlangsung. Navigasi, pembacaan ulang DOM dan pemulihan dilakukan sesuai
   kebutuhan langkah serta hasil inspeksi.
-- Panduan operasi tersedia melalui schema tool, `browser_app describe`, dan
-  `SKILL.md` dalam paket. Install plugin beserta paket menyediakan panduan itu.
+- Pada cabang aktif, Hermes membaca panduan operasi dari schema `browser_exec`,
+  aksi `describe` melalui `site_control`, dan `SKILL.md` dalam paket.
 
 ### Rolling dan hasil produksi
 
@@ -179,7 +179,7 @@ Flow apabila paket tersebut belum tersedia, dengan menghormati pilihan lifecycle
 serta source pengguna yang sudah ada.
 
 Artifact, checkpoint, hasil dan jurnal rolling berada di direktori data plugin
-yang disediakan Hermes, terpisah dari source paket. `browser_app describe`
+yang disediakan Hermes, terpisah dari source paket. Pada baseline lama, `browser_app describe`
 mengembalikan `data_directory` serta job milik percakapan yang dapat dipulihkan.
 Konfigurasi berada pada profil Hermes aktif dan dapat memakai lokasi `HERMES_HOME`
 yang berbeda. Detail itu perlu diperiksa pada instalasi tujuan.
@@ -409,8 +409,9 @@ dilaporkan Hermes. Gabungkan konfigurasi contoh pada README ke config profil
 Hermes aktif. Gunakan hasil `chrome_profiles list` untuk memilih direktori nyata
 dan mengatur default, aturan per layanan serta urutan rolling yang diinginkan.
 
-Untuk Flow, pasang FFmpeg beserta ffprobe pada PATH proses Hermes. Panggil
-`browser_app list`, lalu `browser_app describe` untuk `flow`. Penemuan awal
+Untuk Flow, pasang FFmpeg beserta ffprobe pada PATH proses Hermes. Pada cabang
+aktif, panggil aksi `list` lalu `describe` untuk `flow` melalui parameter
+`site_control` pada `browser_exec`. Penemuan awal
 menyiapkan source template eksternal. Panduan dalam paket menjelaskan parameter
 yang sesuai versi terpasang. Source Gemini privat dapat di-clone dengan akun
 GitHub pengelola ketika implementasinya dilanjutkan.

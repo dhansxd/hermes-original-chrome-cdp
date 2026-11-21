@@ -250,8 +250,9 @@ object and validates the operation's required values.
 
 Use the same alias for related calls. Pass the returned private `session` to
 native `browser_exec` for DOM inspection, screenshots or other unmapped UI
-actions in the same Chrome window. If the package reports pending work, that
-session can also be used on the next turn in the same conversation. The package
+actions in the same Chrome window. While the package reports pending work,
+continue the task in that session until the requested result is ready and any
+requested delivery is complete. The package
 decides when navigation is necessary. The host loads
 the current source on each call and preserves the loaded module during an active
 operation. Relative imports such as `from .helpers import inspect_page` use the
