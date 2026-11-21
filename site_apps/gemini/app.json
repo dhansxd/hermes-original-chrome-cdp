@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "gemini",
   "name": "Gemini Web",
-  "version": "0.4.9",
+  "version": "0.4.11",
   "profile_policy": "rotate_on_limit",
   "handoff_mode": "manual",
   "rolling_parameters": {"reply": "continuation"},
@@ -48,7 +48,7 @@
       }
     },
     "read_result": {
-      "description": "Return the latest visible text response in this Gemini chat, up to 4,000 characters. Return running while Gemini is responding.",
+      "description": "Read the visible Gemini response or verified research report, up to 4,000 characters. Follow next_control while research is pending. A bound Deep Research response with only text returns research_no_plan.",
       "parameters": {"type": "object", "properties": {}, "additionalProperties": false}
     },
     "inspect": {

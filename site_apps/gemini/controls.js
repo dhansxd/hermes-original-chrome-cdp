@@ -45,12 +45,20 @@ async (origin, selectors, kind, name, label, researchState = null, savedSubmissi
     };
     const unavailable = ':disabled, [aria-disabled="true"]';
     const clicked = Symbol.for('hermes.gemini.researchActions');
+    const cardSelector = 'immersive-entry-chip gem-processing-card';
     let turn = all('model-response').at(-1);
     const researchButtons = (control, response = turn) =>
         [...response?.querySelectorAll('button, [role="button"]') || []]
             .filter(node => visible(node) && labels[control].some(text => matchesLabel(node, text)));
     const queryText = group =>
         clean([...group?.querySelectorAll('user-query .query-text-line') || []].map(node => node.innerText).join('\n'));
+    function submittedPlan(response) {
+        const starts = researchButtons('start_research', response);
+        if (starts.length !== 1 || !starts[0].matches(unavailable)) return '';
+        const widget = starts[0].closest('deep-research-confirmation-widget');
+        const title = widget?.querySelector('[data-test-id="title"]');
+        return visible(title) && clean(title.innerText) ? clean(widget.innerText) : '';
+    }
     const readsResearch = kind === 'result' || kind === 'activate_research';
     const bound = researchState === 'submitted' || (researchState === 'selected' && !!current);
     const withReceipt = result => {
@@ -88,14 +96,25 @@ async (origin, selectors, kind, name, label, researchState = null, savedSubmissi
         }
         const topicIndex = groups.findIndex(g => g.id === current.id);
         if (topicIndex < 0) return {reason: 'research_turn_not_visible'};
-        turn = groups[topicIndex]?.querySelector('model-response');
+        const topic = groups[topicIndex];
+        turn = topic.querySelector('model-response');
+        let confirmed = groups[topicIndex + 1];
+        if (confirmed && queryText(topic) && queryText(confirmed) === queryText(topic)) {
+            // A repeated prompt is only a copy of this plan when both widgets agree and
+            // Gemini placed a research card immediately after the repeated plan.
+            const plan = submittedPlan(turn);
+            const afterCopy = groups[topicIndex + 2];
+            if (plan && plan === submittedPlan(confirmed.querySelector('model-response')) &&
+                labels.start_research.includes(queryText(afterCopy)) &&
+                afterCopy.querySelector('model-response ' + cardSelector)) {
+                confirmed = afterCopy;
+            }
+        }
         if (!current.confirmation) {
             const start = researchButtons('start_research');
             const submitted = current.started || (start.length === 1 && start[0].matches(unavailable));
-            // Gemini inserts the confirmation as the next user turn after the plan.
-            const next = groups[topicIndex + 1];
-            if (submitted && next && labels.start_research.includes(queryText(next))) {
-                current.confirmation = next.id;
+            if (submitted && confirmed && labels.start_research.includes(queryText(confirmed))) {
+                current.confirmation = confirmed.id;
             }
         }
         planAccepted = Boolean(current.started || current.confirmation);
@@ -103,7 +122,6 @@ async (origin, selectors, kind, name, label, researchState = null, savedSubmissi
             return withReceipt({reason: 'already_clicked'});
         }
         if (current.confirmation) {
-            const confirmed = groups[topicIndex + 1];
             if (confirmed?.id !== current.confirmation || !labels.start_research.includes(queryText(confirmed))) {
                 return {reason: 'research_turn_not_visible'};
             }
@@ -113,8 +131,9 @@ async (origin, selectors, kind, name, label, researchState = null, savedSubmissi
             return pending(current.confirmation ? 'research_in_progress' : 'awaiting_response');
         }
     }
-    const cardSelector = 'immersive-entry-chip gem-processing-card';
-    const reportCards = current?.confirmation && bound
+    const reportTurn = bound ? Boolean(current?.confirmation) :
+        Boolean(chatId && labels.start_research.includes(queryText(turn?.closest('.conversation-container[id]'))));
+    const reportCards = reportTurn
         ? [...turn?.querySelectorAll(cardSelector + '.completed') || []].filter(visible) : [];
     const reportButtons = [...researchButtons('open_research_report'), ...reportCards];
 
@@ -135,7 +154,7 @@ async (origin, selectors, kind, name, label, researchState = null, savedSubmissi
         const reportText = visible(report) && report.innerText.trim();
         if (reportText) {
             if (bound && current) current.finished = true;
-            return withReceipt({reason: 'ready', chat_id: chatId, text: reportText.slice(0, 4000),
+            return withReceipt({reason: 'ready', stage: 'report_ready', chat_id: chatId, text: reportText.slice(0, 4000),
                 truncated: reportText.length > 4000});
         }
         for (const control of ['open_research_report', 'start_research']) {
@@ -166,7 +185,8 @@ async (origin, selectors, kind, name, label, researchState = null, savedSubmissi
         const text = visible(body) ? body.innerText.trim() : '';
         if (!text) return bound ? pending('awaiting_response') : {reason: 'missing'};
         if (bound) current.finished = true;
-        return withReceipt({reason: 'ready', chat_id: chatId, text: text.slice(0, 4000), truncated: text.length > 4000});
+        return withReceipt({reason: bound ? 'research_no_plan' : 'ready', chat_id: chatId, text: text.slice(0, 4000),
+            truncated: text.length > 4000});
     }
 
     let nodes;

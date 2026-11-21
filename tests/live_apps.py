@@ -125,7 +125,9 @@ assert read('result', state='submitted', saved=intent)['reason'] == 'research_pr
 js("""document.querySelector('#new p').textContent='Same question';
       document.querySelector('#new').insertAdjacentHTML('beforeend','<model-response><message-content>New reply</message-content></model-response>');
       document.body.insertAdjacentHTML('beforeend','<div class="conversation-container" id="later"><user-query>Another task</user-query><model-response><message-content>Unrelated answer</message-content></model-response></div>')""")
-assert read('result', state='submitted', saved=intent)['text'] == 'New reply'
+rejected = read('result', state='submitted', saved=intent)
+assert rejected['reason'] == 'research_no_plan' and rejected['text'] == 'New reply'
+assert rejected['_research_receipt']['finished'] is True
 js("""document.querySelector('#later').remove();
       document.querySelector('#new').insertAdjacentHTML('afterend', `
       <div class="conversation-container" id="topic">
@@ -151,7 +153,8 @@ assert read('result', state='submitted', saved=saved)['stage'] == 'planning'
 assert read('control', 'send', 'submitted', saved=saved)['reason'] == 'research_submission_pending'
 js("""document.querySelector('#topic model-response').innerHTML = `
       <message-content>Research plan only</message-content>
-      <deep-research-confirmation-widget><button>Mulai penelitian</button></deep-research-confirmation-widget>`;
+      <deep-research-confirmation-widget><h3 data-test-id="title">Research topic</h3>
+        <button>Mulai penelitian</button></deep-research-confirmation-widget>`;
       const start = document.querySelector('#topic button');
       window.starts=0; start.onclick = () => {window.starts++; start.disabled = true};""")
 assert read('result', state='submitted')['stage'] == 'plan_ready'
@@ -189,6 +192,49 @@ assert read('result', state='submitted')['stage'] == 'report_available'
 assert read('activate_research', 'open_research_report', 'submitted')['reason'] == 'clicked'
 assert read('result', state='submitted')['text'] == 'Research report body'
 assert read('activate_research', 'open_research_report', 'submitted')['reason'] == 'already_clicked'
+
+# Gemini can show the same submitted plan twice, then the actual confirmation and report.
+js("""const topic = document.querySelector('#topic');
+      const copy = topic.cloneNode(true);
+      copy.id = 'topic-copy';
+      topic.insertAdjacentElement('afterend', copy);
+      copy.querySelector('h3').textContent = 'Different research plan';
+      delete window[Symbol.for('hermes.gemini.researchSubmission')];""")
+assert read('result', state='submitted', saved=saved)['reason'] == 'research_plan_unconfirmed'
+js("""document.querySelector('#topic-copy h3').textContent = 'Research topic';
+      document.querySelector('#topic-copy button').disabled = false;""")
+assert read('result', state='submitted', saved=saved)['reason'] == 'research_plan_unconfirmed'
+js("document.querySelector('#topic-copy button').disabled = true")
+recovered = read('result', state='submitted', saved=saved)
+assert recovered['stage'] == 'report_ready' and recovered['text'] == 'Research report body'
+assert recovered['_research_receipt']['id'] == 'topic'
+assert recovered['_research_receipt']['confirmation'] == 'confirm'
+js("delete window[Symbol.for('hermes.gemini.researchSubmission')]")
+assert read('result', state='submitted', saved=recovered['_research_receipt'])['stage'] == 'report_ready'
+assert read('activate_research', 'start_research', 'submitted')['reason'] == 'already_clicked'
+assert js('window.starts') == 1
+
+# A fresh session can open a completed report from the latest confirmation turn.
+js("""(() => {
+      delete window[Symbol.for('hermes.gemini.researchSubmission')];
+      document.querySelector('#other').remove();
+      const previous = document.querySelector('#confirm model-response');
+      const response = previous.cloneNode(true);
+      previous.replaceWith(response);
+      const card = response.querySelector('gem-processing-card');
+      card.classList.remove('selected');
+      card.onclick = () => card.classList.add('selected');
+})()""")
+assert read()['stage'] == 'report_available'
+assert read('activate_research', 'open_research_report')['reason'] == 'clicked'
+assert read()['stage'] == 'report_ready' and read()['text'] == 'Research report body'
+js("""(() => {
+      document.querySelector('#confirm .query-text-line').textContent = 'Unrelated request';
+      const response = document.querySelector('#confirm model-response');
+      response.replaceWith(response.cloneNode(true));
+})()""")
+assert read().get('stage') is None
+assert read('activate_research', 'open_research_report')['reason'] == 'missing'
 
 # A first submission starts on /app, then loads a new conversation document.
 goto_url(js('location.origin') + '/app')

@@ -101,9 +101,15 @@ def run():
                 result['next_control'] = {'app': 'gemini', 'operation': 'click',
                                           'params': {'control': state['control']}}
             return result
-        if state['reason'] != 'ready':
+        if state['reason'] not in {'ready', 'research_no_plan'}:
             return blocked('result', state)
-        return {'status': 'ok', 'data': {key: state[key] for key in ('chat_id', 'text', 'truncated')}}
+        data = {key: state[key] for key in ('chat_id', 'text', 'truncated')}
+        if state['reason'] == 'research_no_plan':
+            data['reason'] = state['reason']
+            return {'status': 'failed', 'data': data, 'message': 'Gemini returned text without a research plan.'}
+        if state.get('stage'):
+            data['stage'] = state['stage']
+        return {'status': 'ok', 'data': data}
     if op == 'type_prompt':
         state = wait_for('control', 'composer')
         if state['reason'] != 'ready':

@@ -14,7 +14,11 @@ For example, `tools_menu` opens the tools menu and `model_picker` opens the
 model menu. Read any required labels from the open menu using the native DOM
 helpers in the same session.
 
-For Deep Research, use the topic from the request or the conversation. Ask for
+For an existing Deep Research report, open its conversation and call
+`read_result`. Follow the offered `open_research_report` control and read
+the report in that same session.
+
+To start Deep Research, use the topic from the request or the conversation. Ask for
 the topic if it is missing. Select `deep_research`, enter the topic, then send it
 once. A confirmed selection returns `mode_active: true`. If Send reports that
 Deep Research is inactive, inspect the composer in the same window and confirm
@@ -23,8 +27,10 @@ follow-up. Follow `next_control` while Gemini is preparing the plan, including
 when Send reports `research_submission_pending`. Use the browser progress
 checks in the same window during the wait. After a reload, check the existing
 submission there. For a request to run the research, use the start
-button when Gemini presents the plan. Open a completed report when offered.
-Report a final Gemini refusal as shown. If the research panel needs inspection,
+button when Gemini presents the plan. Open a completed report when offered,
+then read it with `read_result` (stage `report_ready`). If `read_result` fails
+with `research_no_plan`, Gemini returned only text. Report what it said.
+If the research panel needs inspection,
 examine it in the same window and record a confirmed missing control with the
 fallback.
 

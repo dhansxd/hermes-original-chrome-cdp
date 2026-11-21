@@ -366,6 +366,23 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      ulang laporan yang sudah ada di Gemini Web juga lulus, termasuk membuka
      kembali panel dari kartunya dan menutup jendela uji. Verifikasi isi di
      Telegram dan cleanup pada alur nyata tetap tercantum pada butir 3.
+   - Patch pembaca Gemini mengaitkan konfirmasi setelah salinan rencana
+     berurutan hanya jika prompt dan widget rencananya cocok, kedua tombol
+     mulai sudah nonaktif, dan giliran konfirmasi memiliki kartu riset.
+     Uji ulang dua percakapan yang tersimpan lewat Chrome asli menemukan
+     laporan yang sebelumnya tidak terbaca dan mengembalikan penolakan
+     sebagai `research_no_plan`. Pemicu penolakan di sisi Gemini tetap terbuka.
+     Gemini 0.4.10 dimuat gateway tanpa restart. Sesi Telegram baru berhasil
+     mengirim ringkasan laporan lama melalui DOM pada `browser_exec`.
+     Verifikasi terpisah pada sesi baru menemukan kartu laporan yang selesai,
+     tetapi `open_research_report` mengembalikan `needs_inspection` dan
+     `read_result` belum mengembalikan `report_ready` tanpa catatan giliran
+     asal. Penerimaan jalur kontrol langsung dari sesi baru masih terbuka.
+     Gemini 0.4.11 mengenali kartu selesai pada giliran konfirmasi terbaru
+     di percakapan yang dibuka. Uji sesi Hermes baru dengan laporan lama
+     melewati `open_research_report` hingga `report_ready` pada satu jendela
+     Chrome asli. Hook akhir giliran menutup jendela uji. Uji Telegram
+     sebelumnya mengonfirmasi pengiriman ringkasan lewat DOM.
    - [x] Uji situs lokal di Chrome asli melalui Hermes: satu paket tanpa
      pembaca hasil melewati enam pemeriksaan tertunda. Pemeriksaan ketujuh
      membaca hasil pada dokumen dan jendela yang sama. Uji isolasi dan

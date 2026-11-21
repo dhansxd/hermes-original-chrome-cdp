@@ -330,6 +330,15 @@ class GeminiAppTests(ChromeFixture):
         self.assertEqual((result['status'], result['data']), ('running', {'chat_id': 'c_fixture'}))
         self.click.assert_not_called()
 
+    def test_research_text_without_plan_is_failed_and_preserves_response(self):
+        self.js.return_value = {'reason': 'research_no_plan', 'chat_id': 'c_fixture',
+                                'text': 'Saya hanya model bahasa.', 'truncated': False}
+        result = self.call(operation='read_result')
+        self.assertEqual(result['status'], 'failed')
+        self.assertFalse(result['success'])
+        self.assertEqual(result['data'], self.js.return_value)
+        self.click.assert_not_called()
+
     def test_uses_selected_profile_and_reports_only_masked_account(self):
         self.assertTrue(self.call(plugin.PROFILE_TOOL, action='select', profile='Profile 2')['success'])
         email = 'fixture@example.test'
