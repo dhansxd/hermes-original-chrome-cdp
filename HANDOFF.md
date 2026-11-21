@@ -2,6 +2,11 @@
 
 Diperbarui pada 16 November 2026 untuk persiapan reset Mac milik pengelola proyek.
 
+**Titik lanjut saat ini.** Baca [AGENTS.md](AGENTS.md) dan
+[kontrak aktif PLAN.md](PLAN.md#kontrak-browser-dan-ekstensi) terlebih dahulu.
+Serah-terima di bawah merekam baseline sebelum reset, termasuk cara lama
+memanggil `browser_app` dan `browser_exec`.
+
 ## Status saat dijeda
 
 **Pengembangan lanjutan dijeda atas permintaan pengguna.** Tugas terakhir adalah
@@ -27,10 +32,10 @@ dapat diperiksa dengan `git log -1` dan daftar commit GitHub.
 
 ## Urutan membaca
 
-1. Baca dokumen ini untuk arah pengguna, status jeda dan langkah pemulihan.
-2. Baca [AGENTS.md](AGENTS.md) untuk aturan kerja di repo.
-3. Baca [PLAN.md](PLAN.md), terutama status, checklist terbuka dan temuan.
-   Dokumen itu merupakan PRD sekaligus spesifikasi kebutuhan produk proyek ini.
+1. Baca [AGENTS.md](AGENTS.md) dan bagian aktif [PLAN.md](PLAN.md)
+   untuk aturan kerja, keputusan terbaru dan checklist terbuka.
+2. Baca dokumen ini untuk riwayat keputusan, baseline dan langkah pemulihan.
+3. Periksa commit dan bukti terakhir untuk bagian yang akan dikerjakan.
 4. Gunakan [README.md](README.md) dan [tutorial](docs/TUTORIAL.md) untuk pemasangan,
    konfigurasi, lifecycle dan penggunaan.
 5. Baca [kontrak rolling](docs/ROLLING.md) serta
@@ -78,8 +83,10 @@ agen dan extension berjalan dengan izin proses Hermes.
 - Plugin mendukung install, enable, disable, update dan remove melalui pengelola
   resmi Hermes. Pemilihan browser bawaan dilakukan melalui picker Hermes ketika
   pengguna beralih provider, sesuai panduan lifecycle di README.
-- `browser_exec` tetap menjadi tool browser native Hermes. `chrome_profiles`
-  mengatur profil. `browser_app` memuat paket operasi situs.
+- Pada baseline sebelum reset, `browser_exec` adalah tool browser native Hermes,
+  `chrome_profiles` mengatur profil, dan `browser_app` memuat paket situs.
+  [Kontrak aktif](PLAN.md#kontrak-browser-dan-ekstensi) menetapkan satu tool
+  browser dengan kontrol situs di dalamnya.
 - Extension situs berada di direktori pengguna di luar instalasi plugin.
   Pengguna bersama agennya dapat menambah atau memperbarui paket situs tanpa
   mengubah instalasi host. Paket awal yang direncanakan adalah Gemini dan Flow.
@@ -444,11 +451,11 @@ kembali. Status job lama hanya dapat direkonsiliasi apabila bukti sumbernya ada.
 ## Pesan siap pakai untuk agen setelah reset
 
 > Lanjutkan proyek pada repo `dhansxd/hermes-original-chrome-cdp`. Baca
-> `HANDOFF.md`, `AGENTS.md`, `PLAN.md`, README dan panduan paket terlebih dahulu.
-> Proyek dijeda sesudah host 0.10.3 dan Flow 0.3.0. Kode baseline sebelum
-> dokumentasi serah-terima adalah `6769518`. Tujuan tetap Chrome asli via CDP,
+> `AGENTS.md` dan bagian aktif `PLAN.md` terlebih dahulu, kemudian `HANDOFF.md`,
+> README dan panduan paket. Baseline pemulihan adalah host 0.10.3 dan Flow 0.3.0
+> pada commit `6769518`. Tujuan tetap Chrome asli via CDP,
 > profil dinamis, satu jendela awal per sesi dan pemisahan banyak agen/manual.
-> Host menangani lifecycle, extension eksternal menangani situs. Gemini masih
-> terbuka. Periksa perubahan sejak baseline dan ikuti tugas lanjut yang sekarang
-> saya minta. Pertahankan core Hermes, perilaku yang sudah lulus dan ruang lingkup
-> yang disepakati. Catat bukti, checklist dan commit/push pada repo ini.
+> Satu tool browser menangani lifecycle dan memakai kontrol dari extension situs.
+> Periksa perubahan sejak baseline dan ikuti tugas lanjut yang sekarang saya minta.
+> Pertahankan core Hermes, perilaku yang sudah lulus dan ruang lingkup yang
+> disepakati. Catat bukti, checklist dan commit/push pada repo ini.

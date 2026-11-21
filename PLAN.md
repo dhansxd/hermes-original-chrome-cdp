@@ -1,16 +1,22 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 13, 20 November 2026.
+Revisi PRD 14, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-**Status saat ini adalah diskusi dan audit.** Checklist aktif di bawah mencatat
-pekerjaan untuk tahap implementasi berikutnya. [HANDOFF.md](HANDOFF.md) menyimpan
-catatan pemulihan dari 16 November. Bukti versi lama tetap berguna sebagai
-pembanding perilaku.
+**Kontrak aktif diperbarui. Penyatuan tool browser belum diimplementasikan.**
+Baca bagian ini dan [AGENTS.md](AGENTS.md) sebelum menentukan langkah berikutnya.
+Bagian historis, [HANDOFF.md](HANDOFF.md), dan contoh `browser_app`/`browser_exec`
+di panduan menjelaskan versi yang sudah berjalan. Kontrak di bagian ini menjadi
+acuan untuk perbaikan berikutnya.
 
 ### Kontrak browser dan ekstensi
 
+- Hermes memakai tepat satu tool browser untuk browsing umum dan kontrol situs.
+  Ekstensi Gemini, Google Flow, atau situs lain adalah kumpulan kontrol UI siap
+  pakai di dalam tool itu. Panduan paket menjelaskan penggunaan kontrol situs
+  bila diperlukan. Nama tool, bentuk argumen dan detail pendaftaran mengikuti
+  API resmi Hermes yang tersedia saat implementasi.
 - Satu tugas memakai satu jendela Chrome asli dan sambungan CDP yang sama
   sejak aksi pertama sampai seluruh permintaan selesai. Submit, cek progres,
   pembacaan hasil, unduhan, dan pengiriman yang diminta berlangsung dalam
@@ -19,29 +25,51 @@ pembanding perilaku.
   melepaskan jendela milik tugas. Stop dan kegagalan terminal memakai cleanup
   yang sesuai. Jika aturan perpindahan profil yang sudah disetujui terpicu,
   verifikasi hasil permintaan sumber sebelum melanjutkan di profil tujuan.
-- Sesi Hermes baru memakai katalog tool dan skill yang tersedia untuk
-  menemukan browser dan panduan situs. Provider Chrome asli dipilih melalui
-  konfigurasi Hermes. Percakapan, memori, dan prompt pribadi pengguna
-  tidak menjadi syarat untuk menemukan tool atau panduan.
-- Ekstensi memetakan kontrol UI dan menjelaskan cara memakainya. Semua aksi
-  berjalan dalam browser yang sama. Gunakan kontrol ekstensi yang tersedia
-  untuk situsnya. Jika suatu kontrol belum dipetakan, lanjutkan dengan DOM
-  terarah melalui `browser_exec` pada sesi itu, lalu screenshot jika perlu.
-  Situs tanpa ekstensi memakai tool browser biasa.
+- Katalog tool dan panduan bawaan plugin cukup untuk sesi Hermes baru dengan
+  perintah yang hanya menyatakan tugas. Gunakan provider Chrome asli melalui
+  mekanisme resmi Hermes. Penemuan browser dan kontrol situs berjalan tanpa
+  memori percakapan, prompt pribadi atau instruksi pengguna tentang nama tool.
+- Pakai kontrol yang sudah dipetakan secara langsung. Jika kontrol belum
+  dipetakan, lanjutkan dengan DOM terarah pada tool, sesi dan jendela yang sama.
+  Pakai screenshot bila DOM tidak cukup. Situs tanpa paket memakai cara browsing
+  biasa melalui tool yang sama. Untuk situs dengan paket, Hermes mencatat
+  setiap kontrol yang terkonfirmasi belum dipetakan saat harus memakai DOM
+  atau screenshot. Catat situs, halaman atau mode, kontrol dan cara inspeksinya
+  sebelum jawaban akhir. Periksa mode, model dan panel aktif agar kontrol yang
+  tersembunyi tidak keliru dicatat. Gunakan temuan untuk menambahkan kontrol
+  siap pakai saat pengguna meminta patch.
 - Profil, login, dan cookie tetap dikelola Chrome. Pertahankan profil terpilih,
   startup dan izin debugging yang sudah diatur, serta isolasi jendela antaragen
-  dan jendela manual. Perubahan cukup pada ruang lingkup yang diminta dan
-  tetap memakai core Hermes dan 9Router dari upstream.
+  dan jendela manual. Aksi melalui UI asli dengan CDP tanpa menyalin atau
+  mengekspor cookie. Perubahan cukup pada ruang lingkup yang diminta. Pertahankan
+  core Hermes dan 9Router dari upstream serta lifecycle resmi plugin dan paket
+  situs yang sudah tersedia.
+- Aktifkan saklar Remote debugging sekali, sesuai
+  [tutorial](docs/TUTORIAL.md#enable-chrome-remote-debugging-once).
+  Sesudah itu, plugin menjalankan alur startup, pemilihan profil dan izin koneksi
+  yang sudah ada. Tes harus melalui alur plugin saat Chrome mati, hidup tanpa
+  jendela, dan hidup dengan jendela. Chrome memakai satu ikon di Dock dan
+  jendela agen aman saat beberapa agen berbagi satu profil.
+- Gunakan [OpenCLI](https://github.com/jackwener/opencli) hanya sebagai referensi
+  kontrol UI situs yang relevan, seperti tombol, label, selector, atau urutan
+  klik. Arsitektur browser, routing sesi dan lifecycle mengikuti repo ini.
 
 ### Hasil audit acuan
 
+- Baseline `84efb16` mendaftarkan `browser_app` di samping `browser_exec`.
+  Handler situs memakai eksekutor native, tetapi jalur pemanggilan terpisah
+  dapat memilih sesi berbeda untuk alias yang sama. Pada uji Telegram segar,
+  Hermes juga memilih DOM umum untuk aksi Gemini yang sudah dipetakan.
+  Keberhasilan fixture pencatatan kontrol belum membuktikan catatan dibuat
+  pada jalur nyata tersebut.
 - Commit awal `8f90d78` membedakan giliran berakhir dari tugas selesai melalui
   `finish_browser()`. Commit `3e1e5c1` menambahkan penyelesaian eksplisit pada
   desain Chrome khusus saat itu. Riwayat ini menjadi acuan batas penyelesaian
   tugas. Pada Chrome bersama, cleanup harus tetap mengikuti kepemilikan target.
-- Implementasi situs pembanding mempertahankan klien atau worker dan target
-  selama pekerjaan, menunggu hasil, lalu mengumpulkan artefak sebelum cleanup.
-  Bukti penerimaan perlu mengukur pekerjaan lengkap termasuk hasil yang diminta.
+- Gunakan referensi situs lama di [HANDOFF.md](HANDOFF.md#referensi-source-yang-sudah-tersimpan-di-github)
+  untuk membaca perilaku menunggu hasil, verifikasi, pengumpulan artefak dan
+  cleanup, serta detail UI yang relevan. Peliharalah satu jendela yang sama
+  selama pekerjaan, termasuk pada jeda antara panggilan tool.
 - Pada plugin saat ini, sesi situs berstatus `pending` bisa bertahan saat giliran
   berakhir. Regresi yang perlu diselesaikan adalah Hermes memberi jawaban akhir
   saat masih menunggu hasil, lalu meninggalkan jendela. Menguji penutupan
@@ -55,9 +83,13 @@ pembanding perilaku.
    Hermes membaca judul dan label tautan `example.com` lewat `browser_exec`.
    Inventori Chrome asli menunjukkan satu jendela tugas. Akhir giliran menutup
    jendela itu dan jendela pembanding tetap dapat dipakai.
-2. [ ] Uji situs dengan ekstensi satu per satu. Verifikasi Hermes menemukan
-   paket, membaca panduan yang relevan, dan memakai kontrol yang tersedia.
-   Jika ada fallback, buktikan kontrol dan fallback memakai jendela yang sama.
+2. [ ] Jadikan kontrol situs bagian dari tool yang menjalankan tugas browsing
+   umum. Hapus `browser_app` sebagai pilihan tool terpisah pada integrasi baru.
+   Verifikasi katalog tool pada sesi baru, lalu uji Gemini dan Flow satu per
+   satu dengan prompt yang hanya berisi tugas. Buktikan kontrol yang tersedia
+   dipakai langsung, inspeksi saat diperlukan memakai jendela yang sama, dan
+   situs tanpa ekstensi memakai tool yang sama. Sinkronkan README, tutorial,
+   dan panduan paket dengan antarmuka yang benar-benar tersedia pada versi itu.
 3. [ ] Perbaiki regresi penyelesaian tugas. Uji progres yang berlangsung cukup
    lama. Tugas yang masih berjalan harus tetap dilanjutkan. Verifikasi hasil
    dan setiap unduhan atau pengiriman yang diminta sebelum jawaban akhir.
@@ -69,12 +101,17 @@ pembanding perilaku.
    yang tersedia dan sampaikan spesifikasi tanpa kontrol sebagai instruksi,
    lalu verifikasi hasil. Flow 0.4.2 membaca pilihan Klasik dan radio model
    pada default gambar/video Agent di Chrome asli dalam satu jendela.
-5. [x] Hermes mencatat kontrol yang terbukti belum dipetakan ketika memakai
-   fallback dalam tugas. Catat situs, halaman atau mode, serta tindakan yang
-   diperlukan. Periksa panel dan model sebelum menetapkan temuan. Jadikan
-   catatan ini bahan patch saat diminta. Uji Hermes dari sesi baru memverifikasi
-   satu temuan tersimpan lewat `record_missing_control` setelah fallback DOM
-   dan sebelum jawaban akhir, dalam satu jendela.
+5. [ ] Verifikasi Hermes mencatat kontrol yang terkonfirmasi belum dipetakan
+   saat melanjutkan tugas dengan DOM atau screenshot. Uji melalui tool yang
+   sama pada sesi baru tanpa arahan tambahan. Fixture jalur lama menyimpan satu
+   temuan lewat `record_missing_control`. Uji Telegram berikutnya belum
+   menghasilkan catatan untuk kontrol yang memang belum dipetakan. Temuan
+   yang terverifikasi menjadi bahan menambahkan tombol ketika diminta.
+
+Untuk Google Flow, pertahankan pemisahan cara menggunakan mode Klasik dan Agent
+sesuai butir 4 dan panduan paket. Pilihan profil serta mode perpindahan manual
+atau otomatis yang sudah disetujui mengikuti [kontrak rolling](docs/ROLLING.md).
+Periksa hasil dan identitas permintaan asal sebelum melanjutkan ke profil lain.
 
 ### Fitur setelah perbaikan lulus
 
@@ -217,10 +254,10 @@ Source pembanding Gemini berada pada `957aed5`, Flow mandiri pada `79d810a`.
 
 ## 2. Tujuan produk dan aturan dasar
 
-Satu plugin browser Hermes menyediakan Chrome asli melalui CDP untuk browsing
-umum dan extension yang dapat ditambah pengguna bersama agennya. Paket awal
-menyertakan **Gemini** dan **Google Flow**. Extension situs lain dapat memakai
-kontrak umum yang sama.
+Satu tool dalam plugin browser Hermes menyediakan Chrome asli melalui CDP untuk
+browsing umum dan memakai kontrol UI dari extension yang dipasang pengguna.
+Paket awal menyertakan **Gemini** dan **Google Flow**. Extension situs lain
+dapat memakai kontrak umum yang sama.
 
 - Chrome memakai profil asli, login/cookie tetap dikelola Chrome.
 - Setiap agen/sesi memiliki jendela dan target sendiri, termasuk saat berbagi
@@ -263,7 +300,11 @@ kontrak umum yang sama.
 per sesi sudah tersedia melalui `chrome_profiles` dengan `list`, `select`, dan
 `set_default`. Aturan profil tetap/per platform/subagent/acak menjadi PRO-01–PRO-05.
 
-## 4. Kontrak extension yang akan diimplementasikan
+## 4. Kontrak paket yang tersedia pada baseline `84efb16`
+
+Bagian ini mencatat struktur paket dan cara pemanggilan versi tersebut.
+[Kontrak aktif](#kontrak-browser-dan-ekstensi) mengatur perilaku tool browser
+berikutnya.
 
 ### Struktur dan pemasangan
 
@@ -405,12 +446,14 @@ Aturan tersimpan dipakai kembali pada turn berikutnya. Pilihan sementara mengiku
 umur sesi. Perubahan default dipakai sesi baru. Profil terhapus/diganti diperiksa
 melalui inventori dan identitas direktori yang sudah tersedia.
 
-Setiap agen mempunyai ruang sesi untuk browser umum dan setiap extension. Contoh
-alias adalah `browser`, `flow`, dan `gemini`. Namespace privat mengikat alias pada
-pemilik. Agen utama pada A, child pada B, Flow pada C, dan Gemini pada D dapat
-berjalan bersamaan. Beberapa agen juga dapat memakai satu profil dengan jendela
-masing-masing. Profil tetap untuk browser umum berlaku pada sesi browser umum.
-Flow/Gemini mempunyai profil awal dan urutan kandidat layanannya sendiri.
+Pada baseline `84efb16`, setiap agen mempunyai ruang sesi untuk browser umum
+dan setiap extension. Contoh alias adalah `browser`, `flow`, dan `gemini`.
+Namespace privat mengikat alias pada pemilik. Agen utama pada A, child pada B,
+Flow pada C, dan Gemini pada D dapat berjalan bersamaan. Beberapa agen juga
+dapat memakai satu profil dengan jendela masing-masing. Profil tetap untuk
+browser umum berlaku pada sesi browser umum. Flow/Gemini mempunyai profil awal
+dan urutan kandidat layanannya sendiri. Untuk tool yang disatukan, kepemilikan
+jendela mengikuti tugas sesuai [kontrak aktif](#kontrak-browser-dan-ekstensi).
 
 Konteks platform berasal dari sesi Hermes, dan hubungan parent/child berasal dari
 hook publik. ID diteruskan sebagai identitas opaque. Profil Hermes menentukan
@@ -686,8 +729,9 @@ log sejak awal penerimaan mencatat nol event AboutThisMac dari Chrome.
 
 ## 10. Urutan implementasi
 
-Urutan ini dipertahankan sebagai rencana setelah pengguna melanjutkan proyek.
-Status jeda dan panduan pemulihan tercatat pada [HANDOFF.md](HANDOFF.md).
+Urutan di bawah mencatat fase implementasi awal. Pekerjaan terkini mengikuti
+[checklist aktif](#urutan-perbaikan-dan-verifikasi). Status jeda dan panduan
+pemulihan awal tercatat pada [HANDOFF.md](HANDOFF.md).
 
 1. **Fondasi extension** — EXT-01 sampai EXT-04 dan CTX-01. Buktikan paket fixture
    eksternal, katalog, bantuan, pembaruan, serta konteks browser pemiliknya.

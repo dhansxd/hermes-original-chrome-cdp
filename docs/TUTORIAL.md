@@ -3,6 +3,10 @@
 This walkthrough connects Hermes's native browser tools to your original Google
 Chrome profile on macOS. It uses your own local Chrome installation and sign-ins.
 
+The commands below describe the current implementation. The
+[active product contract](../PLAN.md#kontrak-browser-dan-ekstensi) specifies
+one browser tool shared by general browsing and ready-to-use website controls.
+
 ## Prepare Chrome and macOS
 
 1. Install Hermes Agent and Google Chrome. Confirm Chrome is available at
