@@ -49,9 +49,12 @@ pembanding perilaku.
 
 ### Urutan perbaikan dan verifikasi
 
-1. [ ] Ulangi tes dari sesi Hermes baru dengan perintah yang hanya menyebut tugas.
+1. [x] Ulangi tes dari sesi Hermes baru dengan perintah yang hanya menyebut tugas.
    Mulai dengan situs umum. Verifikasi pemilihan Chrome asli, satu jendela
-   milik tugas, hasil yang diminta, dan cleanup terarah.
+   milik tugas, hasil yang diminta, dan cleanup terarah. Pada host 0.10.21,
+   Hermes membaca judul dan label tautan `example.com` lewat `browser_exec`.
+   Inventori Chrome asli menunjukkan satu jendela tugas. Akhir giliran menutup
+   jendela itu dan jendela pembanding tetap dapat dipakai.
 2. [ ] Uji situs dengan ekstensi satu per satu. Verifikasi Hermes menemukan
    paket, membaca panduan yang relevan, dan memakai kontrol yang tersedia.
    Jika ada fallback, buktikan kontrol dan fallback memakai jendela yang sama.
