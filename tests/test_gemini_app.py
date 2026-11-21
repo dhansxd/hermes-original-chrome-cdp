@@ -40,16 +40,19 @@ class GeminiAppTests(ChromeFixture):
                                 'press_key': self.press_key})
         return {'success': True, 'output': output.getvalue()}
 
-    def call(self, tool, **args):
+    def call(self, tool='browser_exec', **args):
         args = {'app': 'gemini', 'session': 'inspection', **args}
         with patch.dict(os.environ, {}, clear=True):
-            prepared = self.host.prepare_call(tool, args, 'agent', session_id='chat',
+            request = args if tool == plugin.PROFILE_TOOL else {'site_control': json.dumps(args), 'session': args['session']}
+            prepared = self.host.prepare_call(tool, request, 'agent', session_id='chat',
                                               turn_id='turn', config=self.config)
         self.assertEqual(prepared['action'], 'modify', prepared)
         args.update(prepared['args'])
         if tool == plugin.PROFILE_TOOL:
             return self.provider.profiles(args, task_id='agent', session_id='chat')
-        return json.loads(self.host.handle(args, task_id='agent', session_id='chat'))
+        with patch('hermes_cli.config.load_config_readonly', return_value=self.config):
+            return json.loads(self.host.execute({**request, **prepared['args']}, self.native,
+                task_id='agent', session_id='chat', turn_id='turn'))
 
     def test_bundled_inspect_is_discoverable_with_its_guide(self):
         listing = json.loads(self.host.handle({'action': 'list'}))
@@ -69,7 +72,7 @@ class GeminiAppTests(ChromeFixture):
             {'origin': 'null', 'path': 'blank'},
             {'reason': 'ready', 'chat_id': 'c_fixture-chat'},
         ]
-        result = self.call(browser_apps.APP_TOOL, action='run', operation='open_chat',
+        result = self.call(action='run', operation='open_chat',
                            params={'chat': 'c_fixture-chat'})
         self.assertEqual(result['data'], {'chat_id': 'c_fixture-chat'})
         self.navigate.assert_called_once_with('https://gemini.google.com/app/fixture-chat')
@@ -77,7 +80,7 @@ class GeminiAppTests(ChromeFixture):
 
     def test_send_click_uses_one_owned_native_call(self):
         self.js.return_value = {'reason': 'ready', 'point': [62, 37]}
-        result = self.call(browser_apps.APP_TOOL, action='run', operation='click',
+        result = self.call(action='run', operation='click',
                            params={'control': 'send'})
         self.assertEqual(result['status'], 'running')
         self.assertEqual(result['data'], {'control': 'send', 'clicked': True})
@@ -89,7 +92,7 @@ class GeminiAppTests(ChromeFixture):
 
     def test_blocked_control_keeps_the_native_fallback_session(self):
         self.js.return_value = {'reason': 'obscured'}
-        result = self.call(browser_apps.APP_TOOL, action='run', operation='click',
+        result = self.call(action='run', operation='click',
                            params={'control': 'send'})
         self.assertEqual(result['status'], 'needs_inspection')
         self.assertEqual(result['data'], {'control': 'send', 'reason': 'obscured'})
@@ -101,7 +104,7 @@ class GeminiAppTests(ChromeFixture):
         self.assertEqual(fallback['args']['session'], result['session'])
 
     def test_unmapped_control_returns_fallback_without_browser_snapshot(self):
-        result = self.call(browser_apps.APP_TOOL, action='run', operation='click',
+        result = self.call(action='run', operation='click',
                            params={'control': 'unmapped'})
         self.assertEqual(result['status'], 'needs_inspection')
         self.assertEqual(result['data']['reason'], 'unmapped_control')
@@ -115,7 +118,7 @@ class GeminiAppTests(ChromeFixture):
             {'reason': 'ready', 'expanded': False, 'point': [15, 20]},
             {'reason': 'ready', 'point': [35, 40]},
         ]
-        result = self.call(browser_apps.APP_TOOL, action='run', operation='click',
+        result = self.call(action='run', operation='click',
                            params={'control': 'deep_research'})
         self.assertTrue(result['success'], result)
         self.assertEqual([entry.args for entry in self.click.call_args_list], [(15, 20), (35, 40)])
@@ -132,7 +135,7 @@ class GeminiAppTests(ChromeFixture):
                     {'reason': 'missing'}, focused, {'reason': 'ready', 'point': [35, 40]},
                 ]
                 with patch('time.monotonic', side_effect=[0, 1, 2]):
-                    result = self.call(browser_apps.APP_TOOL, action='run', operation='click',
+                    result = self.call(action='run', operation='click',
                                        params={'control': 'deep_research'})
                 self.assertTrue(result['success'], result)
                 if focused['focused']:
@@ -143,7 +146,7 @@ class GeminiAppTests(ChromeFixture):
     def test_type_prompt_verifies_focus_and_preserves_send(self):
         ready = {'reason': 'ready', 'point': [10, 20], 'value': '', 'document': 10, 'chat_id': 'c_fixture'}
         self.js.side_effect = [ready, {**ready, 'focused': True}, {**ready, 'value': 'Fixture prompt'}]
-        result = self.call(browser_apps.APP_TOOL, action='run', operation='type_prompt',
+        result = self.call(action='run', operation='type_prompt',
                            params={'text': 'Fixture prompt'})
         self.assertTrue(result['success'], result)
         self.click.assert_called_once_with(10, 20)
@@ -151,7 +154,7 @@ class GeminiAppTests(ChromeFixture):
 
     def test_type_prompt_leaves_an_existing_draft_unmodified(self):
         self.js.return_value = {'reason': 'ready', 'value': 'Previous draft'}
-        result = self.call(browser_apps.APP_TOOL, action='run', operation='type_prompt',
+        result = self.call(action='run', operation='type_prompt',
                            params={'text': 'Fixture prompt'})
         self.assertEqual(result['data']['reason'], 'existing_draft')
         self.click.assert_not_called()
@@ -163,7 +166,7 @@ class GeminiAppTests(ChromeFixture):
             {'reason': 'ready', 'expanded': False, 'point': [22, 26]},
             {'reason': 'ready', 'point': [24, 55]},
         ]
-        result = self.call(browser_apps.APP_TOOL, action='run', operation='select_model',
+        result = self.call(action='run', operation='select_model',
                            params={'model': 'Fixture model'})
         self.assertTrue(result['success'], result)
         self.assertIn('Fixture model', self.js.call_args.args[0])
@@ -171,7 +174,7 @@ class GeminiAppTests(ChromeFixture):
 
     def test_read_result_reports_generation_in_progress_without_clicking(self):
         self.js.return_value = {'reason': 'running', 'chat_id': 'c_fixture'}
-        result = self.call(browser_apps.APP_TOOL, action='run', operation='read_result')
+        result = self.call(action='run', operation='read_result')
         self.assertEqual((result['status'], result['data']), ('running', {'chat_id': 'c_fixture'}))
         self.click.assert_not_called()
 
@@ -182,7 +185,7 @@ class GeminiAppTests(ChromeFixture):
                                {'page': 'ready', 'account': {'status': 'identified', 'email': email},
                                 'model': 'Fixture model', 'controls': {'send': {'status': 'disabled'}},
                                 'quota': {'status': 'unknown', 'notices': []}}]
-        result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect')
+        result = self.call(action='run', operation='inspect')
         self.assertEqual(result['status'], 'ok', result)
         self.assertEqual(result['profile'], 'Profile 2')
         self.assertEqual(result['data']['account'], {
@@ -199,7 +202,7 @@ class GeminiAppTests(ChromeFixture):
                                {'page': 'ready', 'account': {'status': 'unknown'}, 'model': 'Hydrogen Tinggi',
                                 'chat_id': 'c_fixture-chat'}]
         with patch('time.sleep') as sleep:
-            result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect',
+            result = self.call(action='run', operation='inspect',
                                params={'chat': 'fixture-chat'})
         self.assertTrue(result['success'], result)
         self.assertEqual(result['data']['model'], 'Hydrogen Tinggi')
@@ -214,7 +217,7 @@ class GeminiAppTests(ChromeFixture):
         self.js.side_effect = [{'origin': 'null', 'path': 'blank'},
                                {'page': 'ready', 'account': {'status': 'unknown'},
                                 'model': 'Fixture model', 'chat_id': 'c_fixture-chat'}]
-        result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect',
+        result = self.call(action='run', operation='inspect',
                            params={'chat': 'c_fixture-chat'})
         self.assertEqual(result['status'], 'ok', result)
         self.assertEqual(result['profile'], 'Profile 2')
@@ -226,7 +229,7 @@ class GeminiAppTests(ChromeFixture):
                                {'page': 'ready', 'account': {'status': 'unknown'},
                                 'model': 'Fixture model', 'chat_id': 'c_other-chat'}]
         with patch('time.monotonic', side_effect=[0.0, 8.0]):
-            result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect',
+            result = self.call(action='run', operation='inspect',
                                params={'chat': 'c_fixture-chat'})
         self.assertEqual(result['status'], 'failed', result)
         self.assertIn('could not be confirmed', result['message'])
@@ -238,7 +241,7 @@ class GeminiAppTests(ChromeFixture):
         self.js.side_effect = [{'origin': 'https://gemini.google.com', 'path': '/app'},
                                state, state]
         with patch('time.monotonic', side_effect=[0.0, 7.75, 8.0]), patch('time.sleep') as sleep:
-            result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect')
+            result = self.call(action='run', operation='inspect')
         self.assertTrue(result['success'], result)
         self.assertEqual(result['data'], state)
         sleep.assert_called_once_with(0.25)
@@ -247,14 +250,14 @@ class GeminiAppTests(ChromeFixture):
         state = {'page': 'signed_out', 'account': {'status': 'signed_out'}, 'model': None}
         self.js.side_effect = [{'origin': 'https://gemini.google.com', 'path': '/app'}, state]
         with patch('time.sleep') as sleep:
-            result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect')
+            result = self.call(action='run', operation='inspect')
         self.assertTrue(result['success'], result)
         self.assertEqual(result['data'], state)
         sleep.assert_not_called()
         self.navigate.assert_not_called()
 
     def test_profile_cannot_be_changed_through_inspect_parameters(self):
-        result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect',
+        result = self.call(action='run', operation='inspect',
                            params={'profile': 'Profile 2'})
         self.assertEqual(result['status'], 'failed')
         self.dispatch.assert_not_called()
@@ -262,7 +265,7 @@ class GeminiAppTests(ChromeFixture):
     def test_rejects_chat_ids_that_are_not_safe_route_segments(self):
         for chat in ('https://example.test/app/chat', '../chat', 'c_', ''):
             with self.subTest(chat=chat):
-                result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect',
+                result = self.call(action='run', operation='inspect',
                                    params={'chat': chat})
                 self.assertEqual(result['status'], 'failed', result)
         self.dispatch.assert_not_called()
@@ -270,7 +273,7 @@ class GeminiAppTests(ChromeFixture):
     def test_unparseable_browser_result_fails_cleanly(self):
         self.dispatch.side_effect = None
         self.dispatch.return_value = {'success': True, 'output': 'GEMINI_INSPECT=not-json'}
-        result = self.call(browser_apps.APP_TOOL, action='run', operation='inspect')
+        result = self.call(action='run', operation='inspect')
         self.assertEqual(result['status'], 'failed')
         self.assertIn('invalid inspection snapshot', result['message'])
 
@@ -289,7 +292,7 @@ class GeminiAppTests(ChromeFixture):
         return route, base, focused, draft, complete
 
     def reply(self, request='request-one', **params):
-        return self.call(browser_apps.APP_TOOL, action='run', operation='reply', params={
+        return self.call(action='run', operation='reply', params={
             'chat': 'fixture-chat', 'prompt': 'Next question', 'request_id': request, **params})
 
     def test_reply_sends_once_and_reuses_a_completed_request(self):
@@ -315,7 +318,7 @@ class GeminiAppTests(ChromeFixture):
         self.assertEqual(self.reply(prompt='Changed prompt')['status'], 'failed')
         self.assertTrue(self.call(plugin.PROFILE_TOOL, action='select', profile='Profile 2',
                                   session='other-profile')['success'])
-        wrong_profile = self.call(browser_apps.APP_TOOL, action='run', operation='reply',
+        wrong_profile = self.call(action='run', operation='reply',
                                   session='other-profile', params={
                                       'chat': 'fixture-chat', 'prompt': 'Next question',
                                       'request_id': 'request-one'})
@@ -378,7 +381,7 @@ class GeminiAppTests(ChromeFixture):
         args = {'action': 'run', 'operation': 'reply', 'job': job}
         if target is not None:
             args['target_profile'] = target
-        return self.call(browser_apps.APP_TOOL, **args)
+        return self.call(**args)
 
     def test_manual_handoff_waits_and_opens_a_fresh_destination_chat(self):
         self.js.side_effect = self.quota_states()
@@ -530,11 +533,11 @@ class GeminiAppTests(ChromeFixture):
         first = self.portable_reply()
         self.assertTrue(first['awaiting_profile'])
         self.js.side_effect = frames[:2]
-        duplicate = self.call(browser_apps.APP_TOOL, action='run', operation='reply', session='other',
+        duplicate = self.call(action='run', operation='reply', session='other',
                               params={'chat': 'fixture-chat', 'prompt': 'Next question', 'request_id': 'request-one',
                                       'continuation': {'model': 'Fixture model', 'checkpoint': 'Portable context'}})
         self.assertEqual(duplicate['status'], 'failed', duplicate)
-        self.assertIn('original browser_app job', duplicate['message'])
+        self.assertIn('original site operation job', duplicate['message'])
         self.assertEqual(self.click.call_count, 1)
 
     def test_fresh_destination_needs_its_original_document_to_confirm_result(self):

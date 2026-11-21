@@ -3,10 +3,9 @@
 This walkthrough connects Hermes's native browser tools to your original Google
 Chrome profile on macOS. It uses your own local Chrome installation and sign-ins.
 
-General browsing already works through `browser_exec`. The `browser_app`
-examples below use the current site packages. Direct access to their controls
-in the active `browser_exec` page is tracked in the
-[active plan](../PLAN.md#urutan-perbaikan-dan-verifikasi).
+Use `browser_exec` for both ordinary browsing and site controls. Pass each
+site request below as JSON text in its `site_control` parameter. Ordinary Python goes in
+the `code` parameter. Pass the same session to subsequent browser calls.
 
 ## Prepare Chrome and macOS
 
@@ -44,6 +43,12 @@ hermes plugins install https://github.com/dhansxd/hermes-original-chrome-cdp
 hermes plugins enable original-chrome-default
 hermes plugins list
 ```
+
+During enablement, grant the declared Hermes capability `tools.override` to use
+site controls inside `browser_exec`. Hermes keeps its native browser handler for
+ordinary Python, DOM inspection and screenshots. If you decline, ordinary Chrome
+browsing remains available. To review the grant later, use
+`hermes plugins enable original-chrome-default --allow-tool-override`.
 
 Hermes displays source-scan and dependency information during installation or
 enablement. Review the findings for the revision being installed. The declared
@@ -168,7 +173,7 @@ site can therefore affect the other agent and manual browsing on that profile.
 
 ## Use Google Flow
 
-Ask Hermes to describe the `flow` app through `browser_app`. First discovery
+Set `browser_exec.site_control` to `{"action":"describe","app":"flow"}`. First discovery
 installs the bundled template in the user package directory. Existing package
 source and persistent disable/remove choices are preserved. Install FFmpeg for
 the original-file decode checks, for example with `brew install ffmpeg` on macOS.
@@ -255,7 +260,7 @@ def run(context, operation, params):
     }
 ```
 
-Ask Hermes to call `browser_app` with the following arguments.
+Pass each dictionary below to `site_control` in `browser_exec`.
 
 ```json
 {"action": "list"}
@@ -266,7 +271,7 @@ Ask Hermes to call `browser_app` with the following arguments.
 
 The final call reads the current document. Navigating depends on the code in
 `run`. Reusing an alias keeps the owned browser session for related calls within
-the caller's turn. Each app, agent, and conversation gets its own namespace.
+the caller's turn. Each task owns its window for both site controls and ordinary browser calls.
 The app's returned private `session` can be used with native `browser_exec` by
 the same caller in that turn when further DOM inspection is needed.
 
@@ -310,7 +315,7 @@ handoff and recovery. Initial Gemini/Flow packages remain in the [PRD checklist]
 ## Configure profiles for a website package
 
 Pass the package ID as `app` to `chrome_profiles`, with the same session alias
-used by `browser_app`. Ordinary browsing and each package have separate choices.
+used for the site controls in `browser_exec`.
 
 ```json
 {"action": "list", "app": "my-site", "session": "work"}

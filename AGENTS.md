@@ -11,6 +11,9 @@ and verification evidence before calling a checklist item complete.
   Add each site's ready-to-use UI controls to that existing browsing path.
   Calling a mapped control clicks or types in the task's active page over CDP.
   Keep the existing DOM and screenshot operations available in that same window.
+  Remove the `browser_app` tool from the manifest and Hermes registration as
+  part of this change. Verify in a fresh session that its name is unregistered
+  and that the installed site's controls work through `browser_exec`.
 - Use one owned window in the original Chrome for the entire task. Reuse its
   CDP session for clicks, typing, progress checks, result collection and any
   requested delivery. Keep the other agents' and manual windows independent.

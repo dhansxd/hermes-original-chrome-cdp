@@ -86,7 +86,7 @@ def ensure(context, params, *, inspect_only=False, require_project=False):
         if (set(params) - PARAMETERS['inspect']
                 or params.get('mode', 'classic') not in ('classic', 'agent')
                 or params.get('kind', 'video') not in ('image', 'video')):
-            raise ValueError('Use the inspection parameters listed by browser_app describe.')
+            raise ValueError('Use the inspection parameters listed by the site control guide.')
 
     ui = UI(context)
     current = ui.read('location.href')
@@ -650,7 +650,7 @@ def run(context, operation, params):
     preparing_generation = False
     try:
         if operation not in PARAMETERS or set(params) - PARAMETERS[operation]:
-            raise ValueError('Unknown Flow operation or parameter. Read browser_app describe for the current schema.')
+            raise ValueError('Unknown Flow operation or parameter. Read the site control guide for the current schema.')
         if operation in GENERATIONS and params.get('kind', GENERATIONS[operation]) != GENERATIONS[operation]:
             raise ValueError('kind must match the generate_image or generate_video operation')
         if operation == 'inspect':
@@ -675,7 +675,7 @@ def run(context, operation, params):
             return entities.create_voice(context, ui, params)
         if operation == 'create_character':
             return entities.create_character(context, ui, params)
-        raise ValueError('Choose an operation listed by browser_app describe')
+        raise ValueError('Choose an operation listed by the site control guide')
     except Exception as error:
         if preparing_generation:
             position = saved_position(context)

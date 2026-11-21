@@ -4,10 +4,14 @@ Use your installed, signed-in Google Chrome as the browser backend for Hermes Ag
 Choose **Original Chrome · CDP** in Hermes's Browser Automation picker, then use the
 native `browser_exec` tool and browser helpers.
 
-Site packages currently expose their controls through `browser_app`. The planned
-change makes those controls available directly in the active `browser_exec`
-page so Hermes can click a known button without inspecting the whole page.
-See the [active contract](PLAN.md#kontrak-browser-dan-ekstensi).
+Website packages supply controls inside native `browser_exec`. Set the tool's `site_control` field
+to JSON text, for example `{"action":"describe","app":"gemini"}`.
+For a known control, call the operation directly in the task's existing window.
+A populated `site_control` executes that operation alone. Ordinary browser
+Python goes in `code` with `site_control` omitted or null.
+The former `browser_app` tool has been removed. On upgrade, an existing user-owned
+package may still mention that tool in its guide. Use the guide’s operation names
+in the `site_control` parameter and update those references in your own package.
 
 The [project handoff](HANDOFF.md) records the verified baseline and recovery
 steps for a fresh Mac installation. The active plan records current open work.
@@ -21,7 +25,7 @@ Use `chrome_profiles` to list current profiles, choose a profile for an agent's
 named browser session, or change the default for new sessions. Several agents can
 choose the same profile or different profiles, each with their own windows.
 
-Use `browser_app` to discover and run user-owned website extension packages.
+Use `site_control` in `browser_exec` to discover and run user-owned website extension packages.
 Their Python code and guides live outside the plugin installation and can be
 updated independently. Version 0.10.3 bundles Flow 0.3.0 with real-account rolling,
 portable reference files and destination character/voice preparation. Classic and
@@ -34,7 +38,7 @@ in the active Hermes profile, or the configured `apps_directory`. The default
 profile uses `~/.hermes/browser-apps`. Existing user
 packages and persistent disable/remove choices are preserved during host updates.
 The installed copy is editable independently of this plugin. Read its current
-operations and guide with `browser_app` action `describe`, app `flow`.
+operations and guide by passing `{"action":"describe","app":"flow"}` in `browser_exec.site_control`.
 
 Flow uses native UI actions in the extension's owned Chrome window. Settings and
 progress are read through targeted DOM queries. Downloads use Chrome's original
@@ -99,6 +103,12 @@ hermes plugins install https://github.com/dhansxd/hermes-original-chrome-cdp
 hermes plugins enable original-chrome-default
 hermes tools
 ```
+
+For mapped site controls, approve the plugin's declared `tools.override` capability
+during enablement. This lets the plugin add the `site_control` parameter on the existing
+`browser_exec` tool. Ordinary Python uses the original Hermes handler. Declining
+the grant leaves ordinary browsing available. To grant it later, use
+`hermes plugins enable original-chrome-default --allow-tool-override`.
 
 Review the source and dependency prompts that Hermes displays. In Browser Automation,
 select **Original Chrome · CDP**. Enable the native Browser Automation and Terminal
@@ -215,15 +225,14 @@ actions when the request names a site such as Gemini Web or Google Flow.
 The Gemini Web package provides mapped actions for opening a conversation,
 entering a prompt, selecting a tool or model, sending, and reading the result.
 Use the package's named session for related actions. If a control needs inspection,
-pass the session returned by `browser_app` to native `browser_exec` to use the
+use the same native `browser_exec` session to use the
 same window. See the [Gemini package guide](site_apps/gemini/SKILL.md).
 
-The `browser_app` tool accepts `list`, `describe`, `run`, `enable`, `disable`,
-`remove`, and `record_missing_control`. Package discovery and
-help read files without executing package code or opening Chrome. An operation
-uses an app-specific browser session bound to the calling agent and conversation.
-Different apps and ordinary browsing have separate windows, including when their
-agents share the same Chrome profile.
+The `site_control` request accepts `list`, `describe`, `run`, `enable`, `disable`,
+`remove`, and `record_missing_control`. Discovery and help read package metadata. Pass each request below as JSON text in
+`browser_exec.site_control`. Reuse the task's session
+for the mapped actions and ordinary browser helpers. Distinct agent tasks own
+independent windows even when they use the same Chrome profile.
 
 ```json
 {"action": "list"}
@@ -252,14 +261,14 @@ using `Path(__file__).parent`.
 After using DOM or screenshot fallback for a confirmed unmapped control, Hermes
 records the page or mode and the control in `missing-controls.jsonl` under that
 package's `data_directory`. This uses the same app and exact session with
-`browser_app` action `record_missing_control`.
+`site_control` action `record_missing_control`.
 
 Packages execute trusted local Python code with the permissions of the Hermes
 process. The bound browser context is valid during `run`. Its browser helpers use
 the native dispatch and the plugin's target ownership and input checks.
 
 Pass `app` to `chrome_profiles` to select or configure a website package's profile.
-Its choices are independent of ordinary browsing and other packages.
+Service-specific profile policies select the starting profile for new work.
 
 ```json
 {"action": "select", "app": "my-site", "profile": "Profile 2", "session": "work"}

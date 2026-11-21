@@ -51,8 +51,9 @@ class RollingTests(ChromeFixture):
         if target_profile is not None:
             args['target_profile'] = target_profile
         with patch.dict(os.environ, {}, clear=True):
-            prepared = self.host.prepare_call('browser_app', args, task, session_id=chat,
-                session_key='route-' + task, turn_id=turn, config=self.config)
+            prepared = self.host.prepare_call('browser_exec',
+                {'site_control': json.dumps(args), 'session': alias}, task, session_id=chat,
+                session_key='route-' + chat.removeprefix('chat-'), turn_id=turn, config=self.config)
         self.assertEqual(prepared['action'], 'modify', prepared)
         return json.loads(self.host.handle({**args, **prepared['args']}, task_id=task, session_id=chat))
 
@@ -612,7 +613,7 @@ settings={'apps_directory':str(root/'packages'),'profile_directory':'Default'}
 provider=plugin.ChromeProvider(settings.get,data=root,set_setting=settings.__setitem__)
 host=browser_apps.AppHost(provider,settings.get,lambda *a,**k:None,plugin.prepare_code,lambda:root/'plugin-data')
 args={'action':'run','app':'fixture','operation':'generate','session':'work','params':{'prompt':'fixture'}}
-prepared=host.prepare_call('browser_app',args,'A',session_id='chat-A',turn_id='turn',config={'browser':{'cloud_provider':plugin.NAME,'auto_local_for_private_urls':False}})
+prepared=host.prepare_call('browser_exec',args,'A',session_id='chat-A',turn_id='turn',config={'browser':{'cloud_provider':plugin.NAME,'auto_local_for_private_urls':False}})
 host.handle({**args,**prepared['args']},task_id='A',session_id='chat-A')
 '''
         paths = [str(Path(__file__).resolve().parents[1]), str(Path(agent.browser_provider.__file__).resolve().parents[1])]

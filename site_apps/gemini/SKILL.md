@@ -1,12 +1,18 @@
 # Gemini Web controls
 
-Read the current operations with `browser_app` action `describe` and app `gemini`.
-Choose an existing Chrome profile using `chrome_profiles` with `app: gemini`.
-Use the same named `session` for each related `browser_app` call. Start with
-`open_chat` and pass `chat` when opening an existing conversation. Chrome opens
-Gemini in the selected profile.
+Pass JSON text in the `site_control` parameter of `browser_exec` for each request
+below. To read the site's operations, pass `{"action":"describe","app":"gemini"}`.
+Keep the current Chrome profile and the same `browser_exec.session` throughout
+the task. Choose an existing Chrome profile with `chrome_profiles` only when the
+task calls for a different profile.
 
-Call the mapped action directly when you know which control to use.
+If Gemini is not open in this window, set `site_control` to
+`{"app":"gemini","operation":"open_chat"}`. To resume a
+specific conversation, pass its ID in `params.chat`. On the active page, call
+`click` directly with `params.control` set to the mapped button name.
+For example, `tools_menu` opens the tools menu and `model_picker` opens the
+model menu. Read any required labels from the open menu using the native DOM
+helpers in the same session.
 
 | Operation | Action |
 | --- | --- |

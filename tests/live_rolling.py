@@ -19,10 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent.browser_registry import get_provider
 from gateway.session_context import clear_session_vars, set_session_vars
 from hermes_constants import set_hermes_home_override
-from hermes_cli.plugins import get_plugin_manager, _dispatch_pre_tool_call_hooks, invoke_hook
+from hermes_cli.plugins import get_plugin_manager, invoke_hook
 from hermes_cli.plugins_manifest import parse_manifest_file
 from tools.browser_session_lifecycle import cleanup_profile_browsers
-from tools.registry import registry
+from model_tools import handle_function_call
 import tools.browser_use_cli
 
 
@@ -105,6 +105,7 @@ plugins:
   enabled: [original-chrome-default]
   entries:
     original-chrome-default:
+      granted_capabilities: [tools.override]
       settings:
         apps_directory: ''' + str(home / 'apps') + '\n')
         turns = {task: uuid.uuid4().hex for task in ('guardian', 'work', 'source', 'peer')}
@@ -113,15 +114,15 @@ plugins:
             manager._load_plugin(parse_manifest_file(source / 'plugin.yaml', source, 'user', ''))
             provider = get_provider('original-chrome-default')
 
-            def call(task, tool='browser_app', **args):
+            def call(task, tool='browser_exec', **args):
+                if tool == 'browser_exec' and 'code' not in args:
+                    session = args.pop('session', 'default')
+                    args = {'site_control': json.dumps(args), 'session': session}
                 with set_hermes_home_override(home):
                     tokens = set_session_vars(platform='cli', session_key='rolling-' + task, session_id=task + '-chat')
                     try:
-                        blocked, prepared = _dispatch_pre_tool_call_hooks(tool, args, task_id=task,
-                            session_id=task + '-chat', turn_id=turns[task], tool_call_id=uuid.uuid4().hex)
-                        assert not blocked, blocked
-                        value = registry.dispatch(tool, prepared or args, scope=str(home),
-                                                  task_id=task, session_id=task + '-chat')
+                        value = handle_function_call(tool, args, task_id=task, session_id=task + '-chat',
+                                                    turn_id=turns[task], tool_call_id=uuid.uuid4().hex)
                         result = json.loads(value) if isinstance(value, str) else value
                         assert result.get('success'), result
                         return result

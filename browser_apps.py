@@ -24,14 +24,50 @@ else:
     from rolling import HANDOFF_MODES, JobStore, RollingJob
 
 
-APP_TOOL = 'browser_app'
 STATUSES = {'ok', 'running', 'quota_exhausted', 'needs_inspection', 'failed'}
 OBSERVATION_INTERVAL = 15
 
 
+CONTROL_ACTIONS = ('list', 'describe', 'run', 'record_missing_control', 'enable', 'disable', 'remove')
+CONTROL_FIELDS = {'action', 'app', 'operation', 'params', 'job', 'target_profile', 'session'}
+CONTROL_SCHEMA = {
+    'type': ['string', 'null'],
+    'description': 'A JSON request for an installed site; leave empty for ordinary Python. '
+                   'Examples: {"action":"list"}, {"action":"describe","app":"gemini"}, '
+                   '{"app":"gemini","operation":"click","params":{"control":"tools_menu"}}. '
+                   'Each installed site defines its own params.',
+}
+
+
+def has_site_request(args):
+    control = args.get('site_control')
+    if isinstance(control, str):
+        control = control.strip()
+        if not control or control == 'null':
+            return False
+        return control != '{}' or not args.get('code')
+    return control is not None and (bool(control) or not args.get('code'))
+
+
+def site_request(args):
+    command = args['site_control']
+    if isinstance(command, str):
+        try:
+            command = json.loads(command)
+        except ValueError as error:
+            raise ValueError('Pass the site request as JSON text in site_control.') from error
+    if not isinstance(command, dict) or set(command) - CONTROL_FIELDS:
+        raise ValueError('Use action, app, operation, params, job, target_profile or session in the site request.')
+    command = {key: value for key, value in command.items() if value is not None and value != ''}
+    action = command.get('action', 'run' if 'operation' in command else 'list')
+    if action not in CONTROL_ACTIONS:
+        raise ValueError('Choose an action from the site_control schema.')
+    return {**command, 'action': action}
+
+
 def app_identifier(value):
     if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', value):
-        raise ValueError('Choose an extension ID from browser_app list.')
+        raise ValueError('Choose an extension ID from the site control catalog.')
     return value
 
 
@@ -219,6 +255,7 @@ class AppHost:
     def __init__(self, provider, get_setting, dispatch, prepare_code, data_dir, *, bundled_source=None):
         self.provider, self.get_setting, self.dispatch = provider, get_setting, dispatch
         self.prepare_code, self.data_dir = prepare_code, data_dir
+        self.controls_enabled = True
         self.active = set()
         self.changing = set()
         self.bundled_source = bundled_source
@@ -280,16 +317,57 @@ class AppHost:
                     shutil.rmtree(temporary, ignore_errors=True)
 
     def prepare_call(self, tool_name, args, task_id, **context):
-        if tool_name == APP_TOOL and args.get('action', 'list') == 'run':
+        if tool_name != 'browser_exec' or not has_site_request(args):
+            return self.provider.prepare_call(tool_name, args, task_id, **context)
+        config = context.get('config')
+        if config is None:
+            from hermes_cli.config import load_config_readonly
+            config = load_config_readonly()
+        if config.get('browser', {}).get('cloud_provider') != self.provider.name:
+            return None
+        if not self.controls_enabled:
+            return {'action': 'block', 'message': 'Enable the plugin’s tools.override capability in Hermes to use site controls.'}
+        try:
+            command = site_request(args)
+        except ValueError as error:
+            return {'action': 'block', 'message': str(error)}
+        if 'session' in command:
+            if args.get('session') and args['session'] != command['session']:
+                return {'action': 'block', 'message': 'Use one browser session for this control.'}
+            args = {**args, 'session': command['session']}
+        if command['action'] not in {'run', 'record_missing_control'}:
+            # Catalog and lifecycle commands do not acquire a browser or choose a profile.
+            return {'action': 'modify', 'args': {'session': args.get('session') or 'default'}}
+        if command['action'] == 'run':
             try:
                 if self.bundled_source:
                     self.seed_packages(self.bundled_source)
-                _, metadata, _ = read_package(self.root, app_identifier(args.get('app')))
-                if uses_rolling(metadata, args):
-                    context['defer_profile'] = True
+                _, metadata, _ = read_package(self.root, app_identifier(command.get('app')))
+                context['defer_profile'] = uses_rolling(metadata, command)
             except (OSError, ValueError, RuntimeError):
-                pass  # The handler reports package errors through the existing entry point.
-        return self.provider.prepare_call(tool_name, args, task_id, **context)
+                pass  # handle() returns the package error to Hermes.
+        context['require_existing'] = command['action'] == 'record_missing_control'
+        route = {'session': args.get('session'), 'app': command.get('app'), 'local': args.get('local')}
+        return self.provider.prepare_call(tool_name, route, task_id, **context)
+
+    def execute(self, args, native, **context):
+        if not has_site_request(args):
+            return native(args, **context)
+        from hermes_cli.config import load_config_readonly
+        config = load_config_readonly()
+        if config.get('browser', {}).get('cloud_provider') != self.provider.name:
+            return native(args, **context)
+        if not self.controls_enabled:
+            return json.dumps({'success': False, 'error': 'Site controls require the enabled Original Chrome provider.'})
+        if not context.get('task_id') or not context.get('session_id'):
+            return json.dumps({'success': False, 'error': 'Site controls require the owning Hermes task and session.'})
+        if args.get('local'):
+            return json.dumps({'success': False, 'error': 'Site controls use the selected Original Chrome provider.'})
+        try:
+            command = site_request(args)
+        except ValueError as error:
+            return json.dumps({'success': False, 'error': str(error)})
+        return self.handle({**command, 'session': args.get('session')}, **context)
 
     def manage(self, action, identifier):
         directory = self.root / identifier
@@ -304,7 +382,7 @@ class AppHost:
                 if not self.get_setting('apps_disabled.' + identifier):
                     return {'status': 'ok', 'success': True, 'app': identifier, 'enabled': True}
             elif not directory.is_dir() and not self.get_setting('apps_disabled.' + identifier):
-                raise ValueError('Choose a package from browser_app list.')
+                raise ValueError('Choose a package from the site control catalog.')
             if self.provider.set_setting is None:
                 raise RuntimeError('The plugin configuration writer is unavailable.')
             self.changing.add(identifier)
@@ -375,13 +453,13 @@ class AppHost:
             return response
         session, (app, _) = next(iter(work.items()))
         offered = {(tool.get('function') or {}).get('name') for tool in request.get('tools') or []}
-        arguments = {'action': 'describe', 'app': app, 'session': session}
-        tool_name = APP_TOOL
-        if APP_TOOL not in offered:
+        arguments = {'site_control': json.dumps({'action': 'describe', 'app': app}), 'session': session}
+        tool_name = 'browser_exec'
+        if tool_name not in offered:
             if 'tool_call' not in offered:
                 return response
             tool_name = 'tool_call'
-            arguments = {'calls': [{'name': APP_TOOL, 'arguments': arguments}]}
+            arguments = {'calls': [{'name': 'browser_exec', 'arguments': arguments}]}
         # Keep the same turn open through the normal tool dispatcher. The synthetic
         # call only reports progress. It never replays the browser action.
         from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
@@ -449,7 +527,7 @@ class AppHost:
                 else:
                     operation = args.get('operation')
                     if not isinstance(operation, str) or operation not in metadata['operations']:
-                        raise ValueError('Choose an operation from browser_app describe.')
+                        raise ValueError('Choose an operation from the site guide.')
                     params = args.get('params', {})
                     if not isinstance(params, dict):
                         raise ValueError('Extension params must be an object.')
@@ -544,40 +622,3 @@ def write_json(path, value):
         if os.path.exists(temporary):
             os.unlink(temporary)
     return str(path)
-
-
-SCHEMA = {
-    'name': APP_TOOL,
-    'description': 'Use mapped controls in Original Chrome for a requested website, such as Gemini Web '
-                   'or Google Flow. For these sites start with describe using app gemini or flow. '
-                   'list refreshes installed packages without running their code. describe reads '
-                   'one package\'s operations, parameter schemas and guide. run executes that '
-                   'package with its own agent/session namespace. Reuse the same session alias '
-                   'for related calls. After using DOM or screenshot fallback for a confirmed unmapped '
-                   'control, call record_missing_control before the final answer with the same app '
-                   'and exact session, and params page_or_mode, control, and fallback (dom or screenshot). '
-                   'Packages are read from the configured apps_directory and '
-                   'can be edited or added independently of this plugin. enable and disable persist '
-                   'package availability. disable closes only this package\'s owned browser sessions. '
-                   'remove disables and deletes its source after cleanup finishes. Artifacts and '
-                   'checkpoints remain under plugin data. Retry a management action when cleanup_pending '
-                   'is true. chrome_profiles accepts app to configure this app\'s profile independently. '
-                   'rotate_on_limit packages continue on evidenced quota refusal. Packages with '
-                   'manual handoff wait for an explicit target_profile. A job ID binds each '
-                   'request to its source profile/account. Pass job with the owning operation/session '
-                   'to reconcile or continue it. describe lists this conversation\'s recoverable jobs.',
-    'parameters': {'type': 'object', 'properties': {
-        'action': {'type': 'string', 'enum': ['list', 'describe', 'run', 'enable', 'disable', 'remove',
-                                             'record_missing_control'], 'default': 'list'},
-        'app': {'type': 'string', 'description': 'Directory ID returned by list.'},
-        'operation': {'type': 'string', 'description': 'Operation declared by the selected package.'},
-        'params': {'type': 'object', 'description': 'Operation arguments, following describe. For '
-                   'record_missing_control, provide page_or_mode, control (button label or action), '
-                   'and fallback (dom or screenshot).'},
-        'job': {'type': 'string', 'description': 'Resume a rotate_on_limit job returned by run or describe. Reconciles its source request before further submission.'},
-        'target_profile': {'type': 'string', 'description': 'Explicit Chrome directory ID for a manual handoff. Use only with a job reporting awaiting_profile.'},
-        'session': {'type': 'string', 'description': 'Your session alias. For an unmapped UI action, '
-                    'pass the exact session returned from this call to native browser_exec. '
-                    'Each app and agent has its own private browser session.'},
-    }},
-}

@@ -52,8 +52,8 @@ class BrowserAppTests(unittest.TestCase):
                 'session': alias, **arguments}
         with patch.dict(os.environ, {}, clear=True):
             prepared = self.provider.prepare_call(
-                browser_apps.APP_TOOL, args, task, session_id=chat,
-                session_key='route-' + task, turn_id=turn, config=self.config)
+                'browser_exec', args, task, session_id=chat,
+                session_key='route-' + chat.removeprefix('chat-'), turn_id=turn, config=self.config)
         self.assertEqual(prepared['action'], 'modify', prepared)
         args.update(prepared['args'])
         result = json.loads(self.host.handle(args, task_id=task, session_id=chat, turn_id=turn))
@@ -103,8 +103,9 @@ class BrowserAppTests(unittest.TestCase):
         context = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn', 'api_mode': 'chat_completions'}
         args = {'action': 'describe', 'app': 'fixture', 'session': started['session']}
 
-        for offered, expected_args in [('browser_app', args),
-                ('tool_call', {'calls': [{'name': 'browser_app', 'arguments': args}]})]:
+        browser_args = {'session': started['session'], 'site_control': json.dumps({'action': 'describe', 'app': 'fixture'})}
+        for offered, expected_args in [('browser_exec', browser_args),
+                ('tool_call', {'calls': [{'name': 'browser_exec', 'arguments': browser_args}]})]:
             request = {'tools': [{'function': {'name': offered}}]}
             downstream = Mock(return_value=response)
             candidate = self.host.continue_running(request, downstream, **context)
@@ -318,7 +319,7 @@ class BrowserAppTests(unittest.TestCase):
         self.assertEqual(result['profile'], 'Default')
         self.dispatch.assert_called_once()
 
-    def test_apps_agents_and_browser_have_separate_names(self):
+    def test_site_controls_and_general_browsing_share_only_the_owners_window(self):
         self.package('first')
         self.package('second')
         a = self.invoke('first')
@@ -327,8 +328,57 @@ class BrowserAppTests(unittest.TestCase):
         child = self.invoke('first', task='child', chat='child-chat')
         with patch.dict(os.environ, {}, clear=True):
             normal = self.provider.prepare_call('browser_exec', {'session': 'same'}, 'A',
-                                                session_id='chat-A', turn_id='turn', config=self.config)
-        self.assertEqual(len({a['session'], b['session'], child['session'], normal['args']['session']}), 4)
+                                                session_id='chat-A', session_key='route-A', turn_id='turn', config=self.config)
+        self.assertEqual(a['session'], b['session'])
+        self.assertEqual(normal['args']['session'], a['session'])
+        self.assertNotEqual(child['session'], a['session'])
+
+    def test_ordinary_browser_then_mapped_control_then_dom_share_one_window(self):
+        self.package(source="def run(context, operation, params): return context.browser_exec('print(42)')")
+        identity = dict(task_id='A', session_id='chat-A', session_key='route-A', turn_id='turn')
+        def call(**operation):
+            args = {'session': 'same', **operation}
+            changes = self.host.prepare_call('browser_exec', args, config=self.config, **identity)
+            self.assertEqual(changes['action'], 'modify', changes)
+            with patch('hermes_cli.config.load_config_readonly', return_value=self.config):
+                self.host.execute({**args, **changes['args']}, lambda args, **kw: self.dispatch('browser_exec', args), **identity)
+            return changes['args']['session']
+        ordinary = call(code='print(page_info())')
+        mapped = call(site_control=json.dumps({'app': 'fixture', 'operation': 'inspect'}))
+        screenshot = call(code='capture_screenshot()')
+        self.assertEqual([ordinary, mapped, screenshot], [ordinary] * 3)
+        self.assertEqual([entry.args[1]['session'] for entry in self.dispatch.call_args_list], [ordinary] * 3)
+        self.assertEqual(set(self.provider.owners), {ordinary})
+
+    def test_invalid_site_arguments_do_not_allocate_a_window_or_run_code(self):
+        for args in ({'site_control': 'click'}, {'site_control': {'action': ['run']}}):
+            with self.subTest(args=args):
+                result = self.host.prepare_call('browser_exec', args, 'A', config=self.config)
+                self.assertEqual(result['action'], 'block')
+                self.assertFalse(self.provider.owners)
+                self.dispatch.assert_not_called()
+
+    def test_model_supplied_optional_fields_do_not_change_the_requested_action(self):
+        args = {'code': 'print("unused")', 'site_control': {'app': 'fixture', 'operation': 'inspect',
+                'action': '', 'job': '', 'target_profile': '', 'session': None, 'params': {}}}
+        self.assertTrue(browser_apps.has_site_request(args))
+        self.assertEqual(browser_apps.site_request(args), {'app': 'fixture', 'operation': 'inspect',
+                                                           'action': 'run', 'params': {}})
+        for control in [None, '', 'null', '{}']:
+            ordinary = {'code': 'print(page_info())', 'site_control': control}
+            self.host.execute(ordinary, self.dispatch)
+            self.dispatch.assert_called_with(ordinary)
+
+    def test_site_commands_respect_the_provider_and_permission(self):
+        args = {'site_control': {'action': 'list'}}
+        other = {'browser': {'cloud_provider': 'another'}}
+        self.host.controls_enabled = False
+        self.assertIsNone(self.host.prepare_call('browser_exec', args, 'A', config=other))
+        self.assertEqual(self.host.prepare_call('browser_exec', args, 'A', config=self.config)['action'], 'block')
+        self.assertFalse(self.provider.owners)
+        with patch('hermes_cli.config.load_config_readonly', return_value=other):
+            self.host.execute(args, self.dispatch, task_id='A')
+        self.dispatch.assert_called_once_with(args, task_id='A')
 
     def test_context_cannot_be_reused_after_run(self):
         captured = []
@@ -349,7 +399,7 @@ class BrowserAppTests(unittest.TestCase):
         app = self.invoke()
         with patch.dict(os.environ, {}, clear=True):
             inspect = self.provider.prepare_call('browser_exec', {'session': app['session']},
-                'A', session_id='chat-A', turn_id='turn', config=self.config)
+                'A', session_id='chat-A', session_key='route-A', turn_id='turn', config=self.config)
             other = self.provider.prepare_call('browser_exec', {'session': app['session']},
                 'B', session_id='chat-B', turn_id='turn', config=self.config)
             replacement = self.provider.prepare_call('browser_exec', {'session': app['session']},
@@ -390,7 +440,7 @@ class BrowserAppTests(unittest.TestCase):
         barrier = threading.Barrier(2)
         # Invoke the native module entry directly so the test barrier stays local.
         def execute(task):
-            prepared = self.provider.prepare_call(browser_apps.APP_TOOL,
+            prepared = self.provider.prepare_call('browser_exec',
                 {'app': 'fixture', 'action': 'run', 'session': 'same'}, task,
                 session_id=task, turn_id='turn', config=self.config)
             context = browser_apps.AppContext(self.host, 'fixture', prepared['args']['session'], task, task)
@@ -423,7 +473,7 @@ class BrowserAppTests(unittest.TestCase):
         self.assertTrue(self.settings['apps_disabled.fixture'])
         catalog = json.loads(self.host.handle({'action': 'list'}))
         self.assertFalse(next(row for row in catalog['apps'] if row['id'] == 'fixture')['enabled'])
-        blocked = self.provider.prepare_call('browser_app', {'action': 'run', 'app': 'fixture'}, 'A')
+        blocked = self.provider.prepare_call('browser_exec', {'action': 'run', 'app': 'fixture'}, 'A')
         self.assertEqual(blocked['action'], 'block')
 
     def test_enable_is_idempotent_and_reenable_gets_a_fresh_native_name(self):

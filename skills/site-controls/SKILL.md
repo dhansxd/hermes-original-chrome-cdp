@@ -5,28 +5,25 @@ description: Use mapped Chrome controls for Gemini Web and Google Flow tasks, in
 
 # Website controls in Original Chrome
 
-When the user requests work on a specific website, carry out the work on that
-site. Use the site's mapped controls through `browser_app` first.
+Use `browser_exec` throughout the browser task. Pass a site's mapped operation
+as JSON text in the tool's `site_control` parameter. A site control runs alone. Use `code`
+with `site_control` omitted or null for an ordinary DOM or screenshot call. For example, in an open Gemini chat:
 
-- **Gemini Web** (`gemini.google.com`). Call `browser_app` with
-  `action: describe` and `app: gemini`. For an image, use the available actions
-  to open the chat, select Create image, enter the prompt, and click Send.
-- **Google Flow**. Call `browser_app` with `action: describe` and `app: flow`.
-  Use the operation for the selected project and task. Keep the returned job
-  ID when continuing a generation or downloading its result.
-- **Other sites**. Use `browser_app list` to find an installed site package.
-  Read its current guide and available operations with `describe`.
+```json
+{"app":"gemini","operation":"click","params":{"control":"deep_research"}}
+```
 
-Use the same session for the work. For a control the package cannot reach,
-pass its exact returned `session` to `browser_exec` and inspect the relevant
-DOM in that window. Use a screenshot when the DOM is insufficient.
+Use a known control directly. For the site's operations and guide, pass
+`{"action":"describe","app":"gemini"}` or `{"action":"describe","app":"flow"}`
+as `site_control`. Use `{"action":"list"}` to discover other installed packages.
+Keep the same `browser_exec.session` across calls. On an ordinary website, use
+the usual browser helpers. When a mapped control needs inspection, use the
+normal DOM and screenshot helpers in this window and continue the task there.
 
-When fallback was needed for a control that exists in the site's UI and has no
-mapped action in its package, record the finding before the final answer. Call
-`browser_app` with `action: record_missing_control`, the same `app` and exact
-returned `session`, and `params` containing `page_or_mode`, `control` (the button
-label or action), and `fallback` (`dom` or `screenshot`). Check the relevant panel
-and selected model first. Keep the finding to those UI details.
+For a confirmed missing control on an installed site, use `site_control` with
+`action: record_missing_control`, its `app`, and `params` containing
+`page_or_mode`, `control`, and `fallback` (`dom` or `screenshot`). Check the
+relevant panel and model first. Record the finding before the final answer.
 
 Confirm the new result and finish any requested download before reporting
 completion. If the requested site fails, report what blocked it there and

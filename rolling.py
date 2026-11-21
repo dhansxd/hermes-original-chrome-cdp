@@ -44,7 +44,7 @@ class JobStore:
 
     def read(self, identifier):
         if not isinstance(identifier, str) or not re.fullmatch(r'[a-f0-9]{32}', identifier):
-            raise ValueError('Choose a job ID returned by browser_app run or describe.')
+            raise ValueError('Choose a job ID returned by a site control operation or its guide.')
         record = json.loads((self.root / (identifier + '.json')).read_text())
         if (record.get('version') != 1 or record.get('id') != identifier
                 or not re.fullmatch(r'[a-f0-9]{64}', record.get('directory_key', ''))):

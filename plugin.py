@@ -19,14 +19,14 @@ if __package__:
     from .relay import ChromeSession, DISCONNECTED
     from .startup import CHROME, PERSONAL
     from .profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
-    from .browser_apps import APP_TOOL, AppHost, SCHEMA, app_identifier
+    from .browser_apps import AppHost, CONTROL_SCHEMA, app_identifier
     from .profile_rules import ProfileRules
 else:
     from input_guard import prepare_code
     from relay import ChromeSession, DISCONNECTED
     from startup import CHROME, PERSONAL
     from profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
-    from browser_apps import APP_TOOL, AppHost, SCHEMA, app_identifier
+    from browser_apps import AppHost, CONTROL_SCHEMA, app_identifier
     from profile_rules import ProfileRules
 
 NAME = 'original-chrome-default'
@@ -45,6 +45,7 @@ class SessionProfile:
     alias: str = 'default'
     platform: str = ''
     pending: bool = False
+    retained: bool = False
     running: tuple[str, str | None] | None = None
     running_since: float = 0.0
     last_observation: float = 0.0
@@ -154,9 +155,7 @@ class ChromeProvider(BrowserProvider):
         return complete
 
     def prepare_call(self, tool_name, args, task_id, session_id='', session_key='', **kwargs):
-        if tool_name not in {'browser_exec', PROFILE_TOOL, APP_TOOL}:
-            return None
-        if tool_name == APP_TOOL and args.get('action', 'list') != 'run':
+        if tool_name not in {'browser_exec', PROFILE_TOOL}:
             return None
         with self.lock:
             if self.unloading:
@@ -166,19 +165,28 @@ class ChromeProvider(BrowserProvider):
             app_id = ''
             try:
                 app_id = app_identifier(args.get('app')) if args.get('app') else ''
-                if tool_name == APP_TOOL and not app_id:
-                    app_identifier(None)
                 alias = args.get('session') or 'default'
-                existing = self.profile_choices.get(self.profile_routes.get(alias, alias)) if isinstance(alias, str) else None
-                if existing and existing.app_id:
-                    same_turn = (existing.owner[:2] == (task_id, session_id)
-                                 and existing.turn_id == kwargs.get('turn_id', ''))
-                    # A continuation carries the exact name returned by browser_app.
-                    pending_fallback = (tool_name == 'browser_exec' and existing.pending and not existing.finished
-                                        and alias == existing.browser_name and bool(session_id)
-                                        and existing.owner[1:] == (session_id, route))
-                    if same_turn or pending_fallback:
-                        app_id = existing.app_id
+                owner = (task_id, session_id, route)
+                turn = kwargs.get('turn_id', '')
+                existing = self.profile_choices.get(self.profile_routes.get(alias)) if isinstance(alias, str) else None
+                if existing is None:
+                    existing = next((item for item in self.profile_choices.values()
+                                     if item.owner == owner and item.turn_id == turn and item.alias == alias
+                                     and item.browser_name in self.owners and not item.finished), None)
+                reuse = existing is not None and (
+                    (existing.owner == owner and existing.turn_id == turn)
+                    or (existing.retained and existing.owner[1:] == owner[1:]
+                        and bool(session_id) and alias == existing.browser_name))
+                if tool_name == PROFILE_TOOL and app_id and existing and existing.app_id != app_id:
+                    reuse = False  # Independent profile rules apply when starting a new task window.
+                if kwargs.get('require_existing') and (not reuse or existing.app_id not in ('', app_id)):
+                    return {'action': 'block', 'message': 'Record the missing control in its current owned site window.'}
+                if reuse:
+                    if existing.active and existing.owner != owner:
+                        return {'action': 'block', 'message': 'The previous extension operation is still returning.'}
+                    if app_id and existing.app_id and app_id != existing.app_id and (existing.pending or existing.active):
+                        return {'action': 'block', 'message': 'Finish the active site operation in this window first.'}
+                    app_id = app_id or existing.app_id
                 if app_id and self.get_setting('apps_disabled.' + app_id):
                     return {'action': 'block', 'message': 'This website extension is disabled.'}
                 namespace = self.instance_id
@@ -194,24 +202,22 @@ class ChromeProvider(BrowserProvider):
                 return {'action': 'block', 'message': str(error)}
             if result and result.get('action') == 'modify':
                 name = result['args']['session']
-                base = self.profile_routes.get(name, name)
-                owner = (task_id, session_id, route)
-                if app_id:
-                    requested_alias = (existing.alias if existing and existing.app_id == app_id
-                                       and existing.owner[1] == session_id else alias)
-                    pending = [(key, value) for key, value in self.profile_choices.items()
-                               if value.app_id == app_id and value.owner[1] == session_id
-                               and value.alias == requested_alias and value.pending and not value.finished]
-                    if pending:
-                        base, existing = pending[0]
-                        if existing.active and (existing.owner[:2] != (task_id, session_id)
-                                                or existing.turn_id != kwargs.get('turn_id', '')):
+                base = self.profile_routes.get(existing.browser_name if reuse else name, name)
+                if app_id and not reuse:
+                    retained = next(((key, item) for key, item in self.profile_choices.items()
+                                     if item.app_id == app_id and item.owner[1:] == owner[1:]
+                                     and item.alias == alias and item.retained and not item.finished), None)
+                    if retained:
+                        base, existing = retained
+                        if existing.active:
                             return {'action': 'block', 'message': 'The previous extension operation is still returning.'}
-                choice = self.profile_choices.setdefault(base, SessionProfile(
-                    owner, alias=existing.alias if existing else alias))
+                choice = self.profile_choices.setdefault(base, SessionProfile(owner, alias=alias))
                 if choice.finished or choice.switching:
                     return {'action': 'block', 'message': 'This browser session is finishing or changing Chrome profile.'}
                 choice.owner = owner
+                choice.retained = False
+                if choice.app_id != app_id:
+                    choice.directory_key = ''
                 choice.app_id = app_id
                 choice.turn_id = kwargs.get('turn_id', '')
                 choice.platform = get_session_env('HERMES_SESSION_PLATFORM', '')
@@ -219,7 +225,7 @@ class ChromeProvider(BrowserProvider):
                     result['args']['session'] = base
                     return result
                 try:
-                    if tool_name == APP_TOOL and kwargs.get('defer_profile'):
+                    if app_id and kwargs.get('defer_profile'):
                         if choice.browser_name is None:
                             choice.browser_name = base
                             self.profile_routes[base] = base
@@ -455,6 +461,11 @@ class ChromeProvider(BrowserProvider):
             return
         terminal_failure = failed or turn_exit_reason == 'guardrail_halt'
         with self.lock:
+            for choice in self.profile_choices.values():
+                if (choice.pending and choice.owner[1] == session_id
+                        and (task_id is None or choice.owner[0] == task_id)
+                        and (turn_id is None or choice.turn_id == turn_id)):
+                    choice.retained = True
             turns = [(base, choice.turn_id, interrupted or (terminal_failure and choice.running is not None))
                      for base, choice in self.profile_choices.items()
                      if choice.owner[1] == session_id and (task_id is None or choice.owner[0] == task_id)
@@ -523,14 +534,67 @@ def prepare_call(tool_name, args, task_id, *, session_id='', turn_id='', provide
     return {'action': 'modify', 'args': changes}
 
 
+SITE_HELP = ('A site_control request runs only that mapped operation. Use code with site_control omitted or null '
+             'to execute native Python. '
+             'The site_control field is JSON text, e.g. {"app":"gemini","operation":"open_chat"}. '
+             'For Gemini Web, Google Flow and other installed sites, use the site_control parameter for mapped '
+             'operations. Use action describe with the site ID to see the controls and guide. Open Gemini with '
+             'operation open_chat. Use code for DOM inspection, screenshots and ordinary browsing in the same session.')
+
+
+def with_site_controls(schema):
+    parameters = schema['parameters']
+    fields = parameters['properties']
+    code = {**fields['code'], 'description': fields['code']['description'] + ' Omit this field when using site_control.'}
+    return {**schema, 'description': SITE_HELP + '\n\n' + schema['description'], 'parameters': {
+        **parameters, 'properties': {**fields, 'code': code, 'site_control': CONTROL_SCHEMA},
+        'required': [key for key in parameters.get('required', []) if key != 'code'],
+    }}
+
+
+def register_site_controls(ctx, apps):
+    from tools.registry import discover_builtin_tools, registry
+    native = registry.snapshot_registration('browser_exec')
+    if native is None:
+        discover_builtin_tools()
+        native = registry.snapshot_registration('browser_exec')
+    active = registry.get_entry('browser_exec')
+    if native is None or (active is not native and getattr(active.handler, '__module__', '') != __name__):
+        raise RuntimeError('Original Chrome site controls require the native Hermes browser_exec handler.')
+
+    def browser_control(args, **context):
+        return apps.execute(args, native.handler, **context)
+
+    def browser_schema():
+        overrides = native.dynamic_schema_overrides() if native.dynamic_schema_overrides else {}
+        from hermes_cli.config import load_config_readonly
+        if load_config_readonly().get('browser', {}).get('cloud_provider') != NAME:
+            return {**native.schema, **overrides}
+        return with_site_controls({**native.schema, **overrides})
+
+    ctx.register_tool(name='browser_exec', toolset=native.toolset, schema=with_site_controls(native.schema),
+                      handler=browser_control, check_fn=native.check_fn, emoji=native.emoji, override=True)
+    # These registry fields belong to this plugin's scoped entry. Restore the native
+    # runtime help, compatibility arguments and deadlines on the delegated tool.
+    entry = registry.get_entry('browser_exec')
+    if entry is not None and entry.handler is browser_control:
+        entry.dynamic_schema_overrides = browser_schema
+        entry.compat_args = native.compat_args
+        entry.deadline_floor = native.deadline_floor
+        entry.execution_timeout = native.execution_timeout
+        entry.max_result_size_chars = native.max_result_size_chars
+        entry.self_checked_args = native.self_checked_args
+
+
 def register(ctx):
     provider = ChromeProvider(ctx.get_config, set_setting=ctx.set_config)
     ctx.register_browser_provider(provider)
     root = Path(__file__).parent
     apps = AppHost(provider, ctx.get_config, ctx.dispatch_tool, prepare_code,
                    lambda: ctx.state.data_dir, bundled_source=root / 'site_apps')
-    ctx.register_tool(name=APP_TOOL, toolset='browser', handler=apps.handle,
-                      check_fn=provider.is_available, schema=SCHEMA)
+    apps.controls_enabled = bool(ctx.has_capability('tools.override'))
+    if apps.controls_enabled:
+        register_site_controls(ctx, apps)
     if hasattr(ctx, 'register_middleware'):
         ctx.register_middleware('llm_execution', apps.continue_running)
     if hasattr(ctx, 'register_skill'):

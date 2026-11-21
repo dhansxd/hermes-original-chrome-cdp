@@ -1,16 +1,14 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 15, 21 November 2026.
+Revisi PRD 17, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-**Browsing lewat `browser_exec` sudah berjalan.** Pekerjaan yang terbuka adalah
-memakai tombol siap pakai dari ekstensi langsung di halaman yang sedang
-dikendalikan oleh tool itu.
-Baca bagian ini dan [AGENTS.md](AGENTS.md) sebelum menentukan langkah berikutnya.
-Bagian historis, [HANDOFF.md](HANDOFF.md), dan contoh `browser_app`/`browser_exec`
-di panduan menjelaskan versi yang sudah berjalan. Kontrak di bagian ini menjadi
-acuan untuk perbaikan berikutnya.
+Di cabang perombakan, Hermes memanggil tombol lewat parameter `site_control`
+dan helper DOM lewat `code` pada tool `browser_exec` yang sama. Katalog sesi baru tidak lagi menawarkan `browser_app`.
+Untuk distribusi publik masih ada satu masalah pada validator katalog Hermes,
+dijelaskan di butir 2. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi
+acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
 
 ### Kontrak browser dan ekstensi
 
@@ -18,6 +16,8 @@ acuan untuk perbaikan berikutnya.
   Pertahankan perilaku `browser_exec`, termasuk navigasi, pembacaan DOM,
   screenshot dan penggunaan jendela tugas. Tambahan untuk Gemini, Google Flow
   dan situs lain hanya berupa kontrol UI siap pakai melalui tool yang sama.
+  Hapus tool `browser_app` beserta deklarasi, registrasi, dan jalur
+  pemanggilannya. Pertahankan paket ekstensi beserta kontrol situsnya.
   Klik atau ketik langsung lewat CDP pada halaman aktif menghemat waktu dan
   token karena Hermes cukup memakai kontrol yang sudah dikenal. Panduan
   situs dapat menjelaskan cara menggunakan kontrol tersebut.
@@ -87,15 +87,31 @@ acuan untuk perbaikan berikutnya.
    Hermes membaca judul dan label tautan `example.com` lewat `browser_exec`.
    Inventori Chrome asli menunjukkan satu jendela tugas. Akhir giliran menutup
    jendela itu dan jendela pembanding tetap dapat dipakai.
-2. [ ] Mulai dengan **satu kontrol Gemini yang sudah dipetakan**. Dari sesi
-   Hermes baru, berikan perintah yang hanya menyebut tugas. Buktikan lewat log
-   bahwa Hermes memakai kontrol itu langsung melalui `browser_exec` pada
-   halaman aktif, tanpa panggilan model ke `browser_app` atau pembacaan DOM
-   seluruh halaman untuk mencari tombol. Verifikasi DOM dan screenshot biasa
-   tetap dapat dipakai di jendela yang sama ketika sebuah kontrol belum
-   dipetakan. Setelah Gemini terverifikasi, uji pola yang sama pada Flow.
-   Periksa juga browsing biasa pada situs tanpa ekstensi. Sesuaikan panduan
-   pemakaian dengan kontrol yang benar-benar tersedia di versi yang diuji.
+2. [ ] Selesaikan perombakan dan validasi distribusi publik.
+   - [x] Hapus registrasi dan deklarasi `browser_app`. Pemanggilan nama lama
+     pada registry profil uji menghasilkan `Unknown tool`. Instalasi paket,
+     pengelolaan status, panduan, dan operasi situs tetap tersedia.
+   - [x] Uji Chrome asli. Klik menu alat Gemini melalui `browser_exec` dan
+     pastikan identitas dokumen serta sesi sama sebelum dan sesudah klik.
+     Inspeksi Google Flow juga berhasil pada sesi browser yang sama.
+   - [x] Uji penemuan dengan dua percakapan Hermes baru melalui 9Router.
+     Permintaan membuka menu alat dan pilihan model menghasilkan klik
+     `tools_menu` dan `model_picker`. Masing-masing memakai `browser_exec`
+     untuk membuka Gemini, membaca panduan, mengeklik, lalu membaca label menu.
+     Parameter `site_control` menerima teks JSON agar parameter operasi yang
+     ditentukan per situs sampai utuh lewat penyedia model.
+   - [x] Uji isolasi di Chrome asli dengan fixture lokal. Enam jendela pada
+     profil Chrome yang sama mempunyai kepemilikan terpisah. Uji meliputi
+     penemuan paket, pemakaian ulang halaman, Stop, disable/enable/remove,
+     pelepasan resource, serta pemulihan handler bawaan setelah unload.
+     Sebanyak 425 tes otomatis lulus. Fixture perpindahan profil juga
+     memverifikasi pemulihan permintaan asal tanpa submit ulang dan jumlah
+     jendela Chrome kembali ke kondisi awal.
+   - [ ] Lulus `hermes plugins validate` untuk katalog publik. Hermes mendukung
+     perluasan handler melalui izin `tools.override` pada profil pengguna.
+     Validator katalog tetap melaporkan benturan nama `browser_exec` ketika
+     registrasi tersebut tercantum di manifest. Instalasi Telegram aktif belum
+     memakai cabang ini.
 3. [ ] Perbaiki regresi penyelesaian tugas. Uji progres yang berlangsung cukup
    lama. Tugas yang masih berjalan harus tetap dilanjutkan. Verifikasi hasil
    dan setiap unduhan atau pengiriman yang diminta sebelum jawaban akhir.

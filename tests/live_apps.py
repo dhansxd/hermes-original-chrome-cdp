@@ -16,10 +16,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent.browser_registry import get_provider
 from gateway.session_context import clear_session_vars, set_session_vars
 from hermes_constants import set_hermes_home_override
-from hermes_cli.plugins import get_plugin_manager, _dispatch_pre_tool_call_hooks, invoke_hook
+from hermes_cli.plugins import get_plugin_manager, invoke_hook
 from hermes_cli.plugins_manifest import parse_manifest_file
 from tools.browser_session_lifecycle import cleanup_profile_browsers
 from tools.registry import registry
+from model_tools import handle_function_call
 import tools.browser_use_cli
 
 
@@ -82,25 +83,26 @@ plugins:
   enabled: [original-chrome-default]
   entries:
     original-chrome-default:
+      granted_capabilities: [tools.override]
       settings:
         apps_directory: ''' + str(packages) + '\n')
         turns = {task: uuid.uuid4().hex for task in ('parent', 'child', 'channel')}
         with set_hermes_home_override(home):
             manager = get_plugin_manager()
+            native_entry = registry.get_entry('browser_exec')
             manager._load_plugin(parse_manifest_file(source / 'plugin.yaml', source, 'user', ''))
             provider = get_provider('original-chrome-default')
 
-            def call(task, tool='browser_app', platform='cli', **args):
+            def call(task, tool='browser_exec', platform='cli', **args):
+                if tool == 'browser_exec' and 'code' not in args:
+                    session = args.pop('session', 'default')
+                    args = {'site_control': json.dumps(args), 'session': session}
                 with set_hermes_home_override(home):
                     tokens = set_session_vars(platform=platform, session_key='apps-fixture-' + task,
                                               session_id=task + '-chat')
                     try:
-                        blocked, modified = _dispatch_pre_tool_call_hooks(
-                            tool, args, task_id=task, session_id=task + '-chat',
-                            turn_id=turns[task], tool_call_id=uuid.uuid4().hex)
-                        assert not blocked, blocked
-                        value = registry.dispatch(tool, modified or args, scope=str(home),
-                                                  task_id=task, session_id=task + '-chat')
+                        value = handle_function_call(tool, args, task_id=task, session_id=task + '-chat',
+                                                    turn_id=turns[task], tool_call_id=uuid.uuid4().hex)
                         result = json.loads(value) if isinstance(value, str) else value
                         assert result.get('success'), result
                         return result
@@ -112,7 +114,7 @@ plugins:
                 if status:
                     params['status'] = status
                 result = call(task, action='run', app=app, operation='inspect',
-                              session='same', params=params, **extra)
+                              session='same' if app == 'fixture' else app, params=params, **extra)
                 data = result['data']
                 assert (data['task'], data['chat'], data['turn']) == (
                     task, task + '-chat', turns[task]), data
@@ -120,7 +122,9 @@ plugins:
                 return result
 
             try:
-                assert {entry['id'] for entry in call('parent', action='list')['apps']} == {'fixture', 'flow'}
+                assert registry.get_entry('browser_app', scope=manager.scope_key) is None
+                assert 'Unknown tool' in registry.dispatch('browser_app', {}, scope=manager.scope_key)
+                assert {entry['id'] for entry in call('parent', action='list')['apps']} == {'fixture', 'gemini', 'flow'}
                 assert call('parent', action='describe', app='fixture')['guide'] == 'Local fixture guide'
                 assert not provider.sessions and not provider.owners
                 report['discovery_and_guide_without_browser'] = True
@@ -136,11 +140,11 @@ plugins:
                 assert repeat['session'] == first[0]['session']
                 report['same_owned_document_without_navigation'] = True
 
-                inspected = call('parent', tool='browser_exec', session=repeat['session'],
+                inspected = call('parent', tool='browser_exec', session='same',
                                  code='assert js("window.fixtureMarker")=="parent-fixture"')
                 assert inspected['session'] == repeat['session']
                 report['targeted_native_inspection_reuses_app_session'] = True
-                ordinary = call('parent', tool='browser_exec', session='same',
+                ordinary = call('parent', tool='browser_exec', session='independent-task',
                                 code=f'goto_url({url!r}); js("window.ordinaryMarker=42")')
                 assert ordinary['session'] != repeat['session']
 
@@ -148,11 +152,11 @@ plugins:
                 metadata = json.loads((added / 'app.json').read_text())
                 metadata['operations']['new-operation'] = {'parameters': {'type': 'object'}}
                 (added / 'app.json').write_text(json.dumps(metadata))
-                assert {entry['id'] for entry in call('parent', action='list')['apps']} == {'fixture', 'flow', 'new-site'}
+                assert {entry['id'] for entry in call('parent', action='list')['apps']} == {'fixture', 'gemini', 'flow', 'new-site'}
                 assert 'new-operation' in call('child', action='describe', app='new-site')['app']['operations']
                 new_site = run('parent', app='new-site', initialize=True)
                 operation = call('child', action='run', app='new-site', operation='new-operation',
-                                 session='same', params={'url': url, 'marker': 'new-child'})
+                                 session='new-site', params={'url': url, 'marker': 'new-child'})
                 assert operation['data']['task'] == 'child'
                 report['new_site_and_operation_without_registration'] = True
                 (directory / 'app.py').write_text(APP_SOURCE.replace("'revision': 1", "'revision': 2"))
@@ -179,11 +183,11 @@ plugins:
                 destination = inventory[1]['id']
                 call('parent', tool='chrome_profiles', action='set_rule', scope='subagent',
                      target='fixture-writer', app='new-site', mode='fixed', profile=destination,
-                     session='same')
+                     session='new-site')
                 invoke_hook('subagent_start', parent_session_id='parent-chat', child_session_id='child-chat',
                             child_role='fixture-writer', parent_turn_id=turns['parent'])
                 call('child', tool='chrome_profiles', action='clear_rule', scope='session',
-                     app='new-site', session='same')
+                     app='new-site', session='new-site')
                 child_site = run('child', app='new-site', initialize=True, status='running')
                 assert child_site['profile'] == destination
                 assert run('parent', app='new-site')['profile'] == new_site['profile']
@@ -238,6 +242,7 @@ plugins:
                 provider.unload()
                 manager.unload('original-chrome-default')
                 assert registry.get_entry('browser_app', scope=manager.scope_key) is None
+                assert registry.get_entry('browser_exec', scope=manager.scope_key) is native_entry
                 server.shutdown()
     return report
 

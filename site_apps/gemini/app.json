@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "gemini",
   "name": "Gemini Web",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "profile_policy": "rotate_on_limit",
   "handoff_mode": "manual",
   "rolling_parameters": {"reply": "continuation"},

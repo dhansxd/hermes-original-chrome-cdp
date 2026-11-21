@@ -37,8 +37,7 @@ class ProfileRuleTests(ChromeFixture):
         return self.provider.profiles(args, task_id=task, session_id=chat)
 
     def selected(self, task='A', chat='chat-A', app=None, **args):
-        tool = 'browser_app' if app else 'browser_exec'
-        prepared, args = self.prepare(tool, task, chat, action='run', app=app, **args)
+        prepared, args = self.prepare('browser_exec', task, chat, action='run', app=app, **args)
         self.assertEqual(prepared['action'], 'modify', prepared)
         choice = self.provider.profile_choices[self.provider.profile_routes[args['session']]]
         return choice.profile.id, args['session']
@@ -46,8 +45,8 @@ class ProfileRuleTests(ChromeFixture):
     def test_app_selection_and_defaults_are_independent_of_ordinary_browsing(self):
         self.assertTrue(self.control('select', app='flow', profile='Profile 2')['success'])
         self.assertEqual(self.selected(app='flow')[0], 'Profile 2')
-        self.assertEqual(self.selected(app='gemini')[0], 'Default')
-        self.assertEqual(self.selected()[0], 'Default')
+        self.assertEqual(self.selected(app='gemini', alias='gemini-work')[0], 'Default')
+        self.assertEqual(self.selected(alias='ordinary-work')[0], 'Default')
         self.assertTrue(self.control('set_default', app='gemini', profile='Profile 10')['success'])
         self.assertEqual(self.selected(app='gemini', task='B', chat='chat-B')[0], 'Profile 10')
         self.assertEqual(self.settings['profile_directory'], 'Default')
@@ -77,7 +76,7 @@ class ProfileRuleTests(ChromeFixture):
             self.assertEqual(self.selected(app='flow'), first)
             choose.assert_called_once()
         (self.data / 'Profile 2').rmdir()
-        self.assertEqual(self.prepare('browser_app', app='flow', action='run')[0]['action'], 'block')
+        self.assertEqual(self.prepare('browser_exec', app='flow', action='run')[0]['action'], 'block')
         with patch('plugin.random.choice', side_effect=lambda rows: rows[-1]) as choose:
             self.assertEqual(self.selected(app='flow', task='B', chat='chat-B')[0], 'Profile 10')
             self.assertNotIn('Profile 2', [row.id for row in choose.call_args.args[0]])
@@ -100,8 +99,8 @@ class ProfileRuleTests(ChromeFixture):
         self.control('select', app='flow', profile='Profile 10')
         self.provider.child_started(parent_session_id='chat-A', child_session_id='child-chat', child_role='writer')
         self.assertEqual(self.selected(task='child', chat='child-chat')[0], 'Profile 2')
-        self.assertEqual(self.selected(task='child', chat='child-chat', app='flow')[0], 'Profile 10')
-        self.assertEqual(self.selected(task='child', chat='child-chat', app='gemini')[0], 'Default')
+        self.assertEqual(self.selected(task='flow-child', chat='child-chat', app='flow')[0], 'Profile 10')
+        self.assertEqual(self.selected(task='gemini-child', chat='child-chat', app='gemini')[0], 'Default')
         self.control('set_rule', scope='subagent', target='writer', app='flow', mode='fixed', profile='Profile 2')
         self.provider.child_started(parent_session_id='chat-A', child_session_id='next-child', child_role='writer')
         self.assertEqual(self.selected(task='next-child', chat='next-child', app='flow')[0], 'Profile 2')
@@ -129,8 +128,8 @@ class ProfileRuleTests(ChromeFixture):
         replacement.mkdir()
         (self.data / 'Profile 2').rmdir()
         replacement.rename(self.data / 'Profile 2')
-        self.assertEqual(self.prepare('browser_app', app='flow', action='run')[0]['action'], 'block')
-        self.assertEqual(self.selected()[0], 'Default')
+        self.assertEqual(self.prepare('browser_exec', app='flow', action='run')[0]['action'], 'block')
+        self.assertEqual(self.selected(alias='ordinary-work')[0], 'Default')
         self.control('select', app='flow', profile='Profile 2')
         self.assertNotEqual(self.selected(app='flow')[1], before)
 
@@ -156,7 +155,7 @@ class ProfileRuleTests(ChromeFixture):
             self.assertEqual(active.profile.id, 'Profile 2')
             self.assertIn(name, self.provider.owners)
         self.assertTrue(self.control('clear_rule')['success'])
-        self.assertEqual(self.selected()[0], 'Default')
+        self.assertEqual(self.selected(alias='ordinary-work')[0], 'Default')
 
     def test_failed_config_write_keeps_the_previous_profile_with_a_fresh_name(self):
         _, old = self.selected()
@@ -205,7 +204,7 @@ class ProfileRuleTests(ChromeFixture):
     def test_invalid_saved_mode_blocks_before_native_browser_dispatch(self):
         key = self.provider.rules.key('flow', 'session', 'chat-A', 'work')
         self.settings[key] = {'mode': []}
-        result, _ = self.prepare('browser_app', app='flow', action='run')
+        result, _ = self.prepare('browser_exec', app='flow', action='run')
         self.assertEqual(result['action'], 'block')
         self.assertFalse(self.provider.sessions)
 

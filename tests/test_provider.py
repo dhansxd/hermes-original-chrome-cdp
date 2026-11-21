@@ -228,8 +228,9 @@ class ProviderTests(unittest.TestCase):
         plugin.register(ctx)
         ctx.register_browser_provider.assert_called_once()
         registered = {call.kwargs['name']: call.kwargs for call in ctx.register_tool.call_args_list}
-        self.assertEqual(set(registered), {'chrome_profiles', 'browser_app'})
-        self.assertTrue(all('override' not in entry for entry in registered.values()))
+        self.assertEqual(set(registered), {'chrome_profiles', 'browser_exec'})
+        self.assertTrue(registered['browser_exec']['override'])
+        self.assertNotIn('override', registered['chrome_profiles'])
         provider = ctx.register_browser_provider.call_args.args[0]
         hooks = {call.args[0]: call.args[1] for call in ctx.register_hook.call_args_list}
         self.assertIs(hooks['pre_tool_call'].__self__.provider, provider)

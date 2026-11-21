@@ -1,8 +1,9 @@
 # Google Flow through Original Chrome
 
-Use `browser_app` with `app: "flow"`. The extension uses the calling agent's
-owned Chrome window and original profile. General browsing and other extensions
-have separate sessions. Read `browser_app` action `describe` for current operations.
+Use native `browser_exec` on the task's existing Chrome page. Discover Flow's
+operations by passing `{"action":"describe","app":"flow"}` in its `site_control`
+parameter. Pass each example below as JSON text in that same parameter. Keep the same browser session for DOM and
+mapped controls.
 
 1. Choose the starting profile with `chrome_profiles` using `app: "flow"` and
    the same session alias used for the operations below.

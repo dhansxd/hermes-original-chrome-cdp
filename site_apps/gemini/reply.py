@@ -193,7 +193,7 @@ def _reply(context, path, key, request_id, chat, prompt, script, navigation, *, 
             if (result['status'] == 'quota_exhausted' and context.job_id
                     and receipt.get('job') != context.job_id):
                 return {'status': 'failed', 'data': data,
-                        'message': 'Resume the original browser_app job for this quota refusal.'}
+                        'message': 'Resume the original site operation job for this quota refusal.'}
             if observe_only or result.get('request', {}).get('state') != 'not_submitted':
                 return {**result, 'cached': True}
             receipt = None
