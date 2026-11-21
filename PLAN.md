@@ -226,6 +226,16 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      uji Chrome asli, satu klik memulai riset dan laporan terbaca di dokumen
      yang sama. Pada percakapan Gemini asli yang diperiksa, hasil akhirnya
      berupa penolakan. Penyelesaian riset baru di Gemini asli masih terbuka.
+   - Pada audit 0.11.3, teks pesan lanjutan yang dikirim Hermes cocok persis
+     dengan pesan manual berikutnya di percakapan Gemini yang sama. UI
+     menampilkan tahap pembuatan rencana lalu penolakan pada giliran Hermes.
+     Pada giliran manual, UI menampilkan `deep-research-confirmation-widget`
+     dan tombol “Mulai penelitian”. Penyebab perbedaan respons belum diketahui.
+     Jalur `reply` sempat berhenti sebelum mengetik. Pengiriman yang tercatat
+     memakai `type_prompt` dan `click(send)`; isinya cocok dengan teks di UI.
+     Untuk diagnosis berikutnya, cocokkan indikator mode pada komposer sebelum
+     Kirim, pesan yang benar-benar terkirim, dan hasil pada giliran itu.
+     Bedakan rencana siap dikonfirmasi, laporan selesai, dan penolakan.
    - [x] Uji situs lokal di Chrome asli melalui Hermes: satu paket tanpa
      pembaca hasil melewati enam pemeriksaan tertunda. Pemeriksaan ketujuh
      membaca hasil pada dokumen dan jendela yang sama. Uji isolasi dan
