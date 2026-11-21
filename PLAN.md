@@ -1,6 +1,6 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 20, 21 November 2026.
+Revisi PRD 21, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
@@ -69,6 +69,18 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
 
 ### Hasil audit acuan
 
+- Hermes v0.23.2 sudah menyediakan `browser_exec` dan bisa memakai Chrome yang
+  berjalan melalui endpoint CDP persisten (`browser.cdp_url`). Koneksi langsung
+  memakai login yang sudah terbuka. Opsi terpisah `browser.use_real_profile`
+  menyalin profil beserta cookie. Opsi `real_profile_pin` memilih sumber salinan itu.
+  Plugin memakai profil asli melalui CDP dan mempertahankan larangan menyalin
+  cookie. [Dokumentasi browser pada versi yang diperiksa](https://github.com/NousResearch/hermes-agent/blob/v0.23.2/website/docs/user-guide/features/browser.md)
+- Pada satu endpoint Chrome bersama, Hermes mencoba membuat tab sendiri untuk
+  setiap sesi bernama. Plugin mengelola pilihan profil dan kepemilikan jendela
+  per agen, termasuk saat beberapa agen memilih profil yang sama. Gemini dan
+  Flow menggunakan jendela tersebut melalui `browser_exec`. Pertahankan
+  navigasi, DOM, dan screenshot bawaan saat memperbaiki kontrol situs.
+  [Kode sesi bernama Hermes](https://github.com/NousResearch/hermes-agent/blob/v0.23.2/tools/browser_use_cli.py#L56-L86) · [Kepemilikan sesi plugin](README.md#how-sessions-work)
 - Baseline `84efb16` mendaftarkan `browser_app` di samping `browser_exec`.
   Handler situs memakai eksekutor native, tetapi jalur pemanggilan terpisah
   dapat memilih sesi berbeda untuk alias yang sama. Pada uji Telegram segar,
@@ -83,10 +95,9 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
   untuk membaca perilaku menunggu hasil, verifikasi, pengumpulan artefak dan
   cleanup, serta detail UI yang relevan. Peliharalah satu jendela yang sama
   selama pekerjaan, termasuk pada jeda antara panggilan tool.
-- Pada plugin saat ini, sesi situs berstatus `pending` bisa bertahan saat giliran
-  berakhir. Regresi yang perlu diselesaikan adalah Hermes memberi jawaban akhir
-  saat masih menunggu hasil, lalu meninggalkan jendela. Menguji penutupan
-  jendela saja tidak membuktikan pekerjaan selesai.
+- Pada uji Telegram versi 0.11.0, Hermes mengakhiri giliran ketika tugas situs
+  masih berjalan. Butir 3 mencatat patch 0.11.1, hasil uji terkendali, dan
+  verifikasi yang masih terbuka pada percakapan Telegram nyata.
 
 ### Urutan perbaikan dan verifikasi
 
@@ -99,10 +110,19 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
 2. [ ] Selesaikan perombakan dan validasi distribusi publik.
    - [ ] Terapkan dan verifikasi perpindahan browser otomatis sesuai kontrak.
      Versi 0.11.1 masih memerlukan pemilihan browser secara manual sesuai
-     [tutorial](docs/TUTORIAL.md#switch-back-disable-and-uninstall). Uji dari
-     pengaturan bawaan dan dari provider pilihan pengguna. Periksa browser
-     yang benar-benar dipakai setelah enable, disable, enable ulang, dan
-     remove langsung saat aktif.
+     [tutorial](docs/TUTORIAL.md#switch-back-disable-and-uninstall).
+     - Periksa dulu jalur resmi enable, disable, dan remove, termasuk remove
+       saat gateway berhenti. Tentukan kapan pilihan sebelumnya dapat disimpan
+       dan dipulihkan. Pada Hermes v0.23.2, `ctx.set_config` hanya menulis
+       pengaturan milik plugin dan CLI remove menghapus berkas plugin. Jika satu
+       jalur tidak mendukung pemulihan, catat batasannya untuk dibahas sebelum
+       memilih implementasi. [API pengaturan](https://github.com/NousResearch/hermes-agent/blob/v0.23.2/hermes_cli/plugins_context.py#L75-L89) · [Alur remove](https://github.com/NousResearch/hermes-agent/blob/v0.23.2/hermes_cli/plugins_cmd_remove.py#L121-L141)
+     - Gunakan profil Hermes uji. Mulai dari konfigurasi bawaan, lalu ulangi
+       dengan provider pilihan pengguna dan dengan endpoint CDP yang sudah
+       dikonfigurasi.
+       Jalankan `browser_exec` setelah enable, disable, enable ulang, dan remove
+       langsung saat aktif. Cocokkan browser yang dipakai dan konfigurasi yang
+       dipulihkan dengan keadaan awal, termasuk pilihan yang semula kosong.
    - [x] Hapus registrasi dan deklarasi `browser_app`. Pemanggilan nama lama
      pada registry profil uji menghasilkan `Unknown tool`. Instalasi paket,
      pengelolaan status, panduan, dan operasi situs tetap tersedia.
@@ -152,6 +172,11 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
    lama. Tugas yang masih berjalan harus tetap dilanjutkan. Verifikasi hasil
    dan setiap unduhan atau pengiriman yang diminta sebelum jawaban akhir.
    Setelah itu ukur cleanup jendela milik tugas dan pastikan jendela lain utuh.
+   - [ ] Periksa satu tugas nyata dari sesi Telegram baru di versi yang diuji.
+     Cocokkan panggilan setelah status `running` dengan perubahan status di
+     situs, hasil yang diterima pengguna, dan penutupan jendela tugas. Jika
+     terhenti, catat operasi terakhir beserta hasilnya agar patch berikutnya
+     memperbaiki penyebab yang teramati.
    - Telegram 0.11.0 berhasil memilih Deep Research dan menekan Send. Setelah
      satu `read_result` berstatus `running`, middleware menghasilkan lima
      panggilan `describe` berturut-turut. Hermes menghentikan giliran karena

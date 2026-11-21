@@ -48,6 +48,9 @@ and verification evidence before calling a checklist item complete.
 - Read HANDOFF.md for the historical reset-recovery handoff. Read the relevant
   README, tutorial, and site guides before changing their behavior.
 - Read and apply the user's coding guidelines before modifying code.
+- During design discussions, update the active plan as requirements are clarified.
+  Record the requested behavior, open implementation questions, and how the
+  result will be verified. Keep proposals open until the user decides them.
 - Make the smallest change that addresses an observed issue or requested feature.
 - State material assumptions and concrete success criteria. Reuse existing code
   and keep planning and verification proportional to the change.
