@@ -1,13 +1,13 @@
 # Original Chrome for Hermes
 
-The [active product contract](PLAN.md#kontrak-browser-dan-ekstensi) calls for one
-Hermes browser tool with site controls built into the same browsing task.
-The `browser_app` and `browser_exec` examples below describe the current implementation.
-Read [AGENTS.md](AGENTS.md) and the active plan before changing the integration.
-
 Use your installed, signed-in Google Chrome as the browser backend for Hermes Agent.
 Choose **Original Chrome · CDP** in Hermes's Browser Automation picker, then use the
 native `browser_exec` tool and browser helpers.
+
+Site packages currently expose their controls through `browser_app`. The planned
+change makes those controls available directly in the active `browser_exec`
+page so Hermes can click a known button without inspecting the whole page.
+See the [active contract](PLAN.md#kontrak-browser-dan-ekstensi).
 
 The [project handoff](HANDOFF.md) records the verified baseline and recovery
 steps for a fresh Mac installation. The active plan records current open work.

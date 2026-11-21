@@ -7,10 +7,10 @@ and verification evidence before calling a checklist item complete.
 
 ## Browser tasks
 
-- Expose one browser tool to Hermes for general browsing and mapped site
-  controls. A site extension supplies ready-to-use UI controls inside that
-  same browser task. It has no separate tool, browser session, or window
-  lifecycle. Its site guide can document how to use those controls.
+- Hermes already browses the original Chrome through native `browser_exec`.
+  Add each site's ready-to-use UI controls to that existing browsing path.
+  Calling a mapped control clicks or types in the task's active page over CDP.
+  Keep the existing DOM and screenshot operations available in that same window.
 - Use one owned window in the original Chrome for the entire task. Reuse its
   CDP session for clicks, typing, progress checks, result collection and any
   requested delivery. Keep the other agents' and manual windows independent.
@@ -48,8 +48,8 @@ and verification evidence before calling a checklist item complete.
 - Make the smallest change that addresses an observed issue or requested feature.
 - State material assumptions and concrete success criteria. Reuse existing code
   and keep planning and verification proportional to the change.
-- Preserve native Hermes provider registration and browser execution behavior
-  while consolidating the browser tool available to the model.
+- Preserve native Hermes provider registration and normal `browser_exec` calls.
+  Limit changes for mapped controls to the site extension integration.
 - Keep changes within this plugin. Preserve Hermes core and managed dependencies.
 - Protect other agents' and manual Chrome targets during every test and cleanup.
 - Keep credentials, browser state, personal identities, private media, and runtime

@@ -3,9 +3,10 @@
 This walkthrough connects Hermes's native browser tools to your original Google
 Chrome profile on macOS. It uses your own local Chrome installation and sign-ins.
 
-The commands below describe the current implementation. The
-[active product contract](../PLAN.md#kontrak-browser-dan-ekstensi) specifies
-one browser tool shared by general browsing and ready-to-use website controls.
+General browsing already works through `browser_exec`. The `browser_app`
+examples below use the current site packages. Direct access to their controls
+in the active `browser_exec` page is tracked in the
+[active plan](../PLAN.md#urutan-perbaikan-dan-verifikasi).
 
 ## Prepare Chrome and macOS
 

@@ -4,8 +4,10 @@ Diperbarui pada 16 November 2026 untuk persiapan reset Mac milik pengelola proye
 
 **Titik lanjut saat ini.** Baca [AGENTS.md](AGENTS.md) dan
 [kontrak aktif PLAN.md](PLAN.md#kontrak-browser-dan-ekstensi) terlebih dahulu.
-Serah-terima di bawah merekam baseline sebelum reset, termasuk cara lama
-memanggil `browser_app` dan `browser_exec`.
+Serah-terima di bawah merekam baseline sebelum reset. Browsing umum tetap
+melalui `browser_exec`. Rencana aktif menambahkan akses tombol situs di
+halaman yang sama. Contoh `browser_app` mendokumentasikan pemanggilan paket
+pada versi yang ada.
 
 ## Status saat dijeda
 
@@ -85,8 +87,8 @@ agen dan extension berjalan dengan izin proses Hermes.
   pengguna beralih provider, sesuai panduan lifecycle di README.
 - Pada baseline sebelum reset, `browser_exec` adalah tool browser native Hermes,
   `chrome_profiles` mengatur profil, dan `browser_app` memuat paket situs.
-  [Kontrak aktif](PLAN.md#kontrak-browser-dan-ekstensi) menetapkan satu tool
-  browser dengan kontrol situs di dalamnya.
+  [Kontrak aktif](PLAN.md#kontrak-browser-dan-ekstensi) menempatkan kontrol
+  situs di halaman aktif `browser_exec`.
 - Extension situs berada di direktori pengguna di luar instalasi plugin.
   Pengguna bersama agennya dapat menambah atau memperbarui paket situs tanpa
   mengubah instalasi host. Paket awal yang direncanakan adalah Gemini dan Flow.
@@ -455,7 +457,8 @@ kembali. Status job lama hanya dapat direkonsiliasi apabila bukti sumbernya ada.
 > README dan panduan paket. Baseline pemulihan adalah host 0.10.3 dan Flow 0.3.0
 > pada commit `6769518`. Tujuan tetap Chrome asli via CDP,
 > profil dinamis, satu jendela awal per sesi dan pemisahan banyak agen/manual.
-> Satu tool browser menangani lifecycle dan memakai kontrol dari extension situs.
+> Gunakan jalur `browser_exec` yang sudah berjalan. Ekstensi hanya memasok
+> kontrol UI siap pakai pada halaman tugas tersebut.
 > Periksa perubahan sejak baseline dan ikuti tugas lanjut yang sekarang saya minta.
 > Pertahankan core Hermes, perilaku yang sudah lulus dan ruang lingkup yang
 > disepakati. Catat bukti, checklist dan commit/push pada repo ini.

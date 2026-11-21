@@ -1,10 +1,12 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 14, 21 November 2026.
+Revisi PRD 15, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-**Kontrak aktif diperbarui. Penyatuan tool browser belum diimplementasikan.**
+**Browsing lewat `browser_exec` sudah berjalan.** Pekerjaan yang terbuka adalah
+memakai tombol siap pakai dari ekstensi langsung di halaman yang sedang
+dikendalikan oleh tool itu.
 Baca bagian ini dan [AGENTS.md](AGENTS.md) sebelum menentukan langkah berikutnya.
 Bagian historis, [HANDOFF.md](HANDOFF.md), dan contoh `browser_app`/`browser_exec`
 di panduan menjelaskan versi yang sudah berjalan. Kontrak di bagian ini menjadi
@@ -12,11 +14,13 @@ acuan untuk perbaikan berikutnya.
 
 ### Kontrak browser dan ekstensi
 
-- Hermes memakai tepat satu tool browser untuk browsing umum dan kontrol situs.
-  Ekstensi Gemini, Google Flow, atau situs lain adalah kumpulan kontrol UI siap
-  pakai di dalam tool itu. Panduan paket menjelaskan penggunaan kontrol situs
-  bila diperlukan. Nama tool, bentuk argumen dan detail pendaftaran mengikuti
-  API resmi Hermes yang tersedia saat implementasi.
+- Plugin sudah mendaftarkan Chrome asli sebagai provider browser Hermes.
+  Pertahankan perilaku `browser_exec`, termasuk navigasi, pembacaan DOM,
+  screenshot dan penggunaan jendela tugas. Tambahan untuk Gemini, Google Flow
+  dan situs lain hanya berupa kontrol UI siap pakai melalui tool yang sama.
+  Klik atau ketik langsung lewat CDP pada halaman aktif menghemat waktu dan
+  token karena Hermes cukup memakai kontrol yang sudah dikenal. Panduan
+  situs dapat menjelaskan cara menggunakan kontrol tersebut.
 - Satu tugas memakai satu jendela Chrome asli dan sambungan CDP yang sama
   sejak aksi pertama sampai seluruh permintaan selesai. Submit, cek progres,
   pembacaan hasil, unduhan, dan pengiriman yang diminta berlangsung dalam
@@ -83,13 +87,15 @@ acuan untuk perbaikan berikutnya.
    Hermes membaca judul dan label tautan `example.com` lewat `browser_exec`.
    Inventori Chrome asli menunjukkan satu jendela tugas. Akhir giliran menutup
    jendela itu dan jendela pembanding tetap dapat dipakai.
-2. [ ] Jadikan kontrol situs bagian dari tool yang menjalankan tugas browsing
-   umum. Hapus `browser_app` sebagai pilihan tool terpisah pada integrasi baru.
-   Verifikasi katalog tool pada sesi baru, lalu uji Gemini dan Flow satu per
-   satu dengan prompt yang hanya berisi tugas. Buktikan kontrol yang tersedia
-   dipakai langsung, inspeksi saat diperlukan memakai jendela yang sama, dan
-   situs tanpa ekstensi memakai tool yang sama. Sinkronkan README, tutorial,
-   dan panduan paket dengan antarmuka yang benar-benar tersedia pada versi itu.
+2. [ ] Mulai dengan **satu kontrol Gemini yang sudah dipetakan**. Dari sesi
+   Hermes baru, berikan perintah yang hanya menyebut tugas. Buktikan lewat log
+   bahwa Hermes memakai kontrol itu langsung melalui `browser_exec` pada
+   halaman aktif, tanpa panggilan model ke `browser_app` atau pembacaan DOM
+   seluruh halaman untuk mencari tombol. Verifikasi DOM dan screenshot biasa
+   tetap dapat dipakai di jendela yang sama ketika sebuah kontrol belum
+   dipetakan. Setelah Gemini terverifikasi, uji pola yang sama pada Flow.
+   Periksa juga browsing biasa pada situs tanpa ekstensi. Sesuaikan panduan
+   pemakaian dengan kontrol yang benar-benar tersedia di versi yang diuji.
 3. [ ] Perbaiki regresi penyelesaian tugas. Uji progres yang berlangsung cukup
    lama. Tugas yang masih berjalan harus tetap dilanjutkan. Verifikasi hasil
    dan setiap unduhan atau pengiriman yang diminta sebelum jawaban akhir.
@@ -254,8 +260,8 @@ Source pembanding Gemini berada pada `957aed5`, Flow mandiri pada `79d810a`.
 
 ## 2. Tujuan produk dan aturan dasar
 
-Satu tool dalam plugin browser Hermes menyediakan Chrome asli melalui CDP untuk
-browsing umum dan memakai kontrol UI dari extension yang dipasang pengguna.
+Plugin browser mendaftarkan Chrome asli melalui CDP untuk `browser_exec` Hermes.
+Ekstensi memasok kontrol UI siap pakai ke jalur browsing tersebut.
 Paket awal menyertakan **Gemini** dan **Google Flow**. Extension situs lain
 dapat memakai kontrak umum yang sama.
 
@@ -452,8 +458,8 @@ Namespace privat mengikat alias pada pemilik. Agen utama pada A, child pada B,
 Flow pada C, dan Gemini pada D dapat berjalan bersamaan. Beberapa agen juga
 dapat memakai satu profil dengan jendela masing-masing. Profil tetap untuk
 browser umum berlaku pada sesi browser umum. Flow/Gemini mempunyai profil awal
-dan urutan kandidat layanannya sendiri. Untuk tool yang disatukan, kepemilikan
-jendela mengikuti tugas sesuai [kontrak aktif](#kontrak-browser-dan-ekstensi).
+dan urutan kandidat layanannya sendiri. Dalam [kontrak aktif](#kontrak-browser-dan-ekstensi),
+kontrol situs bekerja pada jendela yang sudah dimiliki tugas `browser_exec`.
 
 Konteks platform berasal dari sesi Hermes, dan hubungan parent/child berasal dari
 hook publik. ID diteruskan sebagai identitas opaque. Profil Hermes menentukan
