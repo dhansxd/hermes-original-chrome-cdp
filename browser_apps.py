@@ -417,12 +417,17 @@ class AppHost:
                 marker = 'HERMES_UI_' + token + '='
                 begin = observer + '("begin",' + json.dumps(token) + ',' + json.dumps(selectors) + ')'
                 end = observer + '("finish",' + json.dumps(token) + ',{})'
-                # Keep future imports and native result/exception semantics in the user's script.
-                wrapped = (f'try:\n    js({begin!r})\nexcept Exception:\n    pass'
-                           f'\ntry:\n    exec(compile({code!r}, "<browser_exec>", "exec"), globals())'
-                           f'\nfinally:\n    try:\n        print({marker!r} + __import__("json").dumps(js({end!r})))'
-                           '\n    except Exception:\n        pass')
-                args = {**args, 'code': wrapped}
+                # Keep the module docstring and future imports before the observation hook.
+                split = int(ast.get_docstring(tree) is not None)
+                while split < len(tree.body) and isinstance(tree.body[split], ast.ImportFrom) and tree.body[split].module == '__future__':
+                    split += 1
+                if split == len(tree.body):
+                    return native(args, **context)
+                setup = ast.parse(f'try:\n    js({begin!r})\nexcept Exception:\n    pass').body
+                cleanup = ast.parse(f'try:\n    print({marker!r} + __import__("json").dumps(js({end!r})))'
+                                    '\nexcept Exception:\n    pass').body
+                tree.body[split:] = [*setup, ast.Try(body=tree.body[split:], handlers=[], orelse=[], finalbody=cleanup)]
+                args = {**args, 'code': ast.unparse(tree)}
         response = native(args, **context)
         if not (method or marker):
             return response
