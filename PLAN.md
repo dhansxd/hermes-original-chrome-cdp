@@ -1,6 +1,6 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 26, 21 November 2026.
+Revisi PRD 27, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
@@ -200,12 +200,27 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      situs, hasil yang diterima pengguna, dan penutupan jendela tugas. Jika
      terhenti, catat operasi terakhir beserta hasilnya agar patch berikutnya
      memperbaiki penyebab yang teramati.
+   - Temuan Telegram 0.11.2 di percakapan yang sudah ada: setelah satu
+     submit Deep Research, 32 panggilan `observe` tanpa selector membaca
+     teks “Membuat rencana riset” pada sesi yang sama hingga pengguna
+     mengganti tugas. Log belum membuktikan ada tombol konfirmasi saat itu.
+     Untuk perbaikan Gemini, periksa panel riset aktif lewat CDP, bedakan
+     progres, kontrol konfirmasi yang terlihat, dan laporan yang sudah siap.
+     Uji setiap transisi pada dokumen yang sama dan pertahankan Stop.
+   - Prioritas pertama pada ekstensi Gemini ialah tombol unduh video pada
+     hasil yang diminta. Pengambilan URL elemen video di luar Chrome pernah
+     menyimpan HTML dengan nama MP4. Klik tombol unduh asli menghasilkan
+     MP4 yang valid. Kaitkan unduhan dengan klik pada jendela tugas,
+     tunggu sampai selesai, periksa stream video dan berikan jalur berkas
+     yang bisa dibaca gateway. Uji ulang memakai video yang sudah ada.
+     Untuk permintaan kirim, verifikasi pengiriman melalui Telegram dan
+     cleanup jendela tugas. Sesi ini hanya membuktikan gateway mencoba
+     mengirim berkas yang valid.
    - [x] Uji situs lokal di Chrome asli melalui Hermes: satu paket tanpa
      pembaca hasil melewati enam pemeriksaan tertunda. Pemeriksaan ketujuh
      membaca hasil pada dokumen dan jendela yang sama. Uji isolasi dan
      cleanup lulus. Regresi terpisah memeriksa Stop ketika observasi sedang
-     menunggu dan memastikan jendela agen lain tetap tersedia. Pengiriman
-     melalui bot Telegram pada rilis ini masih memerlukan uji tersendiri.
+     menunggu dan memastikan jendela agen lain tetap tersedia.
    - Telegram 0.11.0 berhasil memilih Deep Research dan menekan Send. Setelah
      satu `read_result` berstatus `running`, middleware menghasilkan lima
      panggilan `describe` berturut-turut. Hermes menghentikan giliran karena
@@ -238,8 +253,7 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      di situs uji lokal, lalu mengembalikan nomor tanda terima di chat.
      Penerima dan penguji mencocokkan seluruh 3.001 byte. Satu dokumen dan
      satu jendela dipakai dari submit sampai pengiriman, dengan dua jendela
-     pembanding kembali utuh sesudah cleanup. Pengiriman lampiran ke Telegram
-     pada instalasi utama masih belum diuji dengan cabang ini.
+     pembanding kembali utuh sesudah cleanup.
    - Pada percobaan berkas pertama, isi unduhan dan tanda terima benar, tetapi
      pemeriksaan jendela pembanding gagal. Percobaan terpisah mereproduksi
      penutupan jendela pembanding yang tidak melakukan panggilan browser selama
@@ -257,8 +271,9 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
 5. [ ] Verifikasi Hermes mencatat kontrol yang terkonfirmasi belum dipetakan
    saat melanjutkan tugas dengan DOM atau screenshot. Uji melalui tool yang
    sama pada sesi baru tanpa arahan tambahan. Fixture jalur lama menyimpan satu
-   temuan lewat `record_missing_control`. Uji Telegram berikutnya belum
-   menghasilkan catatan untuk kontrol yang memang belum dipetakan. Temuan
+   temuan lewat `record_missing_control`. Di Telegram pada 0.11.2, Hermes mengeklik tombol unduh video Gemini
+   lewat DOM tanpa memanggil `record_missing_control`. Uji ulang dengan kontrol
+   lain yang terkonfirmasi belum dipetakan dan periksa baris temuan yang tersimpan. Temuan
    yang terverifikasi menjadi bahan menambahkan tombol ketika diminta.
 
 Untuk Google Flow, pertahankan pemisahan cara menggunakan mode Klasik dan Agent
