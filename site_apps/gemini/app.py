@@ -5,12 +5,14 @@ import json
 import re
 from pathlib import Path
 
-from . import controls, reply
+from . import controls, reply, video
 
 
 ORIGIN = 'https://gemini.google.com'
 _SNAPSHOT = (Path(__file__).parent / 'snapshot.js').read_text(encoding='utf-8')
 SNAPSHOT = f'(origin) => ({_SNAPSHOT})(origin, {json.dumps(controls.SELECTORS)})'
+FALLBACK_CLICK_OBSERVER = '(' + (Path(__file__).parent / 'fallback.js').read_text() + ')'
+FALLBACK_CLICK_SELECTORS = controls.SELECTORS
 RESULT_MARKER = 'GEMINI_INSPECT='
 CHAT_PATH = r'/(?:u/\d+/)?app/([a-zA-Z0-9-]+)/?'
 
@@ -49,12 +51,18 @@ def run(context, operation, params):
         if set(params) != {field} or not isinstance(value, str) or not value.strip():
             raise ValueError(f'Gemini {operation} requires a nonempty {field}.')
         if operation == 'click' and value not in controls.CLICKABLE:
-            return {'status': 'needs_inspection', 'data': {'reason': 'unmapped_control'},
+            return {'status': 'needs_inspection', 'data': {'reason': 'unmapped_control', 'control': value.strip()[:200],
+                                                           'page_or_mode': 'Gemini conversation'},
                     'message': 'Use this browser session to locate the requested control.'}
+        if operation == 'click' and value == 'download_video':
+            return video.download(context, context.directory / 'pending-video.json')
         return controls.execute(context, ORIGIN, operation, value.strip())
     if operation == 'read_result':
         if params:
             raise ValueError('Gemini read_result takes no parameters.')
+        pending = context.directory / 'pending-video.json'
+        if pending.exists():
+            return video.download(context, pending, resume=True)
         return controls.execute(context, ORIGIN, operation)
     if operation == 'reply':
         if 'continuation' in params:

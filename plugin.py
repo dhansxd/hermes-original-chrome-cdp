@@ -51,6 +51,7 @@ class SessionProfile:
     running_since: float = 0.0
     last_observation: float = 0.0
     result_selector: str = ''
+    last_ui_inspection: str = ''
     active: int = 0
     directory_key: str = ''
 
@@ -540,13 +541,14 @@ SITE_HELP = ('Use browser_exec directly for Gemini Web and Google Flow, includin
              'browser_app in older chats. To open Gemini pass site_control as JSON text: '
              '{"app":"gemini","operation":"open_chat"}. To see a site guide use action describe with its app ID. '
              'Use code with site_control omitted or null for DOM inspection, screenshots and ordinary '
-             'browsing in the same session.')
+             'browsing in the same session. For a confirmed unmapped UI control, include site_control action '
+             'record_missing_control with the native code to log the finding and act in one call.')
 
 
 def with_site_controls(schema):
     parameters = schema['parameters']
     fields = parameters['properties']
-    code = {**fields['code'], 'description': fields['code']['description'] + ' Omit this field when using site_control.'}
+    code = {**fields['code'], 'description': fields['code']['description'] + ' Use with record_missing_control for a confirmed DOM or screenshot fallback.'}
     return {**schema, 'description': SITE_HELP + '\n\n' + schema['description'], 'parameters': {
         **parameters, 'properties': {**fields, 'code': code, 'site_control': CONTROL_SCHEMA},
         'required': [key for key in parameters.get('required', []) if key != 'code'],

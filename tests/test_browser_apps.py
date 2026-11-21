@@ -92,6 +92,34 @@ class BrowserAppTests(unittest.TestCase):
         after_cleanup = json.loads(self.host.handle(args, task_id='A', session_id='chat-A'))
         self.assertFalse(after_cleanup['success'])
 
+    def test_unknown_control_and_unrelated_native_read_are_not_a_confirmed_finding(self):
+        self.package()
+        detail = {'reason': 'unmapped_control', 'control': 'Show credits', 'page_or_mode': 'Settings'}
+        session = self.invoke(params={'status': 'needs_inspection', 'data': detail})['session']
+        path = self.root / 'data/browser-apps/fixture/missing-controls.jsonl'
+        self.assertFalse(path.exists())
+        native = Mock(return_value=json.dumps({'success': True, 'output': 'Settings'}))
+        args = {'session': session, 'code': 'print(js("document.title"))'}
+        ctx = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn'}
+        self.host.execute(args, native, **ctx)
+        self.host.execute(args, native, **ctx)
+        self.assertFalse(path.exists())
+
+    def test_declared_missing_control_and_native_screenshot_in_one_owned_call(self):
+        self.package()
+        session = self.invoke()['session']
+        command = {'action': 'record_missing_control', 'app': 'fixture',
+                   'params': {'page_or_mode': 'Settings', 'control': 'Show credits', 'fallback': 'screenshot'}}
+        args = {'site_control': json.dumps(command), 'session': session, 'code': 'screenshot()'}
+        native = Mock(return_value='screenshot result')
+        with patch('hermes_cli.config.load_config_readonly', return_value=self.config):
+            self.assertEqual(self.host.execute(args, native, task_id='A', session_id='chat-A'), 'screenshot result')
+            wrong = self.host.execute(args, native, task_id='B', session_id='chat-B')
+        self.assertFalse(json.loads(wrong)['success'])
+        self.assertEqual(native.call_count, 1)
+        self.assertEqual(native.call_args.args[0], {'session': session, 'code': 'screenshot()'})
+        self.assertTrue((self.root / 'data/browser-apps/fixture/missing-controls.jsonl').is_file())
+
     def test_final_reply_continues_only_the_owned_running_work(self):
         self.package(operations={'click': {}, 'inspect': {}, 'read_result': {}})
         pacing = patch('browser_apps.OBSERVATION_INTERVAL', 0)

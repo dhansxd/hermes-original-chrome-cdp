@@ -5,6 +5,8 @@ import hashlib
 import io
 import json
 import os
+import sqlite3
+import time
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -171,6 +173,66 @@ class GeminiAppTests(ChromeFixture):
         self.assertTrue(result['success'], result)
         self.assertIn('Fixture model', self.js.call_args.args[0])
         self.assertEqual([entry.args for entry in self.click.call_args_list], [(22, 26), (24, 55)])
+
+    def test_native_video_receipt_ignores_other_chats_and_reuses_verified_download(self):
+        from site_apps.gemini import video
+        context = Mock(directory=self.data / 'task', chrome_profile_directory=self.data, profile='Default')
+        context.directory.mkdir()
+        history = sqlite3.connect(self.data / 'History')
+        self.addCleanup(history.close)
+        history.execute('CREATE TABLE downloads (guid, target_path, state, received_bytes, total_bytes, tab_url, start_time)')
+        file = self.data / 'generated.mp4'
+        file.write_bytes(b'fixture file')
+        selected = {'url': 'https://gemini.google.com/app/one', 'key': 'one/result', 'width': 12, 'height': 8}
+        context.verify_video.return_value = {'duration': '10', 'streams': [{'codec_type': 'video', 'width': 12, 'height': 8}]}
+        def button(owner, key=None):
+            if key:
+                start = time.time_ns() // 1000 + 11644473600000000
+                for guid, url in [('other', selected['url'] + '-other'), ('own', selected['url'])]:
+                    history.execute('INSERT INTO downloads VALUES (?, ?, 1, 12, 12, ?, ?)', (guid, str(file), url, start))
+                history.commit()
+            return selected
+        pending = context.directory / 'pending.json'
+        with patch.object(video, 'button', side_effect=button) as clicked:
+            result = video.download(context, pending)
+            repeated = video.download(context, pending)
+        self.assertEqual(result, repeated)
+        self.assertEqual(result['status'], 'ok', result)
+        self.assertEqual(Path(result['data']['file']['path']).read_bytes(), file.read_bytes())
+        self.assertEqual(sum(len(call.args) == 2 for call in clicked.call_args_list), 1)
+        self.assertFalse(pending.exists())
+        history.execute("UPDATE downloads SET tab_url=?", (selected['url'],))
+        history.commit()
+        with self.assertRaisesRegex(ValueError, 'ambiguous'):
+            video.receipt(self.data / 'History', {**selected, 'start': 0})
+
+    def test_html_with_mp4_name_cannot_be_published_as_video(self):
+        from site_apps.gemini import video
+        file = self.data / 'invalid.mp4'
+        file.write_text('<!doctype html><html>Login</html>')
+        context = Mock(directory=self.data)
+        context.verify_video.side_effect = ValueError('Media decode failed')
+        with self.assertRaisesRegex(ValueError, 'decode'):
+            video.publish(context, file, file.stat().st_size, {'guid': 'invalid'})
+        self.assertFalse(list((self.data / 'results').iterdir()))
+
+    def test_research_plan_offers_one_mapped_confirmation_and_stays_pending(self):
+        self.js.side_effect = [
+            {'reason': 'running', 'chat_id': 'c_fixture', 'stage': 'planning'},
+            {'reason': 'running', 'chat_id': 'c_fixture', 'stage': 'plan_ready', 'control': 'start_research'},
+            {'reason': 'clicked'}, {'reason': 'already_clicked'},
+        ]
+        with patch('browser_apps.OBSERVATION_INTERVAL', 0):
+            planning = self.call(operation='read_result')
+            self.assertEqual(planning['data']['stage'], 'planning')
+            ready = self.call(operation='read_result')
+            self.assertEqual(ready['status'], 'running')
+            self.assertEqual(ready['next_control']['params']['control'], 'start_research')
+            first = self.call(operation='click', params={'control': 'start_research'})
+            retry = self.call(operation='click', params={'control': 'start_research'})
+        self.assertTrue(first['data']['clicked'])
+        self.assertFalse(retry['data']['clicked'])
+        self.assertEqual(first['session'], planning['session'])
 
     def test_read_result_reports_generation_in_progress_without_clicking(self):
         self.js.return_value = {'reason': 'running', 'chat_id': 'c_fixture'}

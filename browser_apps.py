@@ -1,4 +1,5 @@
 """User-owned site packages executed through the provider's native browser session."""
+import ast
 import hashlib
 import importlib.abc
 import importlib.machinery
@@ -19,8 +20,10 @@ from time import monotonic, sleep
 from hermes_constants import get_hermes_home
 
 if __package__:
+    from .site_apps.flow.downloads import verify as verify_media
     from .rolling import HANDOFF_MODES, JobStore, RollingJob
 else:
+    from site_apps.flow.downloads import verify as verify_media
     from rolling import HANDOFF_MODES, JobStore, RollingJob
 
 
@@ -233,6 +236,16 @@ class AppContext:
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
         return path
 
+    @property
+    def chrome_profile_directory(self):
+        return self.host.provider.data / self.profile
+
+    def verify_video(self, path):
+        checked = verify_media({'path': str(path)})
+        if not any(stream['codec_type'] == 'video' for stream in checked['media']['streams']):
+            raise ValueError('The Chrome download contains no video stream.')
+        return checked['media']
+
     def checkpoint(self, value):
         """Save the package's last known work position outside its source directory."""
         path = write_json(self.directory / 'checkpoint.json', value)
@@ -376,11 +389,79 @@ class AppHost:
                 pass  # handle() returns the package error to Hermes.
         context['require_existing'] = command['action'] in {'observe', 'record_missing_control'}
         route = {'session': args.get('session'), 'app': command.get('app'), 'local': args.get('local')}
+        if command['action'] == 'record_missing_control' and args.get('code'):
+            route['code'] = args['code']
         return self.provider.prepare_call(tool_name, route, task_id, **context)
+
+    def native_fallback(self, args, native, context, choice):
+        code = args.get('code', '')
+        try:
+            tree = ast.parse(code)
+        except (TypeError, SyntaxError):
+            return native(args, **context)
+        calls = {n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        method = ('screenshot' if 'screenshot' in calls else 'dom' if calls.intersection({'js', 'dom', 'page_info', 'click'})
+                  else choice.last_ui_inspection)
+        marker = ''
+        if method and ('click' in code or 'press_key' in calls):
+            try:
+                directory, _, source = read_package(self.root, choice.app_id)
+                with loaded_package(directory, source) as module:
+                    observer = getattr(module, 'FALLBACK_CLICK_OBSERVER', None)
+                    selectors = getattr(module, 'FALLBACK_CLICK_SELECTORS', {})
+            except Exception:
+                # Ordinary native browsing remains available if a site's optional observer cannot load.
+                return native(args, **context)
+            if observer:
+                token = uuid.uuid4().hex
+                marker = 'HERMES_UI_' + token + '='
+                begin = observer + '("begin",' + json.dumps(token) + ',' + json.dumps(selectors) + ')'
+                end = observer + '("finish",' + json.dumps(token) + ',{})'
+                # Keep future imports and native result/exception semantics in the user's script.
+                wrapped = (f'try:\n    js({begin!r})\nexcept Exception:\n    pass'
+                           f'\ntry:\n    exec(compile({code!r}, "<browser_exec>", "exec"), globals())'
+                           f'\nfinally:\n    try:\n        print({marker!r} + __import__("json").dumps(js({end!r})))'
+                           '\n    except Exception:\n        pass')
+                args = {**args, 'code': wrapped}
+        response = native(args, **context)
+        if not (method or marker):
+            return response
+        try:
+            result = json.loads(response) if isinstance(response, str) else response
+        except ValueError:
+            return response
+        if not isinstance(result, dict):
+            return response
+        if result.get('success') and not result.get('exit_code', 0):
+            choice.last_ui_inspection = method
+        if not marker:
+            return response
+        output, separator, tail = (result.get('output') or '').rpartition(marker)
+        if not separator:
+            return response
+        result['output'] = output
+        try:
+            findings = [(row['page_or_mode'], row['control']) for row in (json.loads(tail) or [])]
+        except (ValueError, TypeError, KeyError):
+            findings = []
+        for mode, label in findings:
+            try:
+                self.record_missing_control({'app': choice.app_id, 'session': args['session'], 'params': {
+                    'page_or_mode': mode, 'control': label, 'fallback': method}}, context['task_id'], context['session_id'])
+            except (OSError, ValueError, RuntimeError) as error:
+                # The click has already happened. Report the recording error independently.
+                result['missing_control_error'] = str(error)
+                break
+        return json.dumps(result, ensure_ascii=False) if isinstance(response, str) else result
 
     def execute(self, args, native, **context):
         if not has_site_request(args):
-            return native(args, **context)
+            session = args.get('session')
+            with self.provider.lock:
+                choice = self.provider.profile_choices.get(self.provider.profile_routes.get(session)) if isinstance(session, str) else None
+                owned = (choice and not choice.finished and not choice.active and choice.app_id
+                         and choice.owner[:2] == (context.get('task_id'), context.get('session_id')))
+            return self.native_fallback(args, native, context, choice) if owned else native(args, **context)
         from hermes_cli.config import load_config_readonly
         config = load_config_readonly()
         if config.get('browser', {}).get('cloud_provider') != self.provider.name:
@@ -395,7 +476,10 @@ class AppHost:
             command = site_request(args)
         except ValueError as error:
             return json.dumps({'success': False, 'error': str(error)})
-        return self.handle({**command, 'session': args.get('session')}, **context)
+        result = self.handle({**command, 'session': args.get('session')}, **context)
+        if command['action'] == 'record_missing_control' and args.get('code') and json.loads(result).get('success'):
+            return native({k: v for k, v in args.items() if k != 'site_control'}, **context)
+        return result
 
     def manage(self, action, identifier):
         directory = self.root / identifier
@@ -558,6 +642,8 @@ class AppHost:
                                 result['running_work']['next_control'] = {'app': identifier, 'action': 'observe'}
                 else:
                     operation = args.get('operation')
+                    reader = metadata['operations'].get('read_result')
+                    can_read = reader is not None and not reader.get('parameters', {}).get('required')
                     if action == 'run' and (not isinstance(operation, str) or operation not in metadata['operations']):
                         raise ValueError('Choose an operation from the site guide.')
                     params = args.get('params', {})
@@ -587,7 +673,7 @@ class AppHost:
                             break
                         sleep(min(remaining, 0.25))
                     if action == 'observe':
-                        return json.dumps(self.observe_running(context, params, observed_work), ensure_ascii=False)
+                        return json.dumps(self.observe_running(context, params, observed_work, can_read), ensure_ascii=False)
                     with loaded_package(directory, source) as module:
                         rolling = uses_rolling(metadata, args)
                         if rolling:
@@ -622,9 +708,7 @@ class AppHost:
                                 choice.running_since = now
                                 choice.result_selector = ''
                             choice.running = (result.get('operation', operation), result.get('job'))
-                            reader = metadata['operations'].get('read_result')
-                            choice.can_read_result = (reader is not None and not rolling
-                                                      and not reader.get('parameters', {}).get('required'))
+                            choice.can_read_result = can_read and not rolling
                             choice.last_observation = now
                             result['running_seconds'] = int(now - choice.running_since)
                             if not choice.can_read_result and not choice.running[1]:
@@ -659,7 +743,7 @@ class AppHost:
                         context._binding.active -= 1
                     context.active = False
 
-    def observe_running(self, context, params, observed_work):
+    def observe_running(self, context, params, observed_work, can_read):
         choice = context._choice()
         selector = params.get('result_selector', choice.result_selector)
         if set(params) - {'result_selector'} or not isinstance(selector, str):
@@ -687,6 +771,9 @@ class AppHost:
                 choice.pending = False
                 choice.running = None
             else:
+                if can_read and not selector:
+                    choice.can_read_result = True
+                    result['next_control'] = {'app': context.app, 'operation': 'read_result'}
                 result['message'] = ('Continue this task in the same session. Supply params.result_selector on '
                                      'observe when you identify the unique finished result for this submission. '
                                      'Use DOM or screenshot as needed. Finish the requested delivery.')

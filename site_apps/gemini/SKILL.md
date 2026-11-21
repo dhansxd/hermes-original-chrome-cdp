@@ -16,8 +16,11 @@ helpers in the same session.
 
 For Deep Research, use the topic from the request or the conversation. Ask for
 the topic if it is missing. Select `deep_research`, enter the topic, then send it
-once. While Gemini is working, use `read_result` in that window. Check the page
-for a research plan or a confirmation button before reporting a finished report.
+once. Keep using `read_result` while the plan is being prepared. For a request
+to run the research, follow its `next_control` when Gemini presents the plan's
+start button. Open a completed report when offered. A final refusal is a Gemini
+answer; report it honestly. If the research panel needs inspection, examine that
+panel in the same window and record a confirmed missing control with the fallback.
 
 | Operation | Action |
 | --- | --- |
@@ -39,6 +42,11 @@ returned `session` to native `browser_exec`. Inspect the relevant DOM or use a
 screenshot if needed, then continue with the same Chrome window. After Send,
 verify that the new response has appeared and finish any requested download
 before ending the turn. If Send is unconfirmed, check the chat before retrying.
+For an existing or newly generated video, call `click` with `control: download_video`
+on the requested response. Follow `read_result` while Chrome finishes its download.
+Use the verified `data.file.path` for the current channel's requested attachment.
+A “video ready” message only confirms generation. If verification fails, report the
+download error and keep the real site as the source.
 For an image request, verify the generated image in that response. Use Gemini's
 download control in the same window, record a missing mapping if DOM inspection
 was needed, and deliver the downloaded file when requested.

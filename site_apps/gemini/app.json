@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "gemini",
   "name": "Gemini Web",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "profile_policy": "rotate_on_limit",
   "handoff_mode": "manual",
   "rolling_parameters": {"reply": "continuation"},
@@ -25,13 +25,13 @@
       }
     },
     "click": {
-      "description": "Click a mapped Gemini control. For Deep Research, clarify the topic if the conversation does not supply one. After Send, use read_result in this session while Gemini is working.",
+      "description": "Click a mapped Gemini control. For Deep Research, clarify the topic if the conversation does not supply one. After Send, use read_result in the same session. For video delivery, use download_video and attach the returned verified file. Start research only when requested and the current plan offers confirmation.",
       "parameters": {
         "type": "object",
         "properties": {
           "control": {
             "type": "string",
-            "enum": ["model_picker", "tools_menu", "create_image", "create_video", "deep_research", "create_music", "send"]
+            "enum": ["model_picker", "tools_menu", "create_image", "create_video", "deep_research", "create_music", "send", "download_video", "start_research", "open_research_report"]
           }
         },
         "required": ["control"],

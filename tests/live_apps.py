@@ -64,6 +64,31 @@ def package(root, identifier):
     return directory
 
 
+def verify_research_panel(call, session, url, source):
+    # Render the research stages locally, without starting research or generating content.
+    ui = (source / 'site_apps/gemini/controls.js').read_text()
+    code = f"goto_url({(url + '/app/fixture')!r})\nui = {ui!r}\n" + r'''import json
+def read(kind='result', name=None):
+    params = ','.join(json.dumps(v) for v in ({}, kind, name, None))
+    return js('(' + ui + ')(location.origin,' + params + ')')
+js("""document.body.innerHTML = '<model-response><thinking-overlay>Membuat rencana riset</thinking-overlay></model-response>'""")
+assert read()['stage'] == 'planning'
+js("""document.querySelector('model-response').innerHTML = '<button>Mulai riset</button>';
+      window.starts=0; document.querySelector('button').onclick=()=>window.starts++""")
+assert read()['control'] == 'start_research'
+assert read('activate_research','start_research')['reason'] == 'clicked'
+assert read('activate_research','start_research')['reason'] == 'already_clicked'
+assert js('window.starts') == 1
+js("""document.querySelector('model-response').innerHTML = '<button aria-controls="report">Buka laporan</button>';
+      document.body.insertAdjacentHTML('beforeend','<section id="report" hidden><article>Finished report</article></section>');
+      document.querySelector('button').onclick=()=>document.getElementById('report').hidden=false""")
+assert read()['stage'] == 'report_available'
+assert read('activate_research','open_research_report')['reason'] == 'clicked'
+assert read()['text'] == 'Finished report'
+'''
+    return call('parent', session=session, code=code)
+
+
 def verify():
     source = Path(__file__).resolve().parents[1]
     server = ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
@@ -161,6 +186,10 @@ plugins:
                 ordinary = call('parent', tool='browser_exec', session='independent-task',
                                 code=f'goto_url({url!r}); js("window.ordinaryMarker=42")')
                 assert ordinary['session'] != repeat['session']
+                verify_research_panel(call, ordinary['session'], url, source)
+                # Restore the marker used by the existing independent-window assertions.
+                call('parent', session=ordinary['session'], code='js("window.ordinaryMarker=42")')
+                report['research_plan_confirmation_and_finished_report'] = True
 
                 added = package(packages, 'new-site')
                 metadata = json.loads((added / 'app.json').read_text())

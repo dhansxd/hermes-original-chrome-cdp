@@ -7,7 +7,7 @@ native `browser_exec` tool and browser helpers.
 Website packages supply controls inside native `browser_exec`. Set the tool's `site_control` field
 to JSON text, for example `{"action":"describe","app":"gemini"}`.
 For a known control, call the operation directly in the task's existing window.
-A populated `site_control` executes that operation alone. Ordinary browser
+Mapped site operations execute alone. A confirmed missing-control report can accompany native fallback code. Ordinary browser
 Python goes in `code` with `site_control` omitted or null.
 The former `browser_app` tool has been removed. On upgrade, an existing user-owned
 package may still mention that tool in its guide. Use the guide’s operation names
@@ -267,7 +267,7 @@ using `Path(__file__).parent`.
 
 After using DOM or screenshot fallback for a confirmed unmapped control, Hermes
 records the page or mode and the control in `missing-controls.jsonl` under that
-package's `data_directory`. This uses the same app and exact session with
+package's `data_directory`. Include the report with native fallback code when the control is already identified. This uses the same app and exact session with
 `site_control` action `record_missing_control`.
 
 Packages execute trusted local Python code with the permissions of the Hermes

@@ -9,7 +9,7 @@ Use `browser_exec` throughout the browser task. Calls named `browser_app` in
 older chats now use the `site_control` parameter on `browser_exec`.
 For a request specifying Gemini Web, open Gemini with `open_chat` and use its
 controls in the same browser session. Pass a site's mapped operation
-as JSON text in the tool's `site_control` parameter. A site control runs alone. Use `code`
+as JSON text in the tool's `site_control` parameter. Mapped operations run alone. A confirmed missing-control report can accompany fallback code. Use `code`
 with `site_control` omitted or null for an ordinary DOM or screenshot call. For example, in an open Gemini chat:
 
 ```json
@@ -26,7 +26,11 @@ normal DOM and screenshot helpers in this window and continue the task there.
 For a confirmed missing control on an installed site, use `site_control` with
 `action: record_missing_control`, its `app`, and `params` containing
 `page_or_mode`, `control`, and `fallback` (`dom` or `screenshot`). Check the
-relevant panel and model first. Record the finding before the final answer.
+relevant panel and model first. Include that report alongside the native `code`
+in the same `browser_exec` call when acting on the newly discovered control.
+Gemini records a labelled, unmapped button clicked through native fallback in
+its owned tab. Explicitly report controls you identify visually or that have
+no stable label. A missing selector alone does not confirm a finding.
 
 After submitting once, follow the result control in that session. If a
 running task has no usable mapped reader, use the returned `observe` control

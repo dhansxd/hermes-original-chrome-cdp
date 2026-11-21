@@ -216,6 +216,16 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      Untuk permintaan kirim, verifikasi pengiriman melalui Telegram dan
      cleanup jendela tugas. Sesi ini hanya membuktikan gateway mencoba
      mengirim berkas yang valid.
+   - [x] Pada 0.11.3, Hermes memakai tombol unduh pada jawaban video di
+     Gemini Web asli. Plugin mencocokkan unduhan Chrome dengan percakapan
+     serta waktu klik, lalu memeriksa ukuran, stream dan hasil dekode.
+     Seluruh byte salinan hasil uji cocok dengan MP4 yang sudah ada.
+     Penerimaan dan pemutaran lampiran di Telegram masih perlu dibuktikan.
+   - [x] Paket Gemini 0.4.4 membedakan pembuatan rencana, tombol mulai
+     riset, riset berjalan, tombol buka laporan dan teks hasil. Di halaman
+     uji Chrome asli, satu klik memulai riset dan laporan terbaca di dokumen
+     yang sama. Pada percakapan Gemini asli yang diperiksa, hasil akhirnya
+     berupa penolakan. Penyelesaian riset baru di Gemini asli masih terbuka.
    - [x] Uji situs lokal di Chrome asli melalui Hermes: satu paket tanpa
      pembaca hasil melewati enam pemeriksaan tertunda. Pemeriksaan ketujuh
      membaca hasil pada dokumen dan jendela yang sama. Uji isolasi dan
@@ -275,6 +285,11 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
    lewat DOM tanpa memanggil `record_missing_control`. Uji ulang dengan kontrol
    lain yang terkonfirmasi belum dipetakan dan periksa baris temuan yang tersimpan. Temuan
    yang terverifikasi menjadi bahan menambahkan tombol ketika diminta.
+   Pada 0.11.3, klik DOM biasa pada tombol berlabel di Gemini Web asli
+   mencatat kontrol yang belum dipetakan dalam `missing-controls.jsonl`.
+   Untuk kontrol tanpa label yang ditemukan secara visual, Hermes dapat
+   mencatat temuan dan menjalankan aksi lewat satu panggilan `browser_exec`.
+   Pengujian jalur tersebut dari sesi Telegram baru masih terbuka.
 
 Untuk Google Flow, pertahankan pemisahan cara menggunakan mode Klasik dan Agent
 sesuai butir 4 dan panduan paket. Pilihan profil serta mode perpindahan manual

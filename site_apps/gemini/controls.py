@@ -21,7 +21,7 @@ SELECTORS = {
                     '[aria-label="Create music"], [aria-label="Buat musik"]',
 }
 TOOL_ITEMS = {'create_image', 'create_video', 'deep_research', 'create_music'}
-CLICKABLE = {'model_picker', 'tools_menu', 'send'} | TOOL_ITEMS
+CLICKABLE = {'model_picker', 'tools_menu', 'send', 'download_video', 'start_research', 'open_research_report'} | TOOL_ITEMS
 CONTROL_UI = Path(__file__).with_suffix('.js').read_text(encoding='utf-8')
 MARKER = 'GEMINI_CONTROL='
 
@@ -84,7 +84,14 @@ def run():
     if op == 'read_result':
         state = read('result')
         if state['reason'] == 'running':
-            return {'status': 'running', 'data': {'chat_id': state['chat_id']}}
+            data = {'chat_id': state['chat_id']}
+            if state.get('stage'):
+                data['stage'] = state['stage']
+            result = {'status': 'running', 'data': data}
+            if state.get('control'):
+                result['next_control'] = {'app': 'gemini', 'operation': 'click',
+                                          'params': {'control': state['control']}}
+            return result
         if state['reason'] != 'ready':
             return blocked('result', state)
         return {'status': 'ok', 'data': {key: state[key] for key in ('chat_id', 'text', 'truncated')}}
@@ -120,6 +127,11 @@ def run():
             return blocked('model_picker', choice)
         click(choice)
         return {'status': 'ok', 'data': {'control': 'model_picker', 'clicked': True}}
+    if argument in {'start_research', 'open_research_report'}:
+        state = read('activate_research', argument)
+        if state['reason'] in {'clicked', 'already_clicked'}:
+            return {'status': 'running', 'data': {'control': argument, 'clicked': state['reason'] == 'clicked'}}
+        return blocked(argument, state)
     state = choose_tool(argument) if argument in tool_items else wait_for('control', argument)
     if state['reason'] != 'ready':
         return blocked(argument, state)
