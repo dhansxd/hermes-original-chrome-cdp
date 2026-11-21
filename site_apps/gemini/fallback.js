@@ -1,17 +1,36 @@
-// Observe button labels only during a native fallback action in this owned tab.
-((mode, token, selectors) => {
+// Observe an owned fallback action and preserve any pending research submission.
+((mode, token, selectors, protectSend = false) => {
     const key = Symbol.for('hermes.gemini.fallback.' + token);
     if (mode === 'finish') {
         const capture = window[key];
         if (!capture) return [];
         capture.abort.abort();
         delete window[key];
-        return [...capture.labels].map(([control, page_or_mode]) => ({control, page_or_mode}));
+        const findings = [...capture.labels].map(([control, page_or_mode]) => ({control, page_or_mode}));
+        return {findings, send_blocked: capture.sendBlocked};
     }
     if (location.origin !== 'https://gemini.google.com' ||
         !/^\/(?:u\/\d+\/)?app(?:\/|$)/.test(location.pathname)) return;
     const abort = new AbortController(), labels = new Map();
-    window[key] = {abort, labels};
+    const capture = window[key] = {abort, labels, sendBlocked: false};
+    const options = {capture: true, signal: abort.signal};
+    if (protectSend) {
+        const blockSend = event => {
+            capture.sendBlocked = true;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        };
+        window.addEventListener('click', event => {
+            if (event.composedPath().some(node => node.matches?.(selectors.send))) blockSend(event);
+        }, options);
+        window.addEventListener('keydown', event => {
+            if (event.key === 'Enter' && !event.shiftKey && !event.isComposing &&
+                event.target.closest?.(selectors.composer)) blockSend(event);
+        }, options);
+        window.addEventListener('submit', event => {
+            if (event.target.querySelector?.(selectors.composer)) blockSend(event);
+        }, options);
+    }
     document.addEventListener('click', e => {
         const button = e.target.closest?.('button,[role="button"]');
         if (!button || button.closest('conversations-list,nav,aside,[contenteditable="true"]')) return;
@@ -24,5 +43,5 @@
         if (mapped.some(s => s === label || s === button.innerText.trim())) return;
         if (button.closest('generated-video') && /^(download|unduh) video$/i.test(label)) return;
         labels.set(label, button.closest('generated-video') ? 'Gemini video response' : 'Gemini conversation');
-    }, {capture: true, signal: abort.signal});
+    }, options);
 })

@@ -357,6 +357,46 @@ class BrowserAppTests(unittest.TestCase):
         self.assertNotIn(session, self.provider.owners)
         self.assertIn(peer, self.provider.owners)
 
+    def test_terminal_wait_reads_the_only_running_gemini_on_its_current_turn(self):
+        self.package('gemini', operations={'click': {}, 'read_result': {}},
+                     source="""def run(context, operation, params):
+    if operation == 'click':
+        return {'status': 'running'}
+    page = context.browser_exec('print(page_info())')
+    return {'status': 'running', 'data': {'stage': page['output']}}
+""")
+        with patch('browser_apps.monotonic', return_value=1000):
+            started = self.invoke('gemini', operation='click')
+        owner = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn'}
+        native = Mock(return_value='shell')
+        wait = {'command': 'sleep 180', 'timeout': 200}
+        for tool, args, identity in [
+            ('terminal', wait, {**owner, 'turn_id': 'old'}),
+            ('terminal', wait, {**owner, 'task_id': 'B'}),
+            ('terminal', {'command': 'sleep 5'}, owner),
+            ('terminal', {'command': 'sleep 180 && echo done'}, owner),
+            ('terminal', {**wait, 'background': True}, owner),
+            ('other', wait, owner),
+        ]:
+            with self.subTest(tool=tool, args=args, identity=identity):
+                self.assertEqual(self.host.observe_terminal_wait(tool, args, native, **identity), 'shell')
+        self.dispatch.assert_not_called()
+        native.reset_mock()
+        with patch('browser_apps.monotonic', return_value=1020):
+            raw = self.host.observe_terminal_wait('terminal', wait, native, **owner)
+        result = json.loads(raw)
+        self.assertEqual((result['status'], result['session']), ('running', started['session']))
+        self.assertEqual(result['data']['stage'], 'fixture')
+        native.assert_not_called()
+
+        with (patch('browser_apps.monotonic', return_value=1020),
+              patch('browser_apps.sleep', side_effect=lambda _: self.provider.stopped(session_key='route-A'))):
+            result = json.loads(self.host.observe_terminal_wait('terminal', wait, native, **owner))
+        self.assertEqual(result['status'], 'failed')
+        self.assertNotIn(started['session'], self.provider.owners)
+        self.dispatch.assert_called_once()
+        native.assert_not_called()
+
     def test_bundled_site_packages_default_to_the_current_hermes_profile(self):
         self.settings.pop('apps_directory')
         self.host.bundled_source = Path(browser_apps.__file__).parent / 'site_apps'

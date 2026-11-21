@@ -19,9 +19,10 @@ the topic if it is missing. Select `deep_research`, enter the topic, then send i
 once. A confirmed selection returns `mode_active: true`. If Send reports that
 Deep Research is inactive, inspect the composer in the same window and confirm
 the selection before sending. Use the same composer actions for a research
-follow-up. Follow `next_control` while Gemini is preparing the plan. Keep the
-page open while Gemini is working. After a reload, check the existing
-submission in the same session. For a request to run the research, use the start
+follow-up. Follow `next_control` while Gemini is preparing the plan, including
+when Send reports `research_submission_pending`. Use the browser progress
+checks in the same window during the wait. After a reload, check the existing
+submission there. For a request to run the research, use the start
 button when Gemini presents the plan. Open a completed report when offered.
 Report a final Gemini refusal as shown. If the research panel needs inspection,
 examine it in the same window and record a confirmed missing control with the

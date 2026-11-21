@@ -147,9 +147,12 @@ def run():
             return {'status': 'ok', '_same_submission': mode.get('same_submission'),
                     'data': {'control': argument, 'clicked': False, 'mode_active': True}}
     state = choose_tool(argument) if argument in tool_items else wait_for('control', argument)
+    if argument == 'send' and state['reason'] == 'research_submission_pending':
+        return {'status': 'running', 'data': {'control': 'send', 'reason': state['reason']},
+                'message': 'Check the existing research submission in this window.'}
     if state['reason'] != 'ready':
         result = blocked(argument, state)
-        if dispatch_send and state['reason'] != 'research_submission_pending':
+        if dispatch_send:
             result['_send_not_dispatched'] = True
         return result
     if state.get('_research_intent'):

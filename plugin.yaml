@@ -1,5 +1,5 @@
 name: original-chrome-default
-version: 0.11.7
+version: 0.11.8
 manifest_version: 2
 api_version: 1
 homepage: https://github.com/dhansxd/hermes-original-chrome-cdp
@@ -16,6 +16,7 @@ provides_tools:
   - chrome_profiles
 provides_middleware:
   - llm_execution
+  - tool_execution
 provides_hooks:
   - pre_tool_call
   - agent_loop_stopped

@@ -269,7 +269,31 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      pada halaman lokal membuktikan pemulihan sebelum pembacaan pertama
      baik di chat yang dimuat ulang maupun setelah chat baru mendapat URL.
      Uji juga menolak topik yang berbeda dan draft yang berubah sebelum klik.
-     Pengujian Gemini Web sampai laporan diterima di Telegram masih terbuka.
+     Uji Telegram pada 0.11.7/0.4.8 belum lulus. Kiriman pertama terlihat,
+     lalu halaman kembali menampilkan draf kosong tanpa ID percakapan.
+     Kontrol Kirim menahan pengulangan, tetapi Hermes mengirim draf berbeda
+     lewat DOM. Gemini mulai membuat rencana untuk draf kedua dan pembaca
+     menolaknya karena hash tidak cocok dengan checkpoint. Saat Hermes
+     menunggu 180 detik lewat terminal, cleanup idle menutup jendela setelah
+     125 detik. Hermes akhirnya mengakhiri giliran setelah pengguna meminta
+     berhenti, tanpa laporan riset.
+   - [x] Reproduksi kegagalan 0.11.7 dengan fixture Chrome lokal. Buktikan
+     bahwa fallback DOM tetap dapat membaca halaman selama kiriman awal
+     belum terverifikasi dan tidak bisa mengirim ulang dalam kondisi itu.
+     Uji pemantauan di jendela yang sama melewati ambang idle serta Stop
+     ketika pemantauan aktif. Jika kiriman tetap macet di Gemini Web setelah
+     perilaku plugin lulus, cocokkan perubahan UI dengan waktu dan status
+     jaringan yang relevan pada satu uji terkendali. Log percobaan ini
+     belum menunjukkan penyebab backend Gemini.
+     Pada 0.11.7, klik ulang lewat DOM membuat penghitung kiriman naik dari
+     satu ke dua. Host 0.11.8 dan Gemini 0.4.9 menahan klik Kirim serta
+     Enter pada composer selama pengiriman aktif. DOM, screenshot, tombol
+     lain, dan pencatatan kontrol yang belum dipetakan tetap bisa dipakai.
+     Panggilan terminal `sleep 180` mengikuti pembaca progres Gemini pada
+     jendela semula selama lebih dari 120 detik. Event Stop resmi
+     menghentikan pemeriksaan yang sedang berjeda dan melepas target Chrome.
+     Sebanyak 442 tes otomatis lulus. Verifikasi Gemini Web hingga laporan
+     terkirim ke Telegram tetap terbuka.
    - Temuan Telegram 0.11.2 di percakapan yang sudah ada: setelah satu
      submit Deep Research, 32 panggilan `observe` tanpa selector membaca
      teks “Membuat rencana riset” pada sesi yang sama hingga pengguna

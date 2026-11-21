@@ -17,6 +17,11 @@ RESULT_MARKER = 'GEMINI_INSPECT='
 CHAT_PATH = r'/(?:u/\d+/)?app/([a-zA-Z0-9-]+)/?'
 
 
+def fallback_send_pending(context):
+    submission = controls.load_submission(context.directory / 'checkpoint.json')
+    return bool(submission and not submission.get('finished'))
+
+
 def chat_id(value):
     if not isinstance(value, str) or not re.fullmatch(r'(?:c_)?[a-zA-Z0-9-]+', value):
         raise ValueError('Gemini chat must be a conversation ID.')

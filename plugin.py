@@ -600,6 +600,7 @@ def register(ctx):
         register_site_controls(ctx, apps)
     if hasattr(ctx, 'register_middleware'):
         ctx.register_middleware('llm_execution', apps.continue_running)
+        ctx.register_middleware('tool_execution', apps.observe_terminal_wait)
     if hasattr(ctx, 'register_skill'):
         ctx.register_skill('site-controls', root / 'skills' / 'site-controls' / 'SKILL.md',
                            description='Use browser_exec.site_control for Gemini Web and Google Flow tasks, '

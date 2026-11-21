@@ -1,6 +1,7 @@
 """Native site-package acceptance using local fixtures and original Chrome."""
 import concurrent.futures
 import json
+import shutil
 import sys
 import tempfile
 import threading
@@ -213,7 +214,91 @@ assert fresh_result['_research_receipt'] == {'chat': 'c_new-chat', 'home': '/app
     assert result['success'] and result.get('exit_code', 0) == 0, result
 
 
-def verify():
+def verify_research_fallback(call):
+    request = {'app': 'gemini', 'session': 'research'}
+    opened = call('research', **request, operation='open_chat')
+    name = opened['session']
+    call('research', session=name, code=r'''js("""document.body.innerHTML = `
+        <form><fieldset>
+        <div role="textbox" contenteditable="true">First topic</div>
+        <button type="button" aria-label="Send message" id="send">Send</button>
+        <gem-button data-test-id="deselect-drawer-item-gem-button">
+        <button type="button" aria-label="Deselect Deep Research">Deep Research</button></gem-button>
+        </fieldset></form>
+        <button title="Inspect references" id="references">References</button>`;
+        window.sends = 0;
+        window.references = 0;
+        document.querySelector('#send').onclick = () => {
+          window.sends++;
+          document.querySelector('[role=textbox]').textContent = '';
+        };
+        document.querySelector('#references').onclick = () => window.references++;""")''')
+    sent = call('research', **request, operation='click', params={'control': 'send'})
+    assert sent['status'] == 'running'
+    repeat = call('research', **request, operation='click', params={'control': 'send'})
+    assert repeat['status'] == 'running' and repeat['data']['reason'] == 'research_submission_pending'
+    raw = call('research', session=name, code=r'''js("""document.querySelector('[role=textbox]').textContent = 'Another topic';
+        document.querySelector('#send').click();
+        document.querySelector('#references').click();""")''')
+    verified = call('research', session=name, code='print(js("JSON.stringify([window.sends, window.references])"))')
+    assert json.loads(verified['output'].strip()) == [1, 1], (raw, verified)
+    assert raw['status'] == 'running'
+    assert raw['data']['reason'] == 'research_submission_pending'
+    paired = call('research', session=name, code='js("document.querySelector(\'#send\').click()")',
+                  site_control=json.dumps({'app': 'gemini', 'action': 'record_missing_control',
+                    'params': {'page_or_mode': 'Gemini conversation',
+                               'control': 'Inspect references', 'fallback': 'dom'}}))
+    assert paired['status'] == 'running' and paired['data']['reason'] == 'research_submission_pending'
+    enter = call('research', session=name, code=r'''js("""const editor = document.querySelector('[role=textbox]');
+        editor.addEventListener('keydown', e => {if (e.key === 'Enter') window.sends++});
+        editor.focus();""")
+press_key('Enter')''')
+    assert enter['data']['reason'] == 'research_submission_pending'
+    snapshot = call('research', session=name,
+                    code='print(js("document.body.innerText")); print(capture_screenshot())')
+    words, image = snapshot['output'].strip().rsplit('\n', 1)
+    assert snapshot.get('exit_code', 0) == 0 and 'References' in words
+    assert Path(image).read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
+    verified = call('research', session=name, code='print(js("window.sends"))')
+    assert verified['output'].strip() == '1'
+    return name
+
+
+def verify_research_wait_and_stop(call, provider, name):
+    def observation():
+        return call('research', tool='terminal', command='sleep 180', timeout=200, require_success=False)
+
+    assert browser_session.BROWSER_SESSION_INACTIVITY_TIMEOUT == 120
+    owned = next(item for item in provider.sessions.values()
+                 if item.cache_key.split('@', 1)[0] == 'bu-named-' + name)
+    target = next(iter(owned.owned))
+    window = owned.wire.call('Browser.getWindowForTarget', {'targetId': target})['windowId']
+    started = time.monotonic()
+    for _ in range(10):
+        result = observation()
+        assert result['status'] == 'running' and result['session'] == name, result
+        assert result['data']['stage'] == 'awaiting_response', result
+    assert time.monotonic() - started > 120
+    assert owned.wire.call('Browser.getWindowForTarget', {'targetId': target})['windowId'] == window
+    assert call('research', session=name, code='print(js("window.sends"))')['output'].strip() == '1'
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        future = pool.submit(observation)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            with provider.lock:
+                if provider.profile_choices[provider.profile_routes[name]].active:
+                    break
+            time.sleep(.02)
+        else:
+            raise AssertionError('The next research observation did not start.')
+        invoke_hook('agent_loop_stopped', session_key='apps-fixture-research', platform='cli',
+                    reason='user_stop', invalidation_reason='session_interrupt')
+        assert future.result(timeout=5)['status'] == 'failed'
+    assert name not in provider.owners
+    assert owned.cleanup_complete and not owned.owned
+
+
+def verify(*, research_only=False):
     source = Path(__file__).resolve().parents[1]
     server = ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -224,6 +309,12 @@ def verify():
         packages = home / 'apps'
         directory = package(packages, 'fixture')
         (directory / 'SKILL.md').write_text('Local fixture guide')
+        local_gemini = packages / 'gemini'
+        shutil.copytree(source / 'site_apps/gemini', local_gemini,
+                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        for name in ('app.py', 'fallback.js'):
+            path = local_gemini / name
+            path.write_text(path.read_text().replace('https://gemini.google.com', url))
         (home / 'config.yaml').write_text('''browser:
   cloud_provider: original-chrome-default
   auto_local_for_private_urls: false
@@ -236,14 +327,14 @@ plugins:
       granted_capabilities: [tools.override]
       settings:
         apps_directory: ''' + str(packages) + '\n')
-        turns = {task: uuid.uuid4().hex for task in ('parent', 'child', 'channel')}
+        turns = {task: uuid.uuid4().hex for task in ('parent', 'child', 'channel', 'research')}
         with set_hermes_home_override(home):
             manager = get_plugin_manager()
             native_entry = registry.get_entry('browser_exec')
             manager._load_plugin(parse_manifest_file(source / 'plugin.yaml', source, 'user', ''))
             provider = get_provider('original-chrome-default')
 
-            def call(task, tool='browser_exec', platform='cli', **args):
+            def call(task, tool='browser_exec', platform='cli', *, require_success=True, **args):
                 if tool == 'browser_exec' and 'code' not in args:
                     session = args.pop('session', 'default')
                     args = {'site_control': json.dumps(args), 'session': session}
@@ -254,7 +345,8 @@ plugins:
                         value = handle_function_call(tool, args, task_id=task, session_id=task + '-chat',
                                                     turn_id=turns[task], tool_call_id=uuid.uuid4().hex)
                         result = json.loads(value) if isinstance(value, str) else value
-                        assert result.get('success'), result
+                        if require_success:
+                            assert result.get('success'), result
                         return result
                     finally:
                         clear_session_vars(tokens)
@@ -278,10 +370,18 @@ plugins:
                 assert call('parent', action='describe', app='fixture')['guide'] == 'Local fixture guide'
                 assert not provider.sessions and not provider.owners
                 report['discovery_and_guide_without_browser'] = True
+                research_session = verify_research_fallback(call)
+                report['unverified_research_rejects_native_resend'] = True
+                if research_only:
+                    verify_research_wait_and_stop(call, provider, research_session)
+                    report['terminal_wait_paces_owned_research_and_official_stop_cancels'] = True
+                    return report
+                invoke_hook('agent_loop_stopped', session_key='apps-fixture-research', platform='cli',
+                            reason='user_stop', invalidation_reason='session_interrupt')
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     futures = [pool.submit(run, task, initialize=True,
                                            platform='telegram' if task == 'channel' else 'cli')
-                               for task in turns]
+                               for task in ('parent', 'child', 'channel')]
                     first = [future.result() for future in futures]
                 assert len({value['session'] for value in first}) == 3
                 report['native_parent_child_channel_identities'] = True
@@ -432,4 +532,4 @@ plugins:
 
 
 if __name__ == '__main__':
-    print(json.dumps(verify(), indent=2))
+    print(json.dumps(verify(research_only='--research-only' in sys.argv), indent=2))
