@@ -1,6 +1,6 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 27, 21 November 2026.
+Revisi PRD 28, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
@@ -200,6 +200,24 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      situs, hasil yang diterima pengguna, dan penutupan jendela tugas. Jika
      terhenti, catat operasi terakhir beserta hasilnya agar patch berikutnya
      memperbaiki penyebab yang teramati.
+     Uji Telegram dengan Gemini 0.4.6 memakai sesi Hermes yang sudah ada.
+     Satu topik dikirim di profil uji. Kontrol konfirmasi mengembalikan
+     `obscured`; Hermes memakai DOM di jendela yang sama dan Gemini
+     memulai riset. Pembaca tetap mengembalikan `running`. Saat Hermes
+     menunggu 120 detik dalam satu skrip browser, pembersih idle menutup
+     jendela sebelum laporan siap. Hermes membuka kembali percakapan yang
+     sama tanpa mengirim ulang topik. Penutupan terulang saat menunggu.
+     Pada pemeriksaan terakhir Gemini masih menampilkan “Meriset 12 situs”
+     dan Hermes belum menyampaikan laporan. Kriteria satu jendela gagal.
+   - [x] Untuk pola tunggu yang terlihat di log, hook `pre_tool_call` plugin
+     mengalihkan skrip yang hanya tidur lalu mencetak progres ke
+     `read_result` atau `observe` pada sesi tugas yang masih aktif.
+     Pemeriksaan memakai jeda observasi yang sudah ada. Skrip klik,
+     navigasi dan inspeksi biasa tetap mengikuti jalur native.
+     Uji Chrome asli dengan batas idle 120 detik melampaui batas itu tanpa
+     mengganti jendela atau dokumen. Satu submit menghasilkan satu hasil.
+     Uji Stop dan cleanup menjaga jendela lain. Seluruh 438 tes otomatis lulus.
+     Pemasangan patch host dan pengulangan di sesi Telegram baru tetap terbuka.
    - Temuan Telegram 0.11.2 di percakapan yang sudah ada: setelah satu
      submit Deep Research, 32 panggilan `observe` tanpa selector membaca
      teks “Membuat rencana riset” pada sesi yang sama hingga pengguna
@@ -220,12 +238,13 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      Gemini Web asli. Plugin mencocokkan unduhan Chrome dengan percakapan
      serta waktu klik, lalu memeriksa ukuran, stream dan hasil dekode.
      Seluruh byte salinan hasil uji cocok dengan MP4 yang sudah ada.
-     Penerimaan dan pemutaran lampiran di Telegram masih perlu dibuktikan.
+     Pengguna mengonfirmasi lampiran muncul di Telegram. Pemutaran di HP
+     masih belum terkonfirmasi.
    - [x] Paket Gemini 0.4.4 membedakan pembuatan rencana, tombol mulai
      riset, riset berjalan, tombol buka laporan dan teks hasil. Di halaman
      uji Chrome asli, satu klik memulai riset dan laporan terbaca di dokumen
      yang sama. Pada percakapan Gemini asli yang diperiksa, hasil akhirnya
-     berupa penolakan. Penyelesaian riset baru di Gemini asli masih terbuka.
+     berupa penolakan. Uji lintas profil pada 0.11.4 tercatat di bawah.
    - Pada audit 0.11.3, teks pesan lanjutan yang dikirim Hermes cocok persis
      dengan pesan manual berikutnya di percakapan Gemini yang sama. UI
      menampilkan tahap pembuatan rencana lalu penolakan pada giliran Hermes.
@@ -243,6 +262,19 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      Pembaca hasil menggunakan jawaban milik kiriman baru. Pada percakapan
      Gemini asli, dua pesan identik memiliki identitas giliran berbeda dan
      panel konfirmasi rencana berada pada giliran kedua.
+   - [x] Uji pembanding lewat CDP di profil Chrome lain menghasilkan laporan
+     Gemini asli. Satu kiriman topik menghasilkan rencana. Sesudah konfirmasi
+     “Mulai penelitian”, percakapan memuat dua jawaban dan laporan tampil di
+     panel dengan bagian sumber. Isi laporan diverifikasi lewat DOM. Pengujian
+     penerimaan laporan dari Hermes di Telegram tetap terbuka pada butir 3.
+   - [x] Perbaiki `read_result` Gemini ketika konfirmasi rencana membuka
+     giliran lanjutan. Pembaca menunggu setelah konfirmasi dan mengambil isi
+     laporan yang terkait dengan kartu aktif di giliran tersebut. Regresi
+     Chrome asli mencakup satu klik konfirmasi, status progres, kartu
+     serta laporan yang tidak terkait, dan laporan yang benar. Pembacaan
+     ulang laporan yang sudah ada di Gemini Web juga lulus, termasuk membuka
+     kembali panel dari kartunya dan menutup jendela uji. Verifikasi isi di
+     Telegram dan cleanup pada alur nyata tetap tercantum pada butir 3.
    - [x] Uji situs lokal di Chrome asli melalui Hermes: satu paket tanpa
      pembaca hasil melewati enam pemeriksaan tertunda. Pemeriksaan ketujuh
      membaca hasil pada dokumen dan jendela yang sama. Uji isolasi dan

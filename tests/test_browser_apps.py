@@ -59,6 +59,15 @@ class BrowserAppTests(unittest.TestCase):
         result = json.loads(self.host.handle(args, task_id=task, session_id=chat, turn_id=turn))
         return result
 
+    def dispatch_native(self, args, native, **owner):
+        identity = {key: value for key, value in owner.items() if key != 'task_id'}
+        with patch('hermes_cli.config.load_config_readonly', return_value=self.config):
+            prepared = self.host.prepare_call('browser_exec', args, owner['task_id'],
+                                              session_key='route-' + owner['session_id'].removeprefix('chat-'),
+                                              **identity)
+            self.assertEqual(prepared['action'], 'modify', prepared)
+            return self.host.execute({**args, **prepared['args']}, native, **owner)
+
     def test_records_only_ui_details_for_the_owned_extension_session(self):
         self.package()
         self.package('other')
@@ -265,6 +274,66 @@ class BrowserAppTests(unittest.TestCase):
         self.assertEqual(inspect['next_control'], {'app': 'fixture', 'action': 'observe'})
         self.assertEqual(inspect['session'], session)
 
+    def test_native_wait_checks_the_current_site_result_until_complete(self):
+        from agent.tool_guardrails import ToolCallGuardrailConfig, ToolCallGuardrailController
+
+        self.package(operations={'click': {}, 'read_result': {}}, source="""def run(context, operation, params):
+    if operation == 'click':
+        return {'status': 'running'}
+    value = context.browser_exec('print(page_info())')['output']
+    return {'status': 'running' if value == 'working' else 'ok', 'data': value}
+""")
+        with patch('browser_apps.monotonic', return_value=1000):
+            started = self.invoke(operation='click')
+        self.assertEqual(started['next_control'], {'app': 'fixture', 'operation': 'read_result'})
+        native = Mock()
+        self.dispatch.side_effect = [json.dumps({'success': True, 'output': result})
+                                     for result in ['working'] * 8 + ['Finished report']]
+        session = started['session']
+        code = "import time; time.sleep(120); print(js('document.body.innerText').split('Research')[-1][:6000])"
+        args = {'session': session, 'code': code}
+        owner = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn'}
+        guard = ToolCallGuardrailController(ToolCallGuardrailConfig(hard_stop_enabled=True))
+        for index in range(9):
+            with patch('browser_apps.monotonic', return_value=1000 + (index + 1) * 15):
+                self.assertEqual(guard.before_call('browser_exec', args).action, 'allow')
+                response = self.dispatch_native(args, native, **owner)
+                self.assertNotIn(guard.after_call('browser_exec', args, response).action, {'block', 'halt'})
+                self.assertEqual(json.loads(response)['session'], session)
+                self.assertEqual(json.loads(response)['status'], 'running' if index < 8 else 'ok')
+        self.assertEqual(json.loads(response)['data'], 'Finished report')
+        self.assertFalse(self.host.running_work('A', 'chat-A', 'turn'))
+        native.assert_not_called()
+        self.assertEqual(self.dispatch.call_count, 9)
+        self.assertTrue(all(call.args[1]['session'] == session for call in self.dispatch.call_args_list))
+
+    def test_native_wait_only_redirects_reads_for_the_pending_owner(self):
+        self.package()
+        with patch('browser_apps.monotonic', return_value=1000):
+            session = self.invoke(params={'status': 'running'})['session']
+        owner = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn'}
+        native = Mock(return_value=json.dumps({'success': True}))
+        wait = 'from time import sleep\nsleep(120)\nprint(dom())'
+        for code, caller in [
+            (wait, {**owner, 'task_id': 'B'}),
+            (wait, {**owner, 'turn_id': 'previous'}),
+            (wait + "\nclick('text=Next')", owner),
+            ("import time; time.sleep(120); print(js('location.reload()'))", owner),
+            (wait.replace('120', '1'), owner),
+        ]:
+            with self.subTest(code=code, caller=caller):
+                args = {'session': session, 'code': code}
+                self.dispatch_native(args, native, **caller)
+                self.assertTrue(native.call_args.args[0]['code'].endswith(code))
+        native.reset_mock()
+        self.dispatch.return_value = json.dumps({'success': True, 'output': json.dumps({
+            'visible': 'Still researching', 'result': None})})
+        with patch('browser_apps.monotonic', return_value=1020):
+            result = json.loads(self.dispatch_native({'session': session, 'code': wait}, native, **owner))
+        self.assertEqual((result['status'], result['page']['visible']), ('running', 'Still researching'))
+        self.assertEqual(result['session'], session)
+        native.assert_not_called()
+
     def test_stop_during_dom_observation_preserves_peer_and_prevents_page_read(self):
         self.package()
         session = self.invoke(params={'status': 'running'})['session']
@@ -272,9 +341,12 @@ class BrowserAppTests(unittest.TestCase):
         args = {'action': 'observe', 'app': 'fixture', 'session': session}
         wrong_turn = json.loads(self.host.handle(args, task_id='A', session_id='chat-A', turn_id='old'))
         self.assertFalse(wrong_turn['success'])
+        native = Mock()
+        wait = {'session': session, 'code': 'import time; time.sleep(120); print(page_info())'}
         with patch('browser_apps.sleep', side_effect=lambda _: self.provider.stopped(session_key='route-A')):
-            result = json.loads(self.host.handle(args, task_id='A', session_id='chat-A', turn_id='turn'))
+            result = json.loads(self.dispatch_native(wait, native, task_id='A', session_id='chat-A', turn_id='turn'))
         self.assertFalse(result['success'])
+        native.assert_not_called()
         self.dispatch.assert_not_called()
         self.assertNotIn(session, self.provider.owners)
         self.assertIn(peer, self.provider.owners)

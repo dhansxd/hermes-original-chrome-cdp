@@ -33,9 +33,22 @@
         return {reason: researchActive() ? 'ready' : 'missing', document: performance.timeOrigin,
             chat_id: chatId, same_submission: !!current && (!current.chat || current.chat === chatId)};
     }
+    const labels = {
+        start_research: ['Start research', 'Mulai riset', 'Mulai penelitian'],
+        open_research_report: ['Open report', 'View report', 'Buka laporan', 'Lihat laporan'],
+    };
+    const unavailable = ':disabled, [aria-disabled="true"]';
+    const pending = (stage, control) => ({reason: 'running', chat_id: chatId, stage, control});
+    const clicked = Symbol.for('hermes.gemini.researchActions');
     let turn = all('model-response').at(-1);
+    const researchButtons = (control, response = turn) =>
+        [...response?.querySelectorAll('button, [role="button"]') || []]
+            .filter(node => visible(node) && labels[control].some(text => matchesLabel(node, text)));
+    const queryText = group =>
+        clean([...group?.querySelectorAll('user-query .query-text-line') || []].map(node => node.innerText).join('\n'));
     const readsResearch = kind === 'result' || kind === 'activate_research';
     const bound = researchState === 'submitted' || (researchState === 'selected' && !!current);
+    let planAccepted = false;
     if (readsResearch && bound) {
         if (!current || (current.chat && current.chat !== chatId)) return {reason: 'research_submission_unconfirmed'};
         const groups = [...document.querySelectorAll('.conversation-container[id]')].filter(g => g.querySelector('user-query'));
@@ -43,37 +56,57 @@
             const before = current.previous ? groups.findIndex(g => g.id === current.previous) : -1;
             if (current.previous && before < 0) return {reason: 'research_submission_unconfirmed'};
             const next = groups[before + 1];
-            const lines = [...next?.querySelectorAll('user-query .query-text-line') || []];
-            if (lines.length) {
-                if (clean(lines.map(n => n.innerText).join('\n')) !== current.prompt) return {reason: 'research_prompt_mismatch'};
+            const text = queryText(next);
+            if (text) {
+                if (text !== current.prompt) return {reason: 'research_prompt_mismatch'};
                 current.id = next.id;
                 current.chat = chatId;
                 delete current.prompt;
             }
         }
-        const group = groups.find(g => g.id === current.id);
-        if (current.id && !group) return {reason: 'research_submission_unconfirmed'};
-        if (group && !current.chat) current.chat = chatId;
-        turn = group?.querySelector('model-response');
+        const topicIndex = groups.findIndex(g => g.id === current.id);
+        if (current.id && topicIndex < 0) return {reason: 'research_submission_unconfirmed'};
+        turn = groups[topicIndex]?.querySelector('model-response');
+        if (!current.confirmation) {
+            const start = researchButtons('start_research');
+            const submitted = current.started || (start.length === 1 && start[0].matches(unavailable));
+            // Gemini inserts the confirmation as the next user turn after the plan.
+            const next = groups[topicIndex + 1];
+            if (submitted && next && labels.start_research.includes(queryText(next))) {
+                current.confirmation = next.id;
+            }
+        }
+        planAccepted = Boolean(current.started || current.confirmation);
+        if (planAccepted && name === 'start_research' && kind === 'activate_research') {
+            return {reason: 'already_clicked'};
+        }
+        if (current.confirmation) {
+            turn = groups.find(group => group.id === current.confirmation)?.querySelector('model-response');
+        }
         if (!turn) {
             if (!current.id && Date.now() - current.at > 15000) return {reason: 'research_submission_unconfirmed'};
-            return {reason: 'running', stage: 'awaiting_response', chat_id: chatId};
+            return pending(current.confirmation ? 'research_in_progress' : 'awaiting_response');
         }
     }
-    const labels = {
-        start_research: ['Start research', 'Mulai riset', 'Mulai penelitian'],
-        open_research_report: ['Open report', 'View report', 'Buka laporan', 'Lihat laporan'],
-    };
-    const researchButtons = control => [...turn?.querySelectorAll('button, [role="button"]') || []]
-        .filter(node => visible(node) && labels[control].some(text => matchesLabel(node, text)));
-    const clicked = Symbol.for('hermes.gemini.researchActions');
+    const cardSelector = 'immersive-entry-chip gem-processing-card';
+    const reportCards = current?.confirmation && bound
+        ? [...turn?.querySelectorAll(cardSelector + '.completed') || []].filter(visible) : [];
+    const reportButtons = [...researchButtons('open_research_report'), ...reportCards];
 
     if (kind === 'result') {
-        const pending = (stage, control) => ({reason: 'running', chat_id: chatId, stage, control});
-        const reportButtons = researchButtons('open_research_report');
         const panelId = reportButtons.length === 1 && reportButtons[0].getAttribute('aria-controls');
         const panel = panelId && document.getElementById(panelId);
-        const report = visible(panel) && panel.querySelector('article, [role="document"]');
+        let report = visible(panel) && panel.querySelector('article, [role="document"]');
+        const selected = all(cardSelector + '.selected');
+        const activeCard = reportButtons.length === 1 && selected.length === 1 && selected[0] === reportCards[0];
+        if (activeCard) {
+            // The report panel is outside the conversation turn and is shared by its cards.
+            const panels = all('immersive-panel');
+            const title = clean(selected[0].querySelector('.card-title')?.innerText);
+            if (title && panels.length === 1 && title === clean(panels[0].querySelector('h2')?.innerText)) {
+                report = panels[0].querySelector('#extended-response-markdown-content');
+            }
+        }
         const reportText = visible(report) && report.innerText.trim();
         if (reportText) {
             if (bound && current) current.finished = true;
@@ -82,7 +115,9 @@
         for (const control of ['open_research_report', 'start_research']) {
             const buttons = control === 'open_research_report' ? reportButtons : researchButtons(control);
             if (buttons.length > 1) return {reason: 'ambiguous'};
-            if (buttons.length === 1 && !buttons[0].matches(':disabled, [aria-disabled="true"]')) {
+            if (buttons.length === 1 && !buttons[0].matches(unavailable)) {
+                if (control === 'start_research' && planAccepted) continue;
+                if (control === 'open_research_report' && activeCard) return pending('opening_report');
                 if (turn[clicked]?.has(control)) {
                     return control === 'open_research_report' ? {reason: 'inspect_open_report'} : pending('research_in_progress');
                 }
@@ -99,6 +134,8 @@
             turn?.getAttribute('aria-busy') === 'true') {
             return {reason: 'running', chat_id: chatId};
         }
+        if (planAccepted) return pending('research_in_progress');
+        if (visible(turn?.querySelector('deep-research-confirmation-widget'))) return {reason: 'research_plan_unconfirmed'};
         const body = turn?.querySelector('message-content, [data-test-id="response-content"]');
         const text = visible(body) ? body.innerText.trim() : '';
         if (text && bound && current) current.finished = true;
@@ -108,8 +145,11 @@
 
     let nodes;
     if (Object.hasOwn(labels, name)) {
-        nodes = researchButtons(name);
+        nodes = name === 'open_research_report' ? reportButtons : researchButtons(name);
         if (turn?.[clicked]?.has(name)) return {reason: 'already_clicked'};
+        if (name === 'open_research_report' && nodes.length === 1 && nodes[0].matches(cardSelector + '.selected')) {
+            return {reason: 'already_clicked'};
+        }
     } else if (kind === 'model') {
         nodes = all('gem-menu-item[data-mode-id], [role="menu"] [role="menuitemradio"], ' +
                     '[role="listbox"] [role="option"]').filter((node) => matchesLabel(node, label));
@@ -122,13 +162,18 @@
     if (!nodes.length) return {reason: 'missing'};
     if (nodes.length !== 1) return {reason: 'ambiguous'};
     const node = nodes[0];
-    if (node.closest(':disabled, [aria-disabled="true"]')) return {reason: 'disabled'};
-    const box = node.getBoundingClientRect();
+    if (node.closest(unavailable)) return {reason: 'disabled'};
+    let box = node.getBoundingClientRect();
+    if (kind === 'activate_research' && (box.top + box.height / 2 < 0 || box.top + box.height / 2 >= innerHeight)) {
+        node.scrollIntoView({block: 'center', behavior: 'instant'});
+        box = node.getBoundingClientRect();
+    }
     const x = box.left + box.width / 2;
     const y = box.top + box.height / 2;
     if (!node.contains(document.elementFromPoint(x, y))) return {reason: 'obscured'};
     if (kind === 'activate_research' && Object.hasOwn(labels, name)) {
         (turn[clicked] ||= new Set()).add(name);
+        if (bound && name === 'start_research') current.started = true;
         node.click();
         return {reason: 'clicked'};
     }

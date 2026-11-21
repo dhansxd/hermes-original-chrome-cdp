@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -19,6 +20,7 @@ from hermes_constants import set_hermes_home_override
 from hermes_cli.plugins import get_plugin_manager, invoke_hook
 from hermes_cli.plugins_manifest import parse_manifest_file
 from tools.browser_session_lifecycle import cleanup_profile_browsers
+from tools import browser_session
 from tools.registry import registry
 from model_tools import handle_function_call
 import tools.browser_use_cli
@@ -44,6 +46,8 @@ def run(context, operation, params):
         code += f"goto_url({params['url']!r})\n"
         expression = 'window.fixtureMarker=' + json.dumps(params['marker'])
         code += f"js({expression!r})\n"
+    if params.get('status') == 'running':
+        code += 'js("window.fixtureSubmissions=(window.fixtureSubmissions || 0)+1")\n'
     code += 'print(js("JSON.stringify({marker:window.fixtureMarker,origin:performance.timeOrigin})"))'
     native = context.browser_exec(code)
     context.checkpoint({'marker': params.get('marker'), 'phase': params.get('status', 'ok')})
@@ -111,6 +115,52 @@ js("""document.querySelector('#new p').textContent='Same question';
       document.querySelector('#new').insertAdjacentHTML('beforeend','<model-response><message-content>New reply</message-content></model-response>');
       document.body.insertAdjacentHTML('beforeend','<div class="conversation-container" id="later"><user-query>Another task</user-query><model-response><message-content>Unrelated answer</message-content></model-response></div>')""")
 assert read('result', state='submitted')['text'] == 'New reply'
+js("""document.querySelector('#later').remove();
+      document.querySelector('#new').insertAdjacentHTML('afterend', `
+      <div class="conversation-container" id="topic">
+        <user-query><p class="query-text-line">Research topic</p></user-query>
+        <model-response><message-content>Research plan only</message-content>
+          <deep-research-confirmation-widget><button>Mulai penelitian</button></deep-research-confirmation-widget>
+        </model-response>
+      </div>`);
+      const start = document.querySelector('#topic button');
+      start.onclick = () => {window.starts++; start.disabled = true};
+      window[Symbol.for('hermes.gemini.researchSubmission')] = {chat: 'c_fixture', id: 'topic'};""")
+assert read('result', state='submitted')['stage'] == 'plan_ready'
+assert read('activate_research', 'start_research', 'submitted')['reason'] == 'clicked'
+assert read('activate_research', 'start_research', 'submitted')['reason'] == 'already_clicked'
+assert js('window.starts') == 2
+assert read('result', state='submitted')['stage'] == 'research_in_progress'
+js("""document.querySelector('#topic').insertAdjacentHTML('afterend', `
+      <div class="conversation-container" id="other">
+        <user-query><p class="query-text-line">Other topic</p></user-query>
+        <model-response><immersive-entry-chip><gem-processing-card class="completed selected">
+          <span class="card-title">Other topic</span>
+        </gem-processing-card></immersive-entry-chip></model-response>
+      </div>`);
+      document.body.insertAdjacentHTML('beforeend',
+        '<immersive-panel><h2>Other topic</h2><div id="extended-response-markdown-content">Unrelated report</div></immersive-panel>');""")
+assert read('result', state='submitted')['stage'] == 'research_in_progress'
+js("""document.querySelector('#other').insertAdjacentHTML('beforebegin', `
+      <div class="conversation-container" id="confirm">
+        <user-query><p class="query-text-line">Mulai penelitian</p></user-query>
+        <model-response><message-content>Waiting for the research report</message-content>
+          <immersive-entry-chip><gem-processing-card><span class="card-title">Research topic</span></gem-processing-card></immersive-entry-chip>
+        </model-response>
+      </div>`);""")
+assert read('result', state='submitted')['stage'] == 'research_in_progress'
+js("""const card = document.querySelector('#confirm gem-processing-card');
+      card.classList.add('completed');
+      card.onclick = () => {
+        document.querySelector('#other gem-processing-card').classList.remove('selected');
+        document.querySelector('immersive-panel h2').textContent = 'Research topic';
+        document.querySelector('#extended-response-markdown-content').textContent = 'Research report body';
+        card.classList.add('selected');
+      };""")
+assert read('result', state='submitted')['stage'] == 'report_available'
+assert read('activate_research', 'open_research_report', 'submitted')['reason'] == 'clicked'
+assert read('result', state='submitted')['text'] == 'Research report body'
+assert read('activate_research', 'open_research_report', 'submitted')['reason'] == 'already_clicked'
 '''
     return call('parent', session=session, code=code)
 
@@ -130,7 +180,7 @@ def verify():
   cloud_provider: original-chrome-default
   auto_local_for_private_urls: false
   allow_private_urls: true
-  inactivity_timeout: 600
+  inactivity_timeout: 120
 plugins:
   enabled: [original-chrome-default]
   entries:
@@ -196,19 +246,35 @@ plugins:
                                  code='assert js("window.fixtureMarker")=="parent-fixture"')
                 assert inspected['session'] == repeat['session']
                 report['targeted_native_inspection_reuses_app_session'] = True
-                # The fixture has no mapped result reader. Hold the same page pending for six reads.
+                # The fixture has no mapped reader. Wait past the production idle threshold.
+                assert browser_session.BROWSER_SESSION_INACTIVITY_TIMEOUT == 120
+                started = time.monotonic()
                 pending = run('parent', status='running')
                 assert pending['session'] == repeat['session']
-                for index in range(7):
-                    if index == 6:
+                driver = next(item for item in provider.sessions.values()
+                              if item.cache_key.split('@', 1)[0] == 'bu-named-' + repeat['session'])
+                target_id, = [item['targetId'] for item in driver._inventory() if item['type'] == 'page']
+                target = {'targetId': target_id}
+                window = driver.wire.call('Browser.getWindowForTarget', target)['windowId']
+                progress = call('parent', session='same', action='observe', app='fixture',
+                                params={'result_selector': '#receipt'})
+                assert progress['status'] == 'running'
+                wait = "import time; time.sleep(120); print(js('document.body.innerText')[-24000:])"
+                for index in range(9):
+                    if index in (2, 6):
+                        assert run('child')['document'] == first[1]['document']
+                        assert run('channel', platform='telegram')['document'] == first[2]['document']
+                    if index == 8:
                         call('parent', session='same', code="js(\"document.getElementById('receipt').hidden = false\")")
-                    progress = call('parent', session='same', action='observe', app='fixture',
-                                    params={'result_selector': '#receipt'} if index == 0 else {})
+                    progress = call('parent', session='same', code=wait, timeout_s=40)
                     assert progress['session'] == repeat['session']
-                    assert progress['status'] == ('ok' if index == 6 else 'running'), progress
+                    assert progress['status'] == ('ok' if index == 8 else 'running'), progress
                 assert progress['page']['result'] == 'Fixture ready'
+                assert time.monotonic() - started > 120
+                assert driver.wire.call('Browser.getWindowForTarget', target)['windowId'] == window
                 assert run('parent')['document'] == first[0]['document']
-                report['seven_paced_dom_observations_on_same_owned_document'] = True
+                call('parent', session='same', code='assert js("window.fixtureSubmissions") == 1')
+                report['paced_waits_past_idle_threshold_in_one_window_with_one_submission'] = True
                 ordinary = call('parent', tool='browser_exec', session='independent-task',
                                 code=f'goto_url({url!r}); js("window.ordinaryMarker=42")')
                 assert ordinary['session'] != repeat['session']

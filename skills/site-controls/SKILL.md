@@ -32,9 +32,11 @@ Gemini records a labelled, unmapped button clicked through native fallback in
 its owned tab. Explicitly report controls you identify visually or that have
 no stable label. A missing selector alone does not confirm a finding.
 
-After submitting once, follow the result control in that session. If a
-running task has no usable mapped reader, use the returned `observe` control
-to read the live page. Identify the finished result of this submission using
+After submitting once, follow `next_control` in that session while the site
+reports `running`. The plugin spaces out these progress checks. A long sleep
+inside a browser script can let Hermes close the owned window as idle.
+If a running task has no usable mapped reader, use the returned `observe`
+control to read the live page. Identify the finished result of this submission using
 the relevant DOM or screenshot. Supply its unique CSS selector in
 `params.result_selector` on the same `observe` control. The plugin reuses it
 on subsequent checks. For an existing job ID, follow its package's job check.

@@ -52,6 +52,53 @@ def has_site_request(args):
     return control is not None and (bool(control) or not args.get('code'))
 
 
+def reads_site_progress(node):
+    if isinstance(node, ast.Subscript):
+        slice_nodes = (ast.Slice, ast.Constant, ast.UnaryOp, ast.UAdd, ast.USub)
+        return all(isinstance(part, slice_nodes) for part in ast.walk(node.slice)) and reads_site_progress(node.value)
+    if not isinstance(node, ast.Call) or node.keywords:
+        return False
+    if isinstance(node.func, ast.Attribute):
+        return (node.func.attr in {'split', 'strip'}
+                and all(isinstance(arg, ast.Constant) for arg in node.args)
+                and reads_site_progress(node.func.value))
+    if not isinstance(node.func, ast.Name):
+        return False
+    if node.func.id in {'dom', 'page_info'}:
+        return not node.args
+    return (node.func.id == 'js' and len(node.args) == 1 and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value in ('document.body.innerText', 'document.body.textContent'))
+
+
+def waits_for_site_progress(tree):
+    """Recognize the plain sleep-and-read scripts emitted for an already running site task."""
+    if len(tree.body) < 3:
+        return False
+    source, wait, *reads = tree.body
+    if isinstance(source, ast.Import) and [(name.name, name.asname) for name in source.names] == [('time', None)]:
+        sleep_name = 'time.sleep'
+    elif (isinstance(source, ast.ImportFrom) and source.level == 0 and source.module == 'time'
+          and [(name.name, name.asname) for name in source.names] == [('sleep', None)]):
+        sleep_name = 'sleep'
+    else:
+        return False
+    call = wait.value if isinstance(wait, ast.Expr) else None
+    if (not isinstance(call, ast.Call) or ast.unparse(call.func) != sleep_name or call.keywords
+            or len(call.args) != 1 or not isinstance(call.args[0], ast.Constant)
+            or type(call.args[0].value) not in (int, float) or call.args[0].value < OBSERVATION_INTERVAL):
+        return False
+    for read in reads:
+        call = read.value if isinstance(read, ast.Expr) else None
+        if (not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name) or call.func.id != 'print'
+                or call.keywords or len(call.args) != 1 or not reads_site_progress(call.args[0])):
+            return False
+    return True
+
+
+def progress_control(app, can_read_result):
+    return {'app': app, 'operation': 'read_result'} if can_read_result else {'app': app, 'action': 'observe'}
+
+
 def site_request(args):
     command = args['site_control']
     if isinstance(command, str):
@@ -359,7 +406,21 @@ class AppHost:
 
     def prepare_call(self, tool_name, args, task_id, **context):
         if tool_name != 'browser_exec' or not has_site_request(args):
-            return self.provider.prepare_call(tool_name, args, task_id, **context)
+            prepared = self.provider.prepare_call(tool_name, args, task_id, **context)
+            if tool_name != 'browser_exec' or not prepared or prepared['action'] != 'modify' or not args.get('code'):
+                return prepared
+            session = prepared['args']['session']
+            work = self.running_work(task_id, context.get('session_id'), context.get('turn_id')).get(session)
+            if work:
+                try:
+                    wait = waits_for_site_progress(ast.parse(args['code']))
+                except (TypeError, SyntaxError):
+                    wait = False
+                if wait:
+                    app, _, can_read_result = work
+                    # Classify the caller's original script, before the provider adds its input guard.
+                    prepared['args'].update(code='', site_control=json.dumps(progress_control(app, can_read_result)))
+            return prepared
         config = context.get('config')
         if config is None:
             from hermes_cli.config import load_config_readonly
@@ -570,7 +631,7 @@ class AppHost:
             return response
         session, (app, _, can_read_result) = next(iter(work.items()))
         offered = {(tool.get('function') or {}).get('name') for tool in request.get('tools') or []}
-        control = {'app': app, 'operation': 'read_result'} if can_read_result else {'action': 'observe', 'app': app}
+        control = progress_control(app, can_read_result)
         arguments = {'site_control': json.dumps(control), 'session': session}
         tool_name = 'browser_exec'
         if tool_name not in offered:
@@ -641,10 +702,7 @@ class AppHost:
                                 'message': 'Continue checking this existing work in this turn. Use the same '
                                            'session and job, without submitting again. Verify the outcome '
                                            'and finish any requested delivery before the final response.'}
-                            if active[2]:
-                                result['running_work']['next_control'] = {'app': identifier, 'operation': 'read_result'}
-                            else:
-                                result['running_work']['next_control'] = {'app': identifier, 'action': 'observe'}
+                            result['running_work']['next_control'] = progress_control(identifier, active[2])
                 else:
                     operation = args.get('operation')
                     reader = metadata['operations'].get('read_result')
@@ -716,8 +774,8 @@ class AppHost:
                             choice.can_read_result = can_read and not rolling
                             choice.last_observation = now
                             result['running_seconds'] = int(now - choice.running_since)
-                            if not choice.can_read_result and not choice.running[1]:
-                                result['next_control'] = {'app': identifier, 'action': 'observe'}
+                            if not choice.running[1]:
+                                result.setdefault('next_control', progress_control(identifier, choice.can_read_result))
                         elif choice.running is not None:
                             active_operation, active_job = choice.running
                             if active_job:
