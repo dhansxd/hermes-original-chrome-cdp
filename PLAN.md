@@ -1,6 +1,6 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 24, 21 November 2026.
+Revisi PRD 25, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
@@ -189,19 +189,21 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
    lama. Tugas yang masih berjalan harus tetap dilanjutkan. Verifikasi hasil
    dan setiap unduhan atau pengiriman yang diminta sebelum jawaban akhir.
    Setelah itu ukur cleanup jendela milik tugas dan pastikan jendela lain utuh.
+   - [ ] Perbaiki cabang `continue_running` yang memilih `describe` sebagai
+     pemeriksaan progres saat `read_result` tidak tersedia. Panduan paket
+     menjelaskan cara kerja kontrol. Progres harus diamati pada tugas yang
+     sudah dikirim, melalui operasi status yang sesuai atau DOM halaman yang
+     sama, dengan screenshot bila diperlukan. Pertahankan sesi dan identitas
+     tugas agar pengamatan tidak mengirim ulang permintaan awal.
    - [ ] Periksa satu tugas nyata dari sesi Telegram baru di versi yang diuji.
      Cocokkan panggilan setelah status `running` dengan perubahan status di
      situs, hasil yang diterima pengguna, dan penutupan jendela tugas. Jika
      terhenti, catat operasi terakhir beserta hasilnya agar patch berikutnya
      memperbaiki penyebab yang teramati.
-   - [ ] Uji juga situs yang sah menampilkan status kerja yang sama untuk waktu
-     lama. Usulan implementasinya adalah menunggu perubahan hasil di halaman
-     atau job asal dengan jeda yang dapat dihentikan. Bila satu masa tunggu berakhir, lanjutkan
-     pengamatan pada sesi yang sama. Periksa jalur yang masih memilih
-     `describe` ketika `read_result` tidak tersedia dan gunakan pengamatan
-     yang sesuai situs atau panduan kelanjutan job. Uji lebih dari lima
-     pengamatan dengan satu submit, termasuk Stop saat menunggu. Verifikasi
-     status dari situs, hasil akhir, dan cleanup tanpa mengubah pengaman Hermes.
+   - [ ] Uji situs yang menampilkan status kerja yang sama untuk waktu lama,
+     termasuk saat paket tidak menyediakan pembaca hasil. Pastikan lebih dari
+     lima pengamatan tetap memantau satu permintaan di jendela yang sama.
+     Verifikasi hasil akhir dan cleanup, serta Stop pada pengujian terpisah.
    - Telegram 0.11.0 berhasil memilih Deep Research dan menekan Send. Setelah
      satu `read_result` berstatus `running`, middleware menghasilkan lima
      panggilan `describe` berturut-turut. Hermes menghentikan giliran karena
