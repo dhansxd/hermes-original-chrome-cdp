@@ -1,6 +1,6 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 19, 21 November 2026.
+Revisi PRD 20, 21 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
@@ -12,6 +12,15 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
 
 ### Kontrak browser dan ekstensi
 
+- Pasang, aktifkan, nonaktifkan, dan hapus plugin melalui pengelola plugin resmi
+  Hermes (`hermes plugins install`, `enable`, `disable`, dan `remove`).
+  Saat plugin diaktifkan, `browser_exec` otomatis memakai Chrome asli melalui
+  CDP. Saat plugin dinonaktifkan atau langsung dihapus dalam keadaan aktif,
+  Hermes otomatis kembali ke pilihan browser sebelum aktivasi. Jika sebelumnya
+  memakai pengaturan bawaan, pulihkan pengaturan bawaan itu. Jika pengguna
+  memilih provider tertentu, pulihkan pilihannya. Mengaktifkan kembali plugin
+  harus langsung memilih Chrome asli lagi. Pengguna cukup menjalankan tindakan
+  plugin yang sesuai tanpa memilih ulang browser di `hermes tools`.
 - Plugin sudah mendaftarkan Chrome asli sebagai provider browser Hermes.
   Pertahankan perilaku `browser_exec`, termasuk navigasi, pembacaan DOM,
   screenshot dan penggunaan jendela tugas. Tambahan untuk Gemini, Google Flow
@@ -88,6 +97,12 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
    Inventori Chrome asli menunjukkan satu jendela tugas. Akhir giliran menutup
    jendela itu dan jendela pembanding tetap dapat dipakai.
 2. [ ] Selesaikan perombakan dan validasi distribusi publik.
+   - [ ] Terapkan dan verifikasi perpindahan browser otomatis sesuai kontrak.
+     Versi 0.11.1 masih memerlukan pemilihan browser secara manual sesuai
+     [tutorial](docs/TUTORIAL.md#switch-back-disable-and-uninstall). Uji dari
+     pengaturan bawaan dan dari provider pilihan pengguna. Periksa browser
+     yang benar-benar dipakai setelah enable, disable, enable ulang, dan
+     remove langsung saat aktif.
    - [x] Hapus registrasi dan deklarasi `browser_app`. Pemanggilan nama lama
      pada registry profil uji menghasilkan `Unknown tool`. Instalasi paket,
      pengelolaan status, panduan, dan operasi situs tetap tersedia.

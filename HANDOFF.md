@@ -83,8 +83,10 @@ agen dan extension berjalan dengan izin proses Hermes.
   Integrasi memakai kontrak plugin Hermes yang didukung. Core Hermes dan source
   dependency yang dikelola Hermes dipertahankan.
 - Plugin mendukung install, enable, disable, update dan remove melalui pengelola
-  resmi Hermes. Pemilihan browser bawaan dilakukan melalui picker Hermes ketika
-  pengguna beralih provider, sesuai panduan lifecycle di README.
+  resmi Hermes. Pada versi 0.11.1 pengguna masih memilih browser melalui picker
+  Hermes. [Kontrak aktif](PLAN.md#kontrak-browser-dan-ekstensi) mewajibkan
+  enable memilih Chrome asli serta disable atau remove memulihkan pilihan
+  browser sebelumnya secara otomatis. Pekerjaan ini masih terbuka di PLAN.
 - Pada baseline sebelum reset, `browser_exec` adalah tool browser native Hermes,
   `chrome_profiles` mengatur profil, dan `browser_app` memuat paket situs.
   [Kontrak aktif](PLAN.md#kontrak-browser-dan-ekstensi) menempatkan kontrol
