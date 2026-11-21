@@ -6,7 +6,6 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from hermes_constants import reset_hermes_home_override, set_hermes_home_override
@@ -129,52 +128,6 @@ class BrowserAppTests(unittest.TestCase):
         self.assertEqual(native.call_args.args[0], {'session': session, 'code': 'screenshot()'})
         self.assertTrue((self.root / 'data/browser-apps/fixture/missing-controls.jsonl').is_file())
 
-    def test_final_reply_continues_only_the_owned_running_work(self):
-        self.package(operations={'click': {}, 'inspect': {}, 'read_result': {}})
-        pacing = patch('browser_apps.OBSERVATION_INTERVAL', 0)
-        pacing.start()
-        self.addCleanup(pacing.stop)
-        started = self.invoke(operation='click', params={'status': 'running'})
-        message = SimpleNamespace(content='The result is still running.', tool_calls=None)
-        response = SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop', message=message)])
-        context = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn', 'api_mode': 'chat_completions'}
-        args = {'action': 'describe', 'app': 'fixture', 'session': started['session']}
-
-        browser_args = {'session': started['session'], 'site_control': json.dumps({'app': 'fixture', 'operation': 'read_result'})}
-        for offered, expected_args in [('browser_exec', browser_args),
-                ('tool_call', {'calls': [{'name': 'browser_exec', 'arguments': browser_args}]})]:
-            request = {'tools': [{'function': {'name': offered}}]}
-            downstream = Mock(return_value=response)
-            candidate = self.host.continue_running(request, downstream, **context)
-            downstream.assert_called_once_with(request)
-            choice = candidate.choices[0]
-            self.assertEqual(choice.finish_reason, 'tool_calls')
-            self.assertIsNone(choice.message.content)
-            call, = choice.message.tool_calls
-            self.assertEqual(call.function.name, offered)
-            self.assertEqual(json.loads(call.function.arguments), expected_args)
-            self.assertEqual(response.choices[0].message.content, 'The result is still running.')
-
-        self.dispatch.assert_not_called()
-        progress = json.loads(self.host.handle(args, task_id='A', session_id='chat-A'))
-        self.assertEqual(progress['running_work']['session'], started['session'])
-        self.assertEqual(progress['running_work']['next_control'], {'app': 'fixture', 'operation': 'read_result'})
-        for override in [{'task_id': 'B'}, {'session_id': 'chat-B'}, {'turn_id': 'another'}]:
-            with self.subTest(override=override):
-                self.assertIs(self.host.continue_running(request, lambda _: response,
-                                                         **{**context, **override}), response)
-        self.assertIs(self.host.continue_running({}, lambda _: response, **context), response)
-
-        inspection = self.invoke(params={'status': 'ok'})
-        self.assertEqual(inspection['session'], started['session'])
-        self.assertEqual(self.host.running_work('A', 'chat-A', 'turn')[started['session']][0], 'fixture')
-
-        completed = self.invoke(operation='read_result', params={'status': 'ok'})
-        self.assertEqual(completed['session'], started['session'])
-        self.assertIs(self.host.continue_running(request, lambda _: response, **context), response)
-        self.provider.ended(session_id='chat-A', task_id='A', turn_id='turn')
-        self.assertFalse(self.provider.owners)
-
     def test_terminal_guardrail_halt_releases_only_the_running_owner(self):
         self.package()
         own = self.invoke(params={'status': 'running'})
@@ -184,84 +137,28 @@ class BrowserAppTests(unittest.TestCase):
         self.assertNotIn(own['session'], self.provider.owners)
         self.assertIn(peer['session'], self.provider.owners)
 
-    def test_repeated_early_finals_read_the_page_until_its_result_changes(self):
-        from agent.tool_guardrails import ToolCallGuardrailConfig, ToolCallGuardrailController
+    def test_registration_preserves_native_message_and_tool_execution(self):
+        context = Mock()
+        context.has_capability.return_value = True
+        with patch.object(plugin, 'register_site_controls') as register_browser:
+            plugin.register(context)
+        installed = context.register_browser_provider.call_args.args[0]
+        self.addCleanup(installed.unload)
+        register_browser.assert_called_once()
+        context.register_middleware.assert_not_called()
+        self.assertIn('agent_loop_stopped', [call.args[0] for call in context.register_hook.call_args_list])
 
-        self.package(operations={'click': {}, 'read_result': {}}, source="""def run(context, operation, params):
-    if operation == 'click':
-        return {'status': 'running'}
-    page = context.browser_exec('print(page_info())')
-    return {'status': 'running' if page['output'] == 'working' else 'ok', 'data': page['output']}
-""")
-        self.dispatch.side_effect = [json.dumps({'success': True, 'output': value})
-                                     for value in ['working'] * 6 + ['requested result']]
-        with patch('browser_apps.monotonic', return_value=1000):
-            session = self.invoke(operation='click')['session']
-        candidate = SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop',
-            message=SimpleNamespace(content='Still working', tool_calls=None))])
-        guard = ToolCallGuardrailController(ToolCallGuardrailConfig(hard_stop_enabled=True))
-        request = {'tools': [{'function': {'name': 'browser_exec'}}]}
-        owner = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn', 'api_mode': 'chat_completions'}
-        for count in range(7):
-            with patch('browser_apps.monotonic', return_value=1000 + (count + 1) * 20):
-                response = self.host.continue_running(request, lambda _: candidate, **owner)
-                call, = response.choices[0].message.tool_calls
-                args = json.loads(call.function.arguments)
-                self.assertEqual((call.function.name, args['session']), ('browser_exec', session))
-                self.assertEqual(guard.before_call('browser_exec', args).action, 'allow')
-                command = browser_apps.site_request(args)
-                self.assertEqual(command['operation'], 'read_result')
-                result = self.host.handle({**command, 'session': session}, **owner)
-                self.assertNotIn(guard.after_call('browser_exec', args, result).action, {'block', 'halt'})
-        self.assertEqual(json.loads(result)['data'], 'requested result')
-        self.assertEqual(self.dispatch.call_count, 7)
-        self.assertIs(self.host.continue_running(request, lambda _: candidate, **owner), candidate)
-
-    def test_pending_package_without_parameterless_reader_does_not_replay_an_action(self):
-        from agent.tool_guardrails import ToolCallGuardrailConfig, ToolCallGuardrailController
-
-        request = {'tools': [{'function': {'name': 'browser_exec'}}]}
-        owner = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn', 'api_mode': 'chat_completions'}
-        candidate = SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop',
-            message=SimpleNamespace(content='Still working', tool_calls=None))])
-        for reader in ({}, {'read_result': {'parameters': {'type': 'object', 'required': ['id']}}}):
-            guard = ToolCallGuardrailController(ToolCallGuardrailConfig(hard_stop_enabled=True))
-            self.package(operations={'click': {}, **reader})
-            with patch('browser_apps.monotonic', return_value=1000):
-                session = self.invoke(operation='click', params={'status': 'running'})['session']
-            self.dispatch.reset_mock()
-            for index in range(8):
-                with patch('browser_apps.monotonic', return_value=1000 + (index + 1) * 20):
-                    reply = self.host.continue_running(request, lambda _: candidate, **owner)
-                    call, = reply.choices[0].message.tool_calls
-                    args = json.loads(call.function.arguments)
-                    control = browser_apps.site_request(args)
-                    self.assertEqual((args['session'], control['action']), (session, 'observe'))
-                    if index == 6:
-                        control['params'] = {'result_selector': '#current-job .result'}
-                        args['site_control'] = json.dumps(control)
-                    page = {'visible': 'working', 'result': None}
-                    if index == 7:
-                        page = {'visible': 'Result ready', 'result': 'receipt'}
-                    self.dispatch.return_value = json.dumps({'success': True, 'output': json.dumps(page)})
-                    self.assertEqual(guard.before_call('browser_exec', args).action, 'allow')
-                    raw = self.host.handle({**control, 'session': session}, **owner)
-                    self.assertNotIn(guard.after_call('browser_exec', args, raw).action, {'block', 'halt'})
-                    result = json.loads(raw)
-                    self.assertEqual(result['status'], 'ok' if index == 7 else 'running', result)
-                    self.assertEqual(result['page'], page)
-            self.assertEqual(self.dispatch.call_count, 8)
-            self.assertIn('#current-job .result', self.dispatch.call_args.args[1]['code'])
-            records = [json.loads(path.read_text()) for path in
-                       (self.root / 'data/browser-apps/fixture').glob('*/result.json')]
-            saved, = [record for record in records if record['session'] == session]
-            self.assertEqual((saved['status'], saved['data']), ('ok', {'result': 'receipt'}))
-            for native_call in self.dispatch.call_args_list:
-                self.assertEqual(native_call.args[0], 'browser_exec')
-                self.assertEqual(native_call.args[1]['session'], session)
-            self.assertIs(self.host.continue_running(request, lambda _: candidate, **owner), candidate)
-            self.provider.ended(**owner)
-            self.assertNotIn(session, self.provider.owners)
+    def test_running_site_does_not_replace_explicit_native_browser_code(self):
+        self.package()
+        started = self.invoke(params={'status': 'running'})
+        script = 'import time\ntime.sleep(120)\nprint(page_info())'
+        native = Mock(return_value=json.dumps({'success': True, 'output': 'browser output'}))
+        result = self.dispatch_native({'session': started['session'], 'code': script}, native,
+                                      task_id='A', session_id='chat-A', turn_id='turn')
+        self.assertEqual(json.loads(result)['output'], 'browser output')
+        self.assertTrue(native.call_args.args[0]['code'].endswith(script))
+        self.assertEqual(native.call_args.args[0]['session'], started['session'])
+        self.dispatch.assert_not_called()
 
     def test_unconfirmed_mapped_result_keeps_the_request_pending_for_dom(self):
         self.package(operations={'click': {}, 'read_result': {}})
@@ -279,67 +176,6 @@ class BrowserAppTests(unittest.TestCase):
         self.assertEqual(follow['next_control'], inspect['next_control'])
         self.assertEqual(inspect['session'], session)
 
-    def test_native_wait_checks_the_current_site_result_until_complete(self):
-        from agent.tool_guardrails import ToolCallGuardrailConfig, ToolCallGuardrailController
-
-        self.package(operations={'click': {}, 'read_result': {}}, source="""def run(context, operation, params):
-    if operation == 'click':
-        return {'status': 'running'}
-    value = context.browser_exec('print(page_info())')['output']
-    return {'status': 'running' if value == 'working' else 'ok', 'data': value}
-""")
-        with patch('browser_apps.monotonic', return_value=1000):
-            started = self.invoke(operation='click')
-        self.assertEqual(started['next_control'], {'app': 'fixture', 'operation': 'read_result'})
-        native = Mock()
-        self.dispatch.side_effect = [json.dumps({'success': True, 'output': result})
-                                     for result in ['working'] * 8 + ['Finished report']]
-        session = started['session']
-        code = "import time; time.sleep(120); print(js('document.body.innerText').split('Research')[-1][:6000])"
-        args = {'session': session, 'code': code}
-        owner = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn'}
-        guard = ToolCallGuardrailController(ToolCallGuardrailConfig(hard_stop_enabled=True))
-        for index in range(9):
-            with patch('browser_apps.monotonic', return_value=1000 + (index + 1) * 15):
-                self.assertEqual(guard.before_call('browser_exec', args).action, 'allow')
-                response = self.dispatch_native(args, native, **owner)
-                self.assertNotIn(guard.after_call('browser_exec', args, response).action, {'block', 'halt'})
-                self.assertEqual(json.loads(response)['session'], session)
-                self.assertEqual(json.loads(response)['status'], 'running' if index < 8 else 'ok')
-        self.assertEqual(json.loads(response)['data'], 'Finished report')
-        self.assertFalse(self.host.running_work('A', 'chat-A', 'turn'))
-        native.assert_not_called()
-        self.assertEqual(self.dispatch.call_count, 9)
-        self.assertTrue(all(call.args[1]['session'] == session for call in self.dispatch.call_args_list))
-
-    def test_native_wait_only_redirects_reads_for_the_pending_owner(self):
-        self.package()
-        with patch('browser_apps.monotonic', return_value=1000):
-            session = self.invoke(params={'status': 'running'})['session']
-        owner = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn'}
-        native = Mock(return_value=json.dumps({'success': True}))
-        wait = 'from time import sleep\nsleep(120)\nprint(dom())'
-        for code, caller in [
-            (wait, {**owner, 'task_id': 'B'}),
-            (wait, {**owner, 'turn_id': 'previous'}),
-            (wait + "\nclick('text=Next')", owner),
-            ("import time; time.sleep(120); print(js('location.reload()'))", owner),
-            (wait.replace('120', '1'), owner),
-        ]:
-            with self.subTest(code=code, caller=caller):
-                args = {'session': session, 'code': code}
-                self.dispatch_native(args, native, **caller)
-                self.assertTrue(native.call_args.args[0]['code'].endswith(code))
-        native.reset_mock()
-        self.dispatch.return_value = json.dumps({'success': True, 'output': json.dumps({
-            'visible': 'Still researching', 'result': None})})
-        for index, code in enumerate((wait, 'import time\ntime.sleep(120)'), 1):
-            with patch('browser_apps.monotonic', return_value=1000 + index * 20):
-                result = json.loads(self.dispatch_native({'session': session, 'code': code}, native, **owner))
-            self.assertEqual((result['status'], result['page']['visible']), ('running', 'Still researching'))
-            self.assertEqual(result['session'], session)
-        native.assert_not_called()
-
     def test_stop_during_dom_observation_preserves_peer_and_prevents_page_read(self):
         self.package()
         session = self.invoke(params={'status': 'running'})['session']
@@ -347,55 +183,12 @@ class BrowserAppTests(unittest.TestCase):
         args = {'action': 'observe', 'app': 'fixture', 'session': session}
         wrong_turn = json.loads(self.host.handle(args, task_id='A', session_id='chat-A', turn_id='old'))
         self.assertFalse(wrong_turn['success'])
-        native = Mock()
-        wait = {'session': session, 'code': 'import time; time.sleep(120); print(page_info())'}
         with patch('browser_apps.sleep', side_effect=lambda _: self.provider.stopped(session_key='route-A')):
-            result = json.loads(self.dispatch_native(wait, native, task_id='A', session_id='chat-A', turn_id='turn'))
+            result = json.loads(self.host.handle(args, task_id='A', session_id='chat-A', turn_id='turn'))
         self.assertFalse(result['success'])
-        native.assert_not_called()
         self.dispatch.assert_not_called()
         self.assertNotIn(session, self.provider.owners)
         self.assertIn(peer, self.provider.owners)
-
-    def test_terminal_wait_reads_the_only_running_gemini_on_its_current_turn(self):
-        self.package('gemini', operations={'click': {}, 'read_result': {}},
-                     source="""def run(context, operation, params):
-    if operation == 'click':
-        return {'status': 'running'}
-    page = context.browser_exec('print(page_info())')
-    return {'status': 'running', 'data': {'stage': page['output']}}
-""")
-        with patch('browser_apps.monotonic', return_value=1000):
-            started = self.invoke('gemini', operation='click')
-        owner = {'task_id': 'A', 'session_id': 'chat-A', 'turn_id': 'turn'}
-        native = Mock(return_value='shell')
-        wait = {'command': 'sleep 180', 'timeout': 200}
-        for tool, args, identity in [
-            ('terminal', wait, {**owner, 'turn_id': 'old'}),
-            ('terminal', wait, {**owner, 'task_id': 'B'}),
-            ('terminal', {'command': 'sleep 5'}, owner),
-            ('terminal', {'command': 'sleep 180 && echo done'}, owner),
-            ('terminal', {**wait, 'background': True}, owner),
-            ('other', wait, owner),
-        ]:
-            with self.subTest(tool=tool, args=args, identity=identity):
-                self.assertEqual(self.host.observe_terminal_wait(tool, args, native, **identity), 'shell')
-        self.dispatch.assert_not_called()
-        native.reset_mock()
-        with patch('browser_apps.monotonic', return_value=1020):
-            raw = self.host.observe_terminal_wait('terminal', wait, native, **owner)
-        result = json.loads(raw)
-        self.assertEqual((result['status'], result['session']), ('running', started['session']))
-        self.assertEqual(result['data']['stage'], 'fixture')
-        native.assert_not_called()
-
-        with (patch('browser_apps.monotonic', return_value=1020),
-              patch('browser_apps.sleep', side_effect=lambda _: self.provider.stopped(session_key='route-A'))):
-            result = json.loads(self.host.observe_terminal_wait('terminal', wait, native, **owner))
-        self.assertEqual(result['status'], 'failed')
-        self.assertNotIn(started['session'], self.provider.owners)
-        self.dispatch.assert_called_once()
-        native.assert_not_called()
 
     def test_bundled_site_packages_default_to_the_current_hermes_profile(self):
         self.settings.pop('apps_directory')

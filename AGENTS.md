@@ -7,6 +7,10 @@ and verification evidence before calling a checklist item complete.
 
 ## Browser tasks
 
+- Hermes upstream owns message priority, steering, interruption, model
+  responses, and non-browser tools. The plugin supplies explicit browser
+  controls and progress readers. It must not rewrite replies, insert automatic
+  tool calls, or reroute terminal or native browser scripts to check progress.
 - Hermes already browses the original Chrome through native `browser_exec`.
   Add each site's ready-to-use UI controls to that existing browsing path.
   Calling a mapped control clicks or types in the task's active page over CDP.

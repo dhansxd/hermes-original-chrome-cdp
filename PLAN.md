@@ -12,6 +12,10 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
 
 ### Kontrak browser dan ekstensi
 
+- Prioritas pesan baru, steer, interrupt, jawaban model, dan tool selain
+  browser mengikuti Hermes upstream. Plugin menyediakan status dan kontrol
+  progres yang dipanggil eksplisit. Plugin tidak menyisipkan panggilan tool,
+  mengganti jawaban, atau mengalihkan skrip browser dan perintah terminal.
 - Pasang, aktifkan, nonaktifkan, dan hapus plugin melalui pengelola plugin resmi
   Hermes (`hermes plugins install`, `enable`, `disable`, dan `remove`).
   Saat plugin diaktifkan, `browser_exec` otomatis memakai Chrome asli melalui
@@ -189,12 +193,10 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
    lama. Tugas yang masih berjalan harus tetap dilanjutkan. Verifikasi hasil
    dan setiap unduhan atau pengiriman yang diminta sebelum jawaban akhir.
    Setelah itu ukur cleanup jendela milik tugas dan pastikan jendela lain utuh.
-   - [x] Pada 0.11.2, `continue_running` meneruskan permintaan ke pembaca
-     hasil paket bila tersedia. Jika paket tidak punya pembaca tanpa argumen
-     wajib, atau pembacaan hasil perlu inspeksi, `browser_exec` mengamati
-     DOM pada sesi milik tugas. Agen dapat menentukan selector hasil akhir
-     yang spesifik sekali dan memakainya pada pemeriksaan berikutnya. Job
-     yang memiliki ID tetap membutuhkan konfirmasi hasil melalui paketnya.
+   - Paket mengembalikan `next_control` untuk diperiksa Hermes secara
+     eksplisit. Jika pembacaan hasil perlu inspeksi, Hermes dapat mengamati
+     DOM memakai `browser_exec` pada sesi milik tugas. Agen bisa menetapkan
+     selector hasil pada `observe`. Job ber-ID diverifikasi oleh paketnya.
    - [ ] Periksa satu tugas nyata dari sesi Telegram baru di versi yang diuji.
      Cocokkan panggilan setelah status `running` dengan perubahan status di
      situs, hasil yang diterima pengguna, dan penutupan jendela tugas. Jika
@@ -209,8 +211,8 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      sama tanpa mengirim ulang topik. Penutupan terulang saat menunggu.
      Pada pemeriksaan terakhir Gemini masih menampilkan “Meriset 12 situs”
      dan Hermes belum menyampaikan laporan. Kriteria satu jendela gagal.
-   - [x] Untuk pola tunggu yang terlihat di log, hook `pre_tool_call` plugin
-     mengalihkan skrip yang hanya tidur lalu mencetak progres ke
+   - Riwayat 0.11.5. Hook `pre_tool_call` saat itu mengalihkan skrip
+     yang hanya tidur lalu mencetak progres ke
      `read_result` atau `observe` pada sesi tugas yang masih aktif.
      Pemeriksaan memakai jeda observasi yang sudah ada. Skrip klik,
      navigasi dan inspeksi biasa tetap mengikuti jalur native.
@@ -294,6 +296,19 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      menghentikan pemeriksaan yang sedang berjeda dan melepas target Chrome.
      Sebanyak 442 tes otomatis lulus. Verifikasi Gemini Web hingga laporan
      terkirim ke Telegram tetap terbuka.
+     Uji Telegram dengan 0.11.8/0.4.9 mengirim topik sekali, mencatat ID
+     percakapan dan giliran, serta mengalihkan tidur terminal ke pembaca
+     progres di sesi yang sama. Gemini belum menampilkan rencana saat
+     pembaca kehilangan kecocokan kiriman. Pemantauan DOM tetap berjalan.
+   - [x] Kembalikan prioritas pesan sepenuhnya ke Hermes. Pada uji Telegram,
+     Hermes menyuntikkan pesan berhenti ke giliran aktif melalui `/steer`,
+     lalu plugin tetap menyisipkan panggilan observasi. `continue_running`
+     menimpa keluaran final model selama tugas masih tercatat aktif, tanpa
+     mempertimbangkan arahan pengguna yang masuk setelah tugas mulai.
+     Pada 0.11.9, hapus middleware pengganti jawaban dan pengalih terminal,
+     serta pengalihan skrip browser saat menunggu. Uji registrasi memastikan
+     plugin hanya memperluas browser dan tetap memakai hook Stop resmi.
+     Uji skrip browser memastikan input eksplisit diteruskan ke jalur native.
    - Temuan Telegram 0.11.2 di percakapan yang sudah ada: setelah satu
      submit Deep Research, 32 panggilan `observe` tanpa selector membaca
      teks “Membuat rencana riset” pada sesi yang sama hingga pengguna

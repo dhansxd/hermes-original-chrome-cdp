@@ -266,7 +266,7 @@ press_key('Enter')''')
 
 def verify_research_wait_and_stop(call, provider, name):
     def observation():
-        return call('research', tool='terminal', command='sleep 180', timeout=200, require_success=False)
+        return call('research', session=name, app='gemini', operation='read_result', require_success=False)
 
     assert browser_session.BROWSER_SESSION_INACTIVITY_TIMEOUT == 120
     owned = next(item for item in provider.sessions.values()
@@ -374,7 +374,7 @@ plugins:
                 report['unverified_research_rejects_native_resend'] = True
                 if research_only:
                     verify_research_wait_and_stop(call, provider, research_session)
-                    report['terminal_wait_paces_owned_research_and_official_stop_cancels'] = True
+                    report['explicit_research_checks_keep_window_and_official_stop_cancels'] = True
                     return report
                 invoke_hook('agent_loop_stopped', session_key='apps-fixture-research', platform='cli',
                             reason='user_stop', invalidation_reason='session_interrupt')
@@ -407,15 +407,13 @@ plugins:
                 progress = call('parent', session='same', action='observe', app='fixture',
                                 params={'result_selector': '#receipt'})
                 assert progress['status'] == 'running'
-                wait = "import time; time.sleep(120); print(js('document.body.innerText')[-24000:])"
                 for index in range(9):
                     if index in (2, 6):
                         assert run('child')['document'] == first[1]['document']
                         assert run('channel', platform='telegram')['document'] == first[2]['document']
                     if index == 8:
                         call('parent', session='same', code="js(\"document.getElementById('receipt').hidden = false\")")
-                    code = wait if index % 2 == 0 else 'import time\ntime.sleep(120)'
-                    progress = call('parent', session='same', code=code, timeout_s=40)
+                    progress = call('parent', session='same', action='observe', app='fixture')
                     assert progress['session'] == repeat['session']
                     assert progress['status'] == ('ok' if index == 8 else 'running'), progress
                 assert progress['page']['result'] == 'Fixture ready'

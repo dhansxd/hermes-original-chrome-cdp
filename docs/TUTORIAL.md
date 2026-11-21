@@ -358,10 +358,11 @@ return {'status': 'running', 'data': {'job_id': job_id}}
 ```
 
 For ordinary operations, a package can expose a read-only `read_result` with
-no required arguments. If the model tries to end the turn while the operation
-is running, the plugin calls this reader on the same page. Return `running`
-while the page is busy, then return the observed result or `needs_inspection`
-when a UI step requires attention. Keep submission in the original action.
+no required arguments. While the page is busy, return `running` with the
+next control so Hermes can explicitly check progress in the same window.
+Return the observed result or `needs_inspection` when the UI needs attention.
+Keep submission in the original action. Hermes handles incoming messages,
+steering, interruption, and final answers.
 
 `running` and `needs_inspection` preserve the owned browser session across turn
 end in the serving Hermes process. Continue through the same package and alias

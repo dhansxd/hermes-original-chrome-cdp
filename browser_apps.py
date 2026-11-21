@@ -13,7 +13,6 @@ import tempfile
 import types
 import uuid
 from contextlib import contextmanager
-from copy import copy
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -50,49 +49,6 @@ def has_site_request(args):
             return False
         return control != '{}' or not args.get('code')
     return control is not None and (bool(control) or not args.get('code'))
-
-
-def reads_site_progress(node):
-    if isinstance(node, ast.Subscript):
-        slice_nodes = (ast.Slice, ast.Constant, ast.UnaryOp, ast.UAdd, ast.USub)
-        return all(isinstance(part, slice_nodes) for part in ast.walk(node.slice)) and reads_site_progress(node.value)
-    if not isinstance(node, ast.Call) or node.keywords:
-        return False
-    if isinstance(node.func, ast.Attribute):
-        return (node.func.attr in {'split', 'strip'}
-                and all(isinstance(arg, ast.Constant) for arg in node.args)
-                and reads_site_progress(node.func.value))
-    if not isinstance(node.func, ast.Name):
-        return False
-    if node.func.id in {'dom', 'page_info'}:
-        return not node.args
-    return (node.func.id == 'js' and len(node.args) == 1 and isinstance(node.args[0], ast.Constant)
-            and node.args[0].value in ('document.body.innerText', 'document.body.textContent'))
-
-
-def waits_for_site_progress(tree):
-    """Recognize the plain sleep-and-read scripts emitted for an already running site task."""
-    if len(tree.body) < 2:
-        return False
-    source, wait, *reads = tree.body
-    if isinstance(source, ast.Import) and [(name.name, name.asname) for name in source.names] == [('time', None)]:
-        sleep_name = 'time.sleep'
-    elif (isinstance(source, ast.ImportFrom) and source.level == 0 and source.module == 'time'
-          and [(name.name, name.asname) for name in source.names] == [('sleep', None)]):
-        sleep_name = 'sleep'
-    else:
-        return False
-    call = wait.value if isinstance(wait, ast.Expr) else None
-    if (not isinstance(call, ast.Call) or ast.unparse(call.func) != sleep_name or call.keywords
-            or len(call.args) != 1 or not isinstance(call.args[0], ast.Constant)
-            or type(call.args[0].value) not in (int, float) or call.args[0].value < OBSERVATION_INTERVAL):
-        return False
-    for read in reads:
-        call = read.value if isinstance(read, ast.Expr) else None
-        if (not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name) or call.func.id != 'print'
-                or call.keywords or len(call.args) != 1 or not reads_site_progress(call.args[0])):
-            return False
-    return True
 
 
 def progress_control(app, can_read_result):
@@ -406,21 +362,7 @@ class AppHost:
 
     def prepare_call(self, tool_name, args, task_id, **context):
         if tool_name != 'browser_exec' or not has_site_request(args):
-            prepared = self.provider.prepare_call(tool_name, args, task_id, **context)
-            if tool_name != 'browser_exec' or not prepared or prepared['action'] != 'modify' or not args.get('code'):
-                return prepared
-            session = prepared['args']['session']
-            work = self.running_work(task_id, context.get('session_id'), context.get('turn_id')).get(session)
-            if work:
-                try:
-                    wait = waits_for_site_progress(ast.parse(args['code']))
-                except (TypeError, SyntaxError):
-                    wait = False
-                if wait:
-                    app, _, can_read_result = work
-                    # Classify the caller's original script, before the provider adds its input guard.
-                    prepared['args'].update(code='', site_control=json.dumps(progress_control(app, can_read_result)))
-            return prepared
+            return self.provider.prepare_call(tool_name, args, task_id, **context)
         config = context.get('config')
         if config is None:
             from hermes_cli.config import load_config_readonly
@@ -633,59 +575,6 @@ class AppHost:
                     if not choice.finished and choice.pending and choice.running is not None
                     and choice.owner[:2] == (task_id, session_id)
                     and (turn_id is None or choice.turn_id == turn_id)}
-
-    def observe_terminal_wait(self, tool_name, args, next_call, task_id='', session_id='', turn_id='', **kwargs):
-        if tool_name != 'terminal' or not self.controls_enabled or not turn_id or args.get('background'):
-            return next_call(args)
-        command = args.get('command')
-        wait = re.fullmatch(r'\s*sleep[ \t]+([0-9]+(?:\.[0-9]+)?)\s*', command) if isinstance(command, str) else None
-        if not wait or float(wait[1]) < OBSERVATION_INTERVAL:
-            return next_call(args)
-        work = self.running_work(task_id, session_id, turn_id)
-        if len(work) != 1:
-            return next_call(args)
-        session, (app, _, can_read_result) = next(iter(work.items()))
-        if app != 'gemini':
-            return next_call(args)
-        # Pace the existing browser reader instead of letting a pure shell wait
-        # make the owned session idle. Stop can invalidate the same AppContext.
-        return self.handle({'action': 'run', **progress_control(app, can_read_result), 'session': session},
-                           task_id=task_id, session_id=session_id, turn_id=turn_id)
-
-    def continue_running(self, request, next_call, task_id='', session_id='', turn_id='', api_mode='', **kwargs):
-        response = next_call(request)
-        if not turn_id or api_mode != 'chat_completions' or not getattr(response, 'choices', None):
-            return response
-        choice = response.choices[0]
-        message = getattr(choice, 'message', None)
-        if (str(choice.finish_reason or 'stop').lower() != 'stop' or not getattr(message, 'content', None)
-                or getattr(message, 'tool_calls', None) or getattr(message, 'refusal', None)):
-            return response
-        work = self.running_work(task_id, session_id, turn_id)
-        if not work:
-            return response
-        session, (app, _, can_read_result) = next(iter(work.items()))
-        offered = {(tool.get('function') or {}).get('name') for tool in request.get('tools') or []}
-        control = progress_control(app, can_read_result)
-        arguments = {'site_control': json.dumps(control), 'session': session}
-        tool_name = 'browser_exec'
-        if tool_name not in offered:
-            if 'tool_call' not in offered:
-                return response
-            tool_name = 'tool_call'
-            arguments = {'calls': [{'name': 'browser_exec', 'arguments': arguments}]}
-        # Observe through the same paced tool path without repeating the submission.
-        from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
-        call = ChatCompletionMessageFunctionToolCall(
-            id='call_' + uuid.uuid4().hex[:24], type='function',
-            function={'name': tool_name, 'arguments': json.dumps(arguments)})
-        response, choice, message = copy(response), copy(choice), copy(message)
-        message.content = None
-        message.tool_calls = [call]
-        choice.message = message
-        choice.finish_reason = 'tool_calls'
-        response.choices = [choice, *response.choices[1:]]
-        return response
 
     def handle(self, args, task_id='', session_id='', **kwargs):
         context = None
