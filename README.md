@@ -425,8 +425,11 @@ hermes plugins list
 
 Apply any activation or dependency-environment action reported by your Hermes build.
 
-To switch to Hermes's built-in browser, run `hermes tools` and select **Local** in
-Browser Automation before disabling or removing this provider.
+Hermes keeps its browser selection when a plugin is disabled or removed. Restore
+your previous browser settings before either operation. Use the browser picker
+for an explicit provider or `hermes config unset browser.cloud_provider` to
+restore automatic selection if the key was originally absent. See the
+[switch-back instructions](docs/TUTORIAL.md#switch-back-disable-and-uninstall).
 
 ```sh
 hermes plugins disable original-chrome-default
@@ -440,7 +443,8 @@ hermes plugins enable original-chrome-default
 hermes tools
 ```
 
-To uninstall it, select Local first, then run the native removal command.
+To uninstall it, restore the previous browser settings, then run the native
+removal command.
 
 ```sh
 hermes plugins remove original-chrome-default

@@ -159,7 +159,7 @@ tetap diperiksa pada jalur browser yang terdampak.
    selesai dan memakai ID sesi browser yang berbeda.
 2. [ ] Selesaikan perombakan dan verifikasi pemasangan plugin.
    - [ ] Terapkan dan verifikasi perpindahan browser otomatis sesuai kontrak.
-     Versi 0.11.1 masih memerlukan pemilihan browser secara manual sesuai
+     Versi 0.11.10 masih memerlukan pemilihan browser secara manual sesuai
      [tutorial](docs/TUTORIAL.md#switch-back-disable-and-uninstall).
      - Periksa dulu jalur resmi enable, disable, dan remove, termasuk remove
        saat gateway berhenti. Tentukan kapan pilihan sebelumnya dapat disimpan
@@ -187,6 +187,13 @@ tetap diperiksa pada jalur browser yang terdampak.
        pada pengaturan plugin dan `on_unload` bekerja ketika plugin yang telah
        dimuat dibongkar. Otomasi penuh menunggu mekanisme resmi Hermes yang
        dapat menerapkan pilihan runtime dan membatalkannya saat plugin dilepas.
+     - Uji CLI resmi v0.23.2 pada profil sementara dengan host 0.11.10.
+       `plugins remove` saat gateway mati meninggalkan pilihan Chrome di
+       `browser.cloud_provider`. `config set` memulihkan Browserbase dan
+       `config unset` memulihkan keadaan ketika pilihan belum pernah disetel.
+       Pengaturan browser lain pada profil uji tetap utuh. Kode upstream
+       cabang utama masih menyimpan pilihan provider secara terpisah dari
+       status plugin.
    - [x] Hapus registrasi dan deklarasi `browser_app`. Pemanggilan nama lama
      pada registry profil uji menghasilkan `Unknown tool`. Instalasi paket,
      pengelolaan status, panduan, dan operasi situs tetap tersedia.

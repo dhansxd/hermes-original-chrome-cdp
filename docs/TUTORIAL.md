@@ -401,8 +401,25 @@ requested by Hermes. Check the provider selection in `hermes tools` afterward.
 
 ## Switch back, disable, and uninstall
 
-Select **Local** in `hermes tools → Browser Automation` to use Hermes's built-in
-browser. Then disable this provider through the native command.
+Hermes stores the selected browser separately from plugin activation. Record the
+original browser settings before applying the provider settings above. Before
+disabling or removing Original Chrome, restore those settings. Select the previous
+provider in `hermes tools → Browser Automation`, or use the official config
+command. For example, restore a previously selected Browserbase provider with:
+
+```sh
+hermes config set browser.cloud_provider browserbase
+```
+
+If the setting was originally absent, remove it to restore Hermes's automatic
+provider selection.
+
+```sh
+hermes config unset browser.cloud_provider
+```
+
+Restore the original values of any other browser settings changed during setup,
+then disable this provider through the native command.
 
 ```sh
 hermes plugins disable original-chrome-default
@@ -415,7 +432,7 @@ hermes plugins enable original-chrome-default
 hermes tools
 ```
 
-For removal, select Local first and run the following command.
+For removal, restore the previous browser settings and run the following command.
 
 ```sh
 hermes plugins remove original-chrome-default
