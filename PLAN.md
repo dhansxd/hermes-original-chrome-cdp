@@ -258,13 +258,16 @@ tetap diperiksa pada jalur browser yang terdampak.
      pembanding. Hermes membaca kode hasil sebelum jawaban akhir, dan kode
      itu cocok dengan hasil yang dibaca penguji langsung dari situs.
      Jendela pembanding bertahan setelah giliran selesai dan ditutup terpisah.
-   - [ ] Periksa satu tugas situs berdurasi panjang lewat kontrol paket
-     `next_control` pada sesi Hermes baru. Uji CLI di atas membuktikan
-     jalur DOM. Jalur kontrol progres paket masih perlu diverifikasi.
-     Cocokkan panggilan setelah status `running` dengan perubahan status di
-     situs, hasil yang diterima pengguna, dan penutupan jendela tugas. Jika
-     terhenti, catat operasi terakhir beserta hasilnya agar patch berikutnya
-     memperbaiki penyebab yang teramati.
+   - [x] Uji kontrol paket `next_control` pada sesi Hermes CLI baru dengan
+     host 0.13.1 dan Chrome Windows. Hermes menemukan paket Progress Board
+     lewat katalog, menjalankan `start` sekali, lalu mengikuti
+     `next_control` dengan sepuluh panggilan `read_result` melalui
+     `browser_exec`. Situs uji menerima satu submit. Selama 159 detik,
+     sesi, dokumen, profil dan jendela tugas tetap sama. Hermes membaca hasil
+     siap sebelum jawaban akhir dan mengembalikan kode yang cocok dengan
+     hasil situs. Jendela pembanding bertahan setelah giliran berakhir dan
+     ditutup terpisah. Sesi uji yang lulus memakai `cx/gpt-6.1-sol`
+     melalui 9Router.
      Uji Telegram dengan Gemini 0.4.6 memakai sesi Hermes yang sudah ada.
      Satu topik dikirim di profil uji. Kontrol konfirmasi mengembalikan
      `obscured`; Hermes memakai DOM di jendela yang sama dan Gemini
