@@ -113,6 +113,7 @@ class ChromeSession:
         self.owned = set()
         self.context = None
         self.initial_target = None
+        self.kept_target = None
         self.seed_dir = None
         self.seed_url = None
         self.seed_title = None
@@ -132,6 +133,25 @@ class ChromeSession:
     @property
     def disconnected(self):
         return self.ready and self.wire.closed
+
+    def owned_window(self):
+        """Identify a single owned Chrome window before promising to keep it open."""
+        with self.start_lock:
+            if self.closed or not self.ready or self.disconnected:
+                raise RuntimeError('Open the Chrome page before keeping its window.')
+            pages = [page for page in self._inventory() if page['type'] == 'page']
+            if not pages:
+                raise RuntimeError('This Chrome window has already closed.')
+            windows = {self.wire.call('Browser.getWindowForTarget', {'targetId': page['targetId']})['windowId']
+                       for page in pages}
+            if len(windows) != 1:
+                raise RuntimeError('The browser session has more than one Chrome window.')
+            page = next((page for page in pages if page['targetId'] == self.kept_target), pages[0])
+            return page['targetId'], page.get('title', '')
+
+    def kept_window_exists(self):
+        with self.lock:
+            return not self.closed and self.ready and not self.disconnected and self.kept_target in self.owned
 
     def _start(self):
         with self.start_lock:
@@ -274,6 +294,8 @@ class ChromeSession:
                         ws.send(json.dumps(message))
                     except Exception:
                         pass
+            if method == 'Target.targetDestroyed':
+                self.owned.discard(target)
 
     def command(self, client, method, params, sid=None):
         self._start()
@@ -302,13 +324,18 @@ class ChromeSession:
                 if self.closed:
                     raise RuntimeError('Browser session is closed.')
                 targets = self._inventory()
+                bootstrap = (params.get('url') == 'about:blank' and not params.get('newWindow')
+                             and set(params) <= {'url', 'background', 'browserContextId', 'newWindow'})
+                if self.kept_target and bootstrap and not sessions:
+                    if any(t['targetId'] == self.kept_target for t in targets):
+                        return {'targetId': self.kept_target}
+                    raise RuntimeError('The kept Chrome window has closed.')
                 if self.seed_url and any(t.get('url') == self.seed_url for t in targets):
                     raise RuntimeError('Inspect the original pending profile window before creating another window.')
                 # The named native driver requests its first dedicated page here.
                 # This endpoint already owns an exclusive, verified startup page.
                 initial, self.initial_target = self.initial_target, None
-                if (params.get('url') == 'about:blank' and not params.get('newWindow')
-                        and set(params) <= {'url', 'background', 'browserContextId', 'newWindow'}
+                if (bootstrap
                         and any(t['targetId'] == initial and t.get('type') == 'page'
                                 and t.get('url') == 'about:blank' and t.get('browserContextId') == self.context
                                 for t in targets)):
@@ -345,6 +372,8 @@ class ChromeSession:
                 return {}
             if method == 'Target.closeTarget':
                 with consent_guard(self.data):
+                    if target == self.kept_target:
+                        raise RuntimeError('Use close_window to close the kept Chrome window.')
                     result = self.wire.call(method, params)
             else:
                 result = self.wire.call(method, params)

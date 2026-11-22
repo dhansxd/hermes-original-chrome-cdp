@@ -1,11 +1,12 @@
 ---
 name: site-controls
-description: Use mapped Chrome controls for Gemini Web and Google Flow tasks, including images, video, Deep Research, chats and downloads.
+description: Browse websites in Original Chrome with browser_exec, use mapped site controls, download files, and keep or resume a Chrome window across turns.
 ---
 
-# Website controls in Original Chrome
+# Browsing in Original Chrome
 
-Use `browser_exec` throughout the browser task. Calls named `browser_app` in
+Use `browser_exec` for website navigation, links, forms, page inspection, and
+downloads in Original Chrome. Calls named `browser_app` in
 older chats now use the `site_control` parameter on `browser_exec`.
 For a request specifying Gemini Web, open Gemini with `open_chat` and use its
 controls in the same browser session. Pass a site's mapped operation
@@ -43,3 +44,20 @@ on subsequent checks. For an existing job ID, follow its package's job check.
 Confirm the new result and finish any requested download and delivery before reporting
 completion. If the requested site fails, report what blocked it there and
 ask before substituting another generator or service.
+
+## Keep a Chrome window available
+
+Keep a window when the user explicitly asks to leave it open or when the
+requested outcome clearly requires it to remain open after the turn. First
+verify that the page or ongoing action the user asked to leave available is
+ready. A `running` status alone does not request retention. When the user asks
+to return later, report the confirmed progress as pending.
+
+Pass `{"action":"keep_window"}` as `site_control` with `browser_exec.session`
+set to the exact session ID from the browser call. Wait for `state: kept` before
+saying that the window will remain open. In a later turn in the same Hermes
+conversation, `{"action":"list_windows"}` lists kept windows. To continue, use
+that exact ID as `browser_exec.session` for site controls or native `code`.
+Check the existing page or job without starting it again. If asked to close a
+kept window, pass `{"action":"close_window"}` with its exact session ID. Ask
+which window only if the request is ambiguous and several windows match.

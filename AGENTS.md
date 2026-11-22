@@ -59,8 +59,9 @@ and verification evidence before calling a checklist item complete.
 - Treat examples as examples. Add only behavior the user requests. Read the
   repository history and existing site integrations before changing their
   contracts. Keep Hermes and 9Router core on their upstream code.
-- Treat leaving a window available for the user's continued use as a later
-  feature, after the current regressions are fixed and verified.
+- Keep an owned window across turns only through an explicit window-control
+  call made for the user's request. Resume and close it by its exact session
+  ID within the owning Hermes conversation.
 
 ## Working in this repository
 

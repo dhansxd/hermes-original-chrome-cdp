@@ -142,6 +142,22 @@ class ProviderTests(unittest.TestCase):
         self.assertIn(replacement_info['bb_session_id'], provider.sessions)
         self.assertIn(replacement, provider.owners)
 
+    def test_interrupted_kept_window_is_closed_without_parking(self):
+        provider = plugin.ChromeProvider()
+        self.addCleanup(provider.unload)
+        session = Mock(lock=threading.RLock(), closed=False, disconnected=False,
+                       owned={'page'}, owned_window=Mock(return_value=('page', 'Fixture')))
+        session.close.return_value = True
+        with patch('plugin.ChromeSession', return_value=session), patch.dict(os.environ, {}, clear=True):
+            name = provider.prepare_call('browser_exec', {}, 'A', session_id='chat',
+                                         turn_id='turn', config=self.config())['args']['session']
+            provider.create_session('bu-named-' + name)
+            provider.window_control('keep_window', name, 'A', 'chat')
+            provider.ended(session_id='chat', task_id='A', turn_id='turn', interrupted=True)
+        session.close.assert_called_once()
+        self.assertNotIn(name, provider.owners)
+        self.assertEqual(provider.window_control('list_windows', None, 'B', 'chat')['windows'], [])
+
     def test_disconnected_session_retires_exact_name_before_replacement(self):
         provider = plugin.ChromeProvider()
         self.addCleanup(provider.unload)

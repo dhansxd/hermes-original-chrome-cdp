@@ -356,6 +356,19 @@ Keep any page content or screenshots produced during that check local.
 The [step-by-step tutorial](docs/TUTORIAL.md) covers installation checks, profile
 changes, parallel sessions, updates, and switching back to the built-in browser.
 
+## Keep a window available across turns
+
+After the requested page or action is ready, use `{"action":"keep_window"}` in
+`browser_exec.site_control` with the exact `session` returned by the browser.
+Use it for a request to keep a window open or a task that clearly needs to remain
+available. In the same Hermes conversation, `{"action":"list_windows"}` shows
+the kept windows. Pass the listed session ID to `browser_exec` to continue in that
+window, or use `{"action":"close_window"}` with that ID to close it.
+
+The window stays available across turns while the Hermes process and its
+Chrome connection are running. Ending the conversation or unloading the plugin
+releases its kept windows.
+
 ## How sessions work
 
 1. Hermes calls this plugin's registered `BrowserProvider` through its native tool.

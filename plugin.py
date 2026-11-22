@@ -52,6 +52,8 @@ class SessionProfile:
     result_selector: str = ''
     active: int = 0
     directory_key: str = ''
+    kept_title: str | None = None
+    parked: bool = False
 
 
 class ChromeProvider(BrowserProvider):
@@ -83,13 +85,32 @@ class ChromeProvider(BrowserProvider):
         return {'name': self.display_name, 'badge': 'local',
                 'tag': 'Your signed-in Chrome; separate agent windows; no profile copy', 'env_vars': []}
 
+    def _kept_choice(self, name):
+        choice = self.profile_choices.get(self.profile_routes.get(name))
+        return choice if choice and choice.browser_name == name and choice.kept_title is not None else None
+
+    def _browser_sessions(self, name):
+        key = 'bu-named-' + name
+        return [(ident, session) for ident, session in self.sessions.items()
+                if session.cache_key.split('@', 1)[0] == key]
+
+    @staticmethod
+    def _session_info(identifier, session):
+        return {'session_name': 'original-chrome-' + identifier, 'bb_session_id': identifier,
+                'cdp_url': session.url, 'features': {'original_chrome': True}}
+
     def create_session(self, task_id):
         # Return a local endpoint before starting Chrome. Startup failures become CDP
         # errors instead of triggering Hermes's fallback to packaged Chromium.
         with self.lock:
             name = task_id.removeprefix('bu-named-').split('@', 1)[0]
+            kept = self._kept_choice(name)
+            if kept and not kept.finished and not self.unloading and name not in self.finishing:
+                for identifier, session in self._browser_sessions(name):
+                    if session.cache_key == task_id and session.kept_window_exists():
+                        return self._session_info(identifier, session)
             # Finalization removes the hook's admission for this exact native name.
-            if (self.unloading or name in self.finishing
+            if (self.unloading or kept or name in self.finishing
                     or (task_id.startswith('bu-named-') and name not in self.owners)):
                 # Native Hermes falls back to Chromium on create_session exceptions.
                 # Retired providers and closing sessions fail at CDP without a new listener.
@@ -104,15 +125,21 @@ class ChromeProvider(BrowserProvider):
             session.cache_key = task_id
             identifier = uuid.uuid4().hex
             self.sessions[identifier] = session
-        return {'session_name': 'original-chrome-' + identifier, 'bb_session_id': identifier,
-                'cdp_url': session.url, 'features': {'original_chrome': True}}
+        return self._session_info(identifier, session)
 
-    def close_session(self, session_id):
+    def close_session(self, session_id, *, force=False):
         with self.lock:
             session = self.sessions.get(session_id)
+            if session is None:
+                return True
+            name = session.cache_key.removeprefix('bu-named-').split('@', 1)[0]
+            choice = self._kept_choice(name)
+            if (choice and not choice.finished and not self.unloading and not force
+                    and name not in self.finishing and session.kept_window_exists()):
+                return True  # Hermes may evict its idle cache entry while this window is kept.
+            with session.lock:
+                session.closed = True
             peers = list(self.sessions.values())
-        if session is None:
-            return True
         supervisor_stopped = True
         try:
             from tools.browser_supervisor import SUPERVISOR_REGISTRY
@@ -133,7 +160,7 @@ class ChromeProvider(BrowserProvider):
         return success
 
     def emergency_cleanup(self, session_id):
-        self.close_session(session_id)
+        self.close_session(session_id, force=True)
 
     def unload(self):
         with self.lock:
@@ -175,6 +202,16 @@ class ChromeProvider(BrowserProvider):
                                      if item.owner == owner and item.turn_id == turn and item.alias == alias
                                      and item.browser_name in self.owners and not item.finished), None)
                 reuse = existing is not None and existing.owner == owner and existing.turn_id == turn
+                resume = existing is not None and existing.parked
+                if resume:
+                    if (existing.owner[1:] != owner[1:] or not session_id or tool_name != 'browser_exec'
+                            or alias != existing.browser_name or existing.turn_id == turn):
+                        return {'action': 'block', 'message': 'The kept window requires its original Hermes conversation.'}
+                    if existing.finished or not any(s.kept_window_exists() for _, s in self._browser_sessions(alias)):
+                        return {'action': 'block', 'message': 'The kept Chrome window has closed. Start a new session if needed.'}
+                    reuse = True
+                elif existing is not None and existing.kept_title is not None and not reuse:
+                    return {'action': 'block', 'message': 'The kept Chrome window belongs to an active turn.'}
                 if tool_name == PROFILE_TOOL and app_id and existing and existing.app_id != app_id:
                     reuse = False  # Independent profile rules apply when starting a new task window.
                 if kwargs.get('require_existing') and (not reuse or existing.app_id not in ('', app_id)):
@@ -203,6 +240,7 @@ class ChromeProvider(BrowserProvider):
                 if choice.finished or choice.switching:
                     return {'action': 'block', 'message': 'This browser session is finishing or changing Chrome profile.'}
                 choice.owner = owner
+                choice.parked = False
                 if choice.app_id != app_id:
                     choice.directory_key = ''
                 choice.app_id = app_id
@@ -258,6 +296,51 @@ class ChromeProvider(BrowserProvider):
         if rule.get('identity') is not None and profile.identity != tuple(rule['identity']):
             raise RuntimeError('The profile in this Chrome rule was replaced. Select and save it again.')
         return profile
+
+    def window_control(self, action, name, task_id, session_id, *, session_key=''):
+        from gateway.session_context import get_session_env
+        route = session_key or get_session_env('HERMES_SESSION_KEY', '') or session_id
+        owner = (task_id, session_id, route)
+        with self.lock:
+            if self.unloading or not task_id or not session_id:
+                raise RuntimeError('Chrome window controls require the calling Hermes conversation.')
+            if action == 'list_windows':
+                windows = [{'session': choice.browser_name, 'title': choice.kept_title,
+                            'alias': choice.alias, 'app': choice.app_id or None,
+                            'state': 'parked' if choice.parked else 'active'}
+                           for choice in self.profile_choices.values() if choice.kept_title is not None
+                           and not choice.finished and choice.owner[1:] == owner[1:]
+                           and any(session.kept_window_exists() for _, session in self._browser_sessions(choice.browser_name))]
+                return {'success': True, 'status': 'ok', 'windows': windows}
+            if not isinstance(name, str) or not name:
+                raise ValueError('Pass the exact session ID of the Chrome window.')
+            choice = self.profile_choices.get(self.profile_routes.get(name))
+            if choice is None or choice.browser_name != name or choice.owner[1:] != owner[1:]:
+                raise ValueError('No matching Chrome window in this Hermes conversation.')
+            if action == 'keep_window':
+                if choice.owner != owner or choice.parked or choice.finished or choice.switching or choice.active:
+                    raise RuntimeError('Keep a window from the current turn after its browser action has finished.')
+                sessions = self._browser_sessions(name)
+                if len(sessions) != 1:
+                    raise RuntimeError('Open the Chrome page before keeping its window.')
+                _, session = sessions[0]
+        if action == 'close_window':
+            if choice.kept_title is None:
+                raise ValueError('Only a kept Chrome window can be closed with this action.')
+            self.finish(session_name=name, interrupted=True)
+            with self.lock:
+                if name in self.owners:
+                    raise RuntimeError('Chrome window cleanup is pending. Try close_window again.')
+            return {'success': True, 'status': 'ok', 'session': name, 'state': 'closed'}
+        target, title = session.owned_window()
+        with self.lock, session.lock:
+            if (self.unloading or choice.finished or choice.switching or choice.owner != owner
+                    or choice.parked or self.owners.get(name) != owner
+                    or session.closed or session.disconnected or target not in session.owned):
+                raise RuntimeError('The Chrome window changed before it could be kept.')
+            session.kept_target = target
+            choice.kept_title = title
+        return {'success': True, 'status': 'ok', 'session': name, 'title': title, 'state': 'kept'}
 
     def child_started(self, parent_session_id='', child_session_id='', child_role='', **kwargs):
         if parent_session_id and child_session_id:
@@ -316,7 +399,7 @@ class ChromeProvider(BrowserProvider):
                         return {'success': True, 'rule': self.rules.apply(rule_change),
                                 'applied_to_current_session': False}
                     profile = self.choose_profile(choice, proposed=rule_change)
-                    if choice.pending:
+                    if choice.pending or choice.kept_title is not None:
                         return {'success': True, 'rule': self.rules.apply(rule_change),
                                 'applied_to_current_session': False,
                                 'pending_source_profile': choice.profile.id}
@@ -345,6 +428,8 @@ class ChromeProvider(BrowserProvider):
                 if choice.pending:
                     raise RuntimeError('This app is still observing a result in its source profile. '
                                        'Finish that result or stop its session before switching this alias.')
+                if choice.kept_title is not None:
+                    raise RuntimeError('Close the kept Chrome window before switching its profile.')
                 choice.switching = True
             self._replace_browser(base, choice, profile, rule_change=rule_change)
             return {'success': True, 'session': base, 'selected_profile': profile.id}
@@ -419,8 +504,7 @@ class ChromeProvider(BrowserProvider):
                 if owner is None or name in self.finishing:
                     continue
                 self.finishing.add(name)
-                identifiers = [identifier for identifier, session in self.sessions.items()
-                               if session.cache_key.split('@', 1)[0] == 'bu-named-' + name]
+                identifiers = [identifier for identifier, _ in self._browser_sessions(name)]
             try:
                 # Release this provider's resources. Hermes owns its driver and session cache.
                 closed = [self.close_session(identifier) for identifier in identifiers]
@@ -441,14 +525,21 @@ class ChromeProvider(BrowserProvider):
             with self.lock:
                 self.parents.pop(session_id, None)
 
-    def ended(self, session_id=None, task_id=None, turn_id=None, interrupted=False, **kwargs):
+    def ended(self, session_id=None, task_id=None, turn_id=None, completed=False,
+              failed=False, interrupted=False, turn_exit_reason=None, **kwargs):
         if not session_id:
             return
+        park = completed and not (failed or interrupted or turn_exit_reason == 'guardrail_halt')
         with self.lock:
-            turns = [(base, choice.turn_id)
-                     for base, choice in self.profile_choices.items()
-                     if choice.owner[1] == session_id and (task_id is None or choice.owner[0] == task_id)
-                     and (turn_id is None or choice.turn_id == turn_id)]
+            turns = []
+            for base, choice in self.profile_choices.items():
+                if (choice.owner[1] != session_id or (task_id is not None and choice.owner[0] != task_id)
+                        or (turn_id is not None and choice.turn_id != turn_id) or choice.parked):
+                    continue
+                if park and choice.kept_title is not None and not choice.finished:
+                    choice.parked = True
+                else:
+                    turns.append((base, choice.turn_id))
         for base, expected in turns:
             self.finish(session_name=base, expected_turn=expected, completed=True, interrupted=interrupted)
 
@@ -457,7 +548,8 @@ class ChromeProvider(BrowserProvider):
         if not session_key:
             return
         with self.lock:
-            names = [name for name, owner in self.owners.items() if owner[-1] == session_key]
+            names = [name for name, owner in self.owners.items() if owner[-1] == session_key
+                     and not ((choice := self._kept_choice(name)) and choice.parked)]
         for name in names:
             self.finish(session_name=name, interrupted=True)
         with self.lock:
@@ -512,12 +604,16 @@ def prepare_call(tool_name, args, task_id, *, session_id='', turn_id='', provide
     return {'action': 'modify', 'args': changes}
 
 
-SITE_HELP = ('Use browser_exec directly for Gemini Web and Google Flow, including requests called '
+SITE_HELP = ('Use browser_exec for website tasks in Original Chrome. The site-controls skill covers '
+             'navigation, mapped website actions and using a kept window in a later turn. '
+             'Use browser_exec directly for Gemini Web and Google Flow, including requests called '
              'browser_app in older chats. To open Gemini pass site_control as JSON text: '
              '{"app":"gemini","operation":"open_chat"}. To see a site guide use action describe with its app ID. '
              'Use code with site_control omitted or null for DOM inspection, screenshots and ordinary '
              'browsing in the same session. For a confirmed unmapped UI control, include site_control action '
-             'record_missing_control with the native code to log the finding and act in one call.')
+             'record_missing_control with the native code to log the finding and act in one call. '
+             'Use keep_window when the user wants the page to remain available after the turn. '
+             'Use list_windows and close_window to find or close a kept session in this conversation.')
 
 
 def with_site_controls(schema):
@@ -575,8 +671,8 @@ def register(ctx):
         register_site_controls(ctx, apps)
     if hasattr(ctx, 'register_skill'):
         ctx.register_skill('site-controls', root / 'skills' / 'site-controls' / 'SKILL.md',
-                           description='Use browser_exec.site_control for Gemini Web and Google Flow tasks, '
-                                       'including images, video, Deep Research, chats and downloads.',
+                           description='Use browser_exec for website browsing in Original Chrome, Gemini Web '
+                                       'and Google Flow controls, downloads and continuing a kept Chrome window.',
                            frontmatter={'platforms': ['macos'],
                                         'metadata': {'hermes': {'requires_toolsets': ['browser']}}})
 

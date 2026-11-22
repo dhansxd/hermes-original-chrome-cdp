@@ -64,7 +64,9 @@ tetap diperiksa pada jalur browser yang terdampak.
   pekerjaan itu. Status `running` adalah progres. Setelah hasil dan langkah
   yang diminta terverifikasi, Hermes memberi jawaban akhir dan plugin
   melepaskan jendela milik tugas. Stop dan kegagalan terminal memakai cleanup
-  yang sesuai. Tugas boleh memakai browser berkali-kali selama dibutuhkan.
+  yang sesuai. Atas permintaan pengguna, panggilan eksplisit `keep_window`
+  mempertahankan jendela tertentu sampai bisa dilanjutkan atau ditutup dalam
+  percakapan yang sama. Tugas boleh memakai browser berkali-kali selama dibutuhkan.
   Plugin tidak menetapkan batas jumlah aksi atau durasi total tugas. Batas
   teknis per panggilan dan penghentian oleh Hermes tetap perlu diperhitungkan.
   Jika aturan perpindahan profil yang sudah disetujui terpicu,
@@ -529,17 +531,22 @@ sesuai butir 4 dan panduan paket. Pilihan profil serta mode perpindahan manual
 atau otomatis yang sudah disetujui mengikuti [kontrak rolling](docs/ROLLING.md).
 Periksa hasil dan identitas permintaan asal sebelum melanjutkan ke profil lain.
 
-### Fitur setelah perbaikan lulus
+### Jendela Chrome lintas giliran
 
-- [ ] Biarkan jendela tertentu tersedia untuk pengguna ketika diminta secara
-  eksplisit atau ketika tujuan tugas jelas mengharuskan pengguna melanjutkan
-  di jendela itu. Pekerjaan Hermes selesai setelah halaman atau tindakan yang
-  diminta benar-benar siap digunakan. Menyiapkan video untuk ditonton hanyalah
-  salah satu contoh. Status `running` sendiri tidak memicu fitur ini.
-- [ ] Gunakan identitas jendela yang tepat untuk menutupnya ketika pengguna
-  meminta pada giliran berikutnya. Uji bahwa jendela yang dipakai pengguna
-  tetap tersedia, penutupan berikutnya hanya mengenai jendela yang dirujuk,
-  dan tugas biasa tetap menjalankan cleanup setelah selesai.
+- `keep_window` dipanggil hanya ketika pengguna meminta jendela tetap terbuka
+  atau hasil yang diminta jelas membutuhkan jendela tetap aktif. Verifikasi
+  halaman atau tindakan yang diminta sebelum mengakhiri giliran. Status
+  `running` sendiri tidak memicu fitur ini.
+- `list_windows` menampilkan jendela yang disimpan untuk percakapan saat ini.
+  Gunakan ID sesi yang sama untuk melanjutkan lewat browser native atau kontrol
+  situs. `close_window` menutup jendela yang dirujuk pengguna. Akhir percakapan
+  dan pelepasan plugin membersihkan jendela yang masih tersimpan.
+- [x] Pada 0.12.0, uji Chrome asli memverifikasi ID jendela, target CDP, dan
+  dokumen yang sama setelah akhir giliran, pembersihan cache idle Hermes, dan
+  penyambungan ulang driver native. Percakapan lain tidak dapat melihat,
+  memakai, atau menutup jendela tersebut. Penutupan berdasarkan ID, cleanup
+  tugas biasa, dan isolasi enam jendela pada satu profil lulus. Sebanyak 440
+  tes otomatis lulus.
 
 ### Bukti historis hingga 16 November 2026
 

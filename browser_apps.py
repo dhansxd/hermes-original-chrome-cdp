@@ -29,14 +29,17 @@ STATUSES = {'ok', 'running', 'quota_exhausted', 'needs_inspection', 'failed'}
 OBSERVATION_INTERVAL = 15
 
 
-CONTROL_ACTIONS = ('list', 'describe', 'run', 'observe', 'record_missing_control', 'enable', 'disable', 'remove')
+WINDOW_ACTIONS = ('keep_window', 'list_windows', 'close_window')
+CONTROL_ACTIONS = ('list', 'describe', 'run', 'observe', 'record_missing_control', 'enable', 'disable', 'remove',
+                   *WINDOW_ACTIONS)
 CONTROL_FIELDS = {'action', 'app', 'operation', 'params', 'job', 'target_profile', 'session'}
 CONTROL_SCHEMA = {
     'type': ['string', 'null'],
-    'description': 'A JSON request for an installed site; leave empty for ordinary Python. '
+    'description': 'A JSON request for an installed site or a kept Chrome window; leave empty for ordinary Python. '
                    'Examples: {"action":"list"}, {"action":"describe","app":"gemini"}, '
                    '{"app":"gemini","operation":"click","params":{"control":"tools_menu"}}. '
-                   'Each installed site defines its own params.',
+                   'Each installed site defines its own params. Window actions are keep_window, list_windows and close_window. '
+                   'Pass the exact browser session for keep_window or close_window.',
 }
 
 
@@ -67,6 +70,8 @@ def site_request(args):
     action = command.get('action', 'run' if 'operation' in command else 'list')
     if action not in CONTROL_ACTIONS:
         raise ValueError('Choose an action from the site_control schema.')
+    if action in WINDOW_ACTIONS and set(command) - {'action', 'session'}:
+        raise ValueError('Window actions accept only action and session.')
     return {**command, 'action': action}
 
 
@@ -490,9 +495,13 @@ class AppHost:
     def handle(self, args, task_id='', session_id='', **kwargs):
         context = None
         try:
+            action = args.get('action', 'list')
+            if action in WINDOW_ACTIONS:
+                result = self.provider.window_control(action, args.get('session'), task_id, session_id,
+                                                      session_key=kwargs.get('session_key', ''))
+                return json.dumps(result, ensure_ascii=False)
             if self.bundled_source:
                 self.seed_packages(self.bundled_source)
-            action = args.get('action', 'list')
             if action == 'list':
                 entries = []
                 directories = sorted(self.root.iterdir()) if self.root.exists() else []

@@ -17,10 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agent.browser_registry import get_provider
 from gateway.session_context import clear_session_vars, set_session_vars
-from hermes_constants import set_hermes_home_override
+from hermes_constants import hermes_home_key, set_hermes_home_override
 from hermes_cli.plugins import get_plugin_manager, invoke_hook
 from hermes_cli.plugins_manifest import parse_manifest_file
-from tools.browser_session_lifecycle import cleanup_profile_browsers
+from tools.browser_session_lifecycle import cleanup_profile_browsers, cleanup_single_session
 from tools import browser_session
 from tools.registry import registry
 from model_tools import handle_function_call
@@ -337,6 +337,42 @@ def verify_research_wait_and_stop(call, provider, name):
     assert owned.cleanup_complete and not owned.owned
 
 
+def verify_kept_window(call, run, provider, turns):
+    turns['research'] = uuid.uuid4().hex
+    original = run('research', initialize=True, status='running')
+    name = original['session']
+    owned = next(session for session in provider.sessions.values()
+                 if session.cache_key.split('@', 1)[0] == 'bu-named-' + name)
+    target, = [page['targetId'] for page in owned._inventory() if page['type'] == 'page']
+    window = owned.wire.call('Browser.getWindowForTarget', {'targetId': target})['windowId']
+    kept = call('research', action='keep_window', session=name)
+    assert kept['state'] == 'kept' and kept['session'] == name
+    invoke_hook('on_session_end', session_id='research-chat', task_id='research',
+                turn_id=turns['research'], completed=True, turn_exit_reason='text_response')
+    assert call('research', action='list_windows')['windows'][0]['state'] == 'parked'
+    assert call('parent', action='list_windows')['windows'] == []
+    assert not call('parent', action='close_window', session=name, require_success=False)['success']
+    assert not call('parent', session=name, code='print(page_info())', require_success=False).get('success')
+    invoke_hook('agent_loop_stopped', session_key='apps-fixture-research', platform='cli',
+                reason='user_stop', invalidation_reason='session_interrupt')
+    cleanup_single_session(owned.cache_key)
+    tools.browser_use_cli.stop_harness_daemons(hermes_home_key())
+    assert owned.kept_window_exists() and not owned.cleanup_complete
+    turns['research'] = uuid.uuid4().hex
+    resumed = call('research', app='fixture', operation='inspect', session=name)
+    assert resumed['session'] == name
+    marker = json.loads(resumed['data']['native']['output'].strip())
+    assert marker == original['document']
+    assert resumed['data']['directory'] == original['data']['directory']
+    assert owned.wire.call('Browser.getWindowForTarget', {'targetId': target})['windowId'] == window
+    invoke_hook('on_session_end', session_id='research-chat', task_id='research',
+                turn_id=turns['research'], completed=True, turn_exit_reason='text_response')
+    turns['research'] = uuid.uuid4().hex
+    closed = call('research', action='close_window', session=name)
+    assert closed['state'] == 'closed' and owned.cleanup_complete and not owned.owned
+    assert call('research', action='list_windows')['windows'] == []
+
+
 def verify(*, research_only=False):
     source = Path(__file__).resolve().parents[1]
     server = ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
@@ -416,6 +452,8 @@ plugins:
                     return report
                 invoke_hook('agent_loop_stopped', session_key='apps-fixture-research', platform='cli',
                             reason='user_stop', invalidation_reason='session_interrupt')
+                verify_kept_window(call, run, provider, turns)
+                report['explicit_kept_window_resumes_after_native_idle_eviction_and_closes_by_id'] = True
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     futures = [pool.submit(run, task, initialize=True,
                                            platform='telegram' if task == 'channel' else 'cli')
