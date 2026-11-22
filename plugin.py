@@ -683,7 +683,7 @@ def register(ctx):
                            description='Use browser_exec for website browsing in Original Chrome, Gemini Web '
                                        'and Google Flow controls, downloads and continuing a kept Chrome window.',
                            frontmatter={'platforms': ['macos'],
-                                        'metadata': {'hermes': {'requires_toolsets': ['browser']}}})
+                                        'metadata': {'hermes': {'requires_tools': ['browser_exec']}}})
 
     def profile_control(args, **context):
         return json.dumps(provider.profiles(args, **context), ensure_ascii=False)

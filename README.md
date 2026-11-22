@@ -69,7 +69,7 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.12.1 was verified with Hermes v0.23.2 on macOS. The plugin registers
+The 0.12 series was verified with Hermes v0.23.2 on macOS. The plugin registers
 the Chrome provider through the public Hermes API and manages Chrome startup,
 consent, the CDP relay, and owned windows. Hermes manages its native browser
 driver and session cache. [Hermes public plugin API](https://hermes-agent.nousresearch.com/docs/developer-guide/plugins/public-api)

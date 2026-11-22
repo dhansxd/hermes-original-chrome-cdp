@@ -148,6 +148,29 @@ class BrowserAppTests(unittest.TestCase):
         context.register_middleware.assert_not_called()
         self.assertIn('agent_loop_stopped', [call.args[0] for call in context.register_hook.call_args_list])
 
+    def test_browser_skill_is_in_fresh_prompt_when_native_browser_exec_is_available(self):
+        from agent.prompt_builder import build_skills_system_prompt
+
+        context = Mock()
+        context.has_capability.return_value = True
+        with patch.object(plugin, 'register_site_controls'):
+            plugin.register(context)
+        self.addCleanup(context.register_browser_provider.call_args.args[0].unload)
+        skill = f'{plugin.NAME}:{context.register_skill.call_args.args[0]}'
+        metadata = context.register_skill.call_args.kwargs
+        manager = Mock()
+        manager.list_plugin_skill_metadata.return_value = [{'name': skill, **metadata}]
+        skills_dir = self.root / 'skills'
+        skills_dir.mkdir()
+        settings = {
+            'available_toolsets': {'browser-use', 'skills'},
+            'skills_dir_override': skills_dir,
+        }
+        with (patch('hermes_cli.plugins.discover_plugins'),
+              patch('hermes_cli.plugins.get_plugin_manager', return_value=manager)):
+            self.assertIn(skill, build_skills_system_prompt(available_tools={'browser_exec', 'skill_view'}, **settings))
+            self.assertNotIn(skill, build_skills_system_prompt(available_tools={'skill_view'}, **settings))
+
     def test_running_site_does_not_replace_explicit_native_browser_code(self):
         self.package(source='''FALLBACK_CLICK_OBSERVER = "legacy observer"
 def fallback_send_pending(context):

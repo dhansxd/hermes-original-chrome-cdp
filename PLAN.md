@@ -1,10 +1,10 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 30, 22 November 2026.
+Revisi PRD 31, 22 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-Host 0.12.1 menyediakan browsing umum, kontrol situs, dan tindakan jendela
+Host 0.12.2 menyediakan browsing umum, kontrol situs, dan tindakan jendela
 lintas giliran melalui satu `browser_exec`. Jalur distribusi publik memakai
 [URL Git](README.md#install). Pilih dan pulihkan browser secara manual melalui
 Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
@@ -159,6 +159,12 @@ tetap diperiksa pada jalur browser yang terdampak.
    `example.com`. Sesi kedua memakai kontrol `tools_menu` Gemini, lalu membaca
    dua pilihan menunya melalui DOM di sesi browser yang sama. Kedua percakapan
    selesai dan memakai ID sesi browser yang berbeda.
+   - [x] Pada Hermes v0.23.2, `skills_list` menemukan skill plugin 0.12.1,
+     tetapi daftar ringkas Telegram menyaringnya ketika `browser_exec`
+     hadir lewat `browser-use` dan toolset `browser` tidak tersedia di
+     sesi. Host 0.12.2 menyaratkan nama tool `browser_exec` secara langsung.
+     Regresi memakai pembentuk daftar Hermes dan memeriksa kedua kondisi,
+     saat tool itu tersedia dan saat tool itu tidak tersedia.
 2. [x] Selesaikan perombakan dan dokumentasikan pemasangan melalui Git.
    - [x] Dokumentasikan pemilihan dan pemulihan browser secara manual.
      Audit Hermes v0.23.2 pada profil sementara menunjukkan bahwa enable,
