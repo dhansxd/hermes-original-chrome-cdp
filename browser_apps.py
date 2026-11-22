@@ -228,6 +228,7 @@ class AppContext:
                     or (hasattr(self, 'turn_id') and choice.turn_id != self.turn_id)
                     or self.session not in provider.owners):
                 raise RuntimeError('This extension requires its active calling browser session.')
+            provider.require_device(choice.device)
             return choice
 
     @property
@@ -568,12 +569,6 @@ class AppHost:
                     if metadata.get('profile_policy') == 'rotate_on_limit':
                         try:
                             device = self.provider.default_device()
-                            session = args.get('session')
-                            if isinstance(session, str):
-                                base = self.provider.profile_routes.get(session)
-                                choice = self.provider.profile_choices.get(base)
-                                if choice and choice.owner[:2] == (task_id, session_id):
-                                    device = choice.device
                             result['jobs'] = self.jobs(identifier, device).summaries(session_id)
                         except (OSError, ValueError) as error:
                             result['jobs_error'] = str(error)

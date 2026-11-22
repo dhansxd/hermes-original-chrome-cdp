@@ -1,5 +1,5 @@
 name: original-chrome-default
-version: 0.13.3
+version: 0.14.0
 manifest_version: 2
 api_version: 1
 homepage: https://github.com/dhansxd/hermes-original-chrome-cdp
@@ -26,7 +26,7 @@ config_schema:
   default_device:
     type: str
     default: local
-    description: Default Chrome device for new sessions. Local or a configured Windows device ID.
+    description: The only Chrome device used by this plugin. Local or a configured Windows device ID.
   windows_devices:
     type: dict
     default: {}

@@ -12,8 +12,12 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
 
 ### Chrome di perangkat lain
 
-- Hermes tetap memakai penyedia Chrome dan `browser_exec` yang sama. macOS lokal
-  menjadi pilihan awal. Pengguna dapat memilih perangkat Windows dan profilnya.
+- Hermes memakai satu perangkat Chrome aktif melalui `browser_exec`. Pilih
+  Mac lokal atau satu perangkat Windows lewat `chrome_profiles set_device`.
+  Pemilihan profil berlaku di perangkat aktif. Jika perangkat itu gagal,
+  laporkan error akses Chrome. Perpindahan otomatis ke Mac ditunda.
+- Selesaikan atau tutup jendela tugas milik plugin sebelum mengganti perangkat.
+  Jendela Chrome yang dibuka pengguna tetap di bawah kendali pengguna.
 - Siapkan Windows sekali dengan Chrome, akun desktop aktif, dan OpenSSH.
   Gunakan SSH lewat LAN atau Tailscale. Rilis memuat skrip dan [panduan setup](docs/WINDOWS.md).
 - [x] Pada 0.13.0, uji LAN dan Tailscale saat Chrome sudah punya jendela.
@@ -41,6 +45,11 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   CLI dengan macOS sebagai default memilih profil Windows terlebih dahulu,
   lalu `browser_exec` biasa mengembalikan platform Windows. Jika satu alias
   memiliki beberapa pilihan perangkat/profil, gunakan ID sesi yang tepat.
+- [x] Pada 0.14.0, uji CLI mengganti perangkat aktif ke Windows sebelum membuka
+  jendela. Permintaan memilih profil Mac ditolak. Dua panggilan native memakai
+  satu jendela Chrome Windows. Percobaan pergantian saat jendela milik tugas
+  aktif ditolak. Setelah jendela ditutup, perangkat Windows uji yang tidak
+  dapat dihubungi menghasilkan error dan tidak membuat sesi Chrome lokal.
 
 ### Tujuan produk
 

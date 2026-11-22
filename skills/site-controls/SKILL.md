@@ -23,9 +23,10 @@ as `site_control`. Use `{"action":"list"}` to discover other installed packages.
 Keep the same `browser_exec.session` across calls. On an ordinary website, use
 the usual browser helpers. When a mapped control needs inspection, use the
 normal DOM and screenshot helpers in this window and continue the task there.
-For a request naming a configured Windows device, choose it and its Chrome
-profile through `chrome_profiles` before the first `browser_exec` call. Use the
-same session alias for both.
+All sessions use the one device reported by `chrome_profiles` with
+`list_devices`. For an explicit request to switch Chrome devices, use
+`set_device`. Select profiles only on the active device, with the same session
+alias as `browser_exec`. Report an unavailable device to the user.
 
 For a confirmed missing control on an installed site, use `site_control` with
 `action: record_missing_control`, its `app`, and `params` containing

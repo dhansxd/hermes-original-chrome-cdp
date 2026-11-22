@@ -37,10 +37,10 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(a, self.call('agent-a', alias))
             self.assertEqual(a, self.call('agent-a', a['args']['session']))
 
-    def test_windows_profile_selection_preserves_other_tasks_and_the_local_default(self):
+    def test_windows_mode_uses_only_remote_chrome_for_all_tasks(self):
         windows = {'pc': {'ssh_host': 'chrome-pc'}}
         remote = plugin.ChromeProfile('Default', 'Windows profile', (11, None, None))
-        provider = plugin.ChromeProvider({'windows_devices': windows}.get)
+        provider = plugin.ChromeProvider({'windows_devices': windows, 'default_device': 'pc'}.get)
         self.addCleanup(provider.unload)
         with patch('plugin.WindowsChrome') as factory:
             desktop = factory.return_value
@@ -55,13 +55,18 @@ class ProviderTests(unittest.TestCase):
             with patch.object(plugin.ChromeSession, '_start') as start:
                 for selection in (a, b):
                     provider.create_session('bu-named-' + selection['args']['session'] + '@test')
-                start.assert_called_once()
+                self.assertEqual(start.call_count, 2)
             active = {session.cache_key.split('@')[0]: session for session in provider.sessions.values()}
             self.assertIs(active['bu-named-' + a['args']['session']].desktop, desktop)
-            self.assertIsNone(active['bu-named-' + b['args']['session']].desktop)
+            self.assertIs(active['bu-named-' + b['args']['session']].desktop, desktop)
+            self.assertNotEqual(a['args']['session'], b['args']['session'])
+            rejected = provider.profiles({'action': 'select', 'session': profiles,
+                                          'device': 'local', 'profile': 'Default'}, task_id='A', session_id='chat')
+            self.assertFalse(rejected['success'])
+            self.assertIn('inactive', rejected['error'])
 
     def test_site_profile_selection_applies_to_first_native_call_with_same_alias(self):
-        settings = {'windows_devices': {'pc': {'ssh_host': 'chrome-pc'}}}
+        settings = {'windows_devices': {'pc': {'ssh_host': 'chrome-pc'}}, 'default_device': 'pc'}
         remote = plugin.ChromeProfile('Profile 1', 'Windows profile', (11, None, None))
         provider = plugin.ChromeProvider(settings.get)
         self.addCleanup(provider.unload)
@@ -85,7 +90,60 @@ class ProviderTests(unittest.TestCase):
             for task, scope in [('B', owner), ('A', {**owner, 'turn_id': 'next-turn'})]:
                 peer = provider.prepare_call('browser_exec', {'session': 'work'}, task, **scope)
                 self.assertNotEqual(peer['args']['session'], selection)
-                self.assertEqual(provider.profile_choices[peer['args']['session']].device, 'local')
+                self.assertEqual(provider.profile_choices[peer['args']['session']].device, 'pc')
+
+    def test_device_switch_is_global_and_requires_old_owned_sessions_to_finish(self):
+        settings = {'windows_devices': {'pc': {'ssh_host': 'chrome-pc'}}}
+        provider = plugin.ChromeProvider(settings.get, set_setting=settings.__setitem__)
+        self.addCleanup(provider.unload)
+        owner = {'session_id': 'chat', 'turn_id': 'turn', 'config': self.config()}
+        with patch.dict(os.environ, {}, clear=True):
+            native = provider.prepare_call('browser_exec', {'session': 'work'}, 'A', **owner)
+            name = native['args']['session']
+            provider.create_session('bu-named-' + name)
+
+            def switch(device):
+                route = provider.prepare_call('chrome_profiles', {'session': 'switch'}, 'B', **owner)
+                return provider.profiles({'action': 'set_device', 'device': device,
+                                          'session': route['args']['session']}, task_id='B', session_id='chat')
+
+            self.assertFalse(switch('pc')['success'])
+            self.assertEqual(provider.default_device(), 'local')
+            provider.finish(task_id='A', session_id='chat', completed=True)
+            self.assertEqual(switch('pc'), {'success': True, 'selected_device': 'pc'})
+            self.assertEqual(provider.default_device(), 'pc')
+            self.assertFalse(provider.profile_choices)
+            self.assertFalse(provider.sessions)
+            with self.assertRaisesRegex(RuntimeError, 'inactive'):
+                provider.desktop('local')
+            self.assertEqual(switch('local'), {'success': True, 'selected_device': 'local'})
+            self.assertIsNone(provider.desktop('local'))
+
+    def test_unavailable_windows_is_reported_before_any_local_profile_or_browser_opens(self):
+        settings = {'windows_devices': {'pc': {'ssh_host': 'chrome-pc'}}, 'default_device': 'pc'}
+        provider = plugin.ChromeProvider(settings.get)
+        self.addCleanup(provider.unload)
+        with patch('plugin.WindowsChrome') as factory, patch.dict(os.environ, {}, clear=True), \
+                patch('plugin.get_profile') as local_profile, patch('plugin.ChromeSession') as chrome_session:
+            factory.return_value.profile.side_effect = RuntimeError('Windows SSH unavailable')
+            prepared = provider.prepare_call('browser_exec', {}, 'A', session_id='chat', config=self.config())
+            self.assertEqual(prepared['action'], 'block')
+            self.assertIn("Could not access Chrome on 'pc': Windows SSH unavailable", prepared['message'])
+            self.assertEqual(provider.create_session('unbound')['bb_session_id'], 'unloaded')
+            local_profile.assert_not_called()
+            chrome_session.assert_not_called()
+
+    def test_stale_chrome_endpoint_rejects_commands_after_device_setting_changes(self):
+        settings = {'windows_devices': {'pc': {'ssh_host': 'chrome-pc'}}}
+        provider = plugin.ChromeProvider(settings.get)
+        self.addCleanup(provider.unload)
+        identifier = provider.create_session('local-task')['bb_session_id']
+        session = provider.sessions[identifier]
+        settings['default_device'] = 'pc'
+        with patch.object(session, '_open_seed') as launch:
+            with self.assertRaisesRegex(RuntimeError, 'inactive'):
+                session.command(Mock(), 'Target.getTargets', {})
+            launch.assert_not_called()
 
     def test_native_alias_does_not_guess_between_two_selected_site_profiles(self):
         provider = plugin.ChromeProvider()

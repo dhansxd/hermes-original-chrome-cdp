@@ -40,6 +40,9 @@ and verification evidence before calling a checklist item complete.
 - Use one owned window in the original Chrome for the entire task. Reuse its
   CDP session for clicks, typing, progress checks, result collection and any
   requested delivery. Keep the other agents' and manual windows independent.
+- Use one selected Chrome device per Hermes profile. Select Chrome profiles
+  within that device. If Chrome on the selected device is unavailable, report
+  the failure without opening Chrome on another device.
 - Make the browser and relevant installed controls discoverable in a fresh
   Hermes session through the normal tool and skill catalogs. A request that
   only names the task must suffice. Keep routing independent of conversation

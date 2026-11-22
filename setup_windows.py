@@ -15,7 +15,7 @@ def main():
     parser.add_argument('--ssh-config', help='an alternate local OpenSSH configuration file')
     parser.add_argument('--device', default='windows', help='device ID in the active Hermes profile')
     parser.add_argument('--profile', help='pin a Windows Chrome directory ID from the setup output')
-    parser.add_argument('--make-default', action='store_true', help='choose Windows for new Hermes browser sessions')
+    parser.add_argument('--make-default', action='store_true', help='select this Windows device as the only browser device')
     args = parser.parse_args()
     if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}', args.device) or args.device == 'local':
         parser.error('--device must be a name such as windows or laptop, distinct from local')

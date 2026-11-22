@@ -101,8 +101,9 @@ class Connection:
 
 
 class ChromeSession:
-    def __init__(self, data, profile, *, profile_identity=None, desktop=None):
+    def __init__(self, data, profile, *, profile_identity=None, desktop=None, check_device=lambda: None):
         self.desktop = desktop
+        self.check_device = check_device
         self.data = desktop.guard_key if desktop else Path(data).resolve()
         self.profile = profile
         self.profile_identity = profile_identity
@@ -210,6 +211,7 @@ class ChromeSession:
 
     def _start(self):
         with self.start_lock:
+            self.check_device()
             if self.closed:
                 raise RuntimeError('Browser session is closed.')
             if self.error:
@@ -220,6 +222,7 @@ class ChromeSession:
                 return
             try:
                 with consent_guard(self.data, timeout=150 if self.desktop else 60):
+                    self.check_device()
                     if (self.profile_identity is not None
                             and self._profile().identity != self.profile_identity):
                         raise RuntimeError('The selected Chrome profile was replaced before startup.')
@@ -387,6 +390,7 @@ class ChromeSession:
                         self.initial_target = None
                         return {'targetId': initial}
             with consent_guard(self.data):
+                self.check_device()
                 # Cleanup uses this same guard. A queued create must recheck admission
                 # after acquiring it so no window can appear after the final inventory.
                 if self.closed:

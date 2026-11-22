@@ -66,18 +66,28 @@ operations use temporary tasks in the signed-in SSH user's desktop session.
 
 Use `--profile "Profile 1"` to pin a recognized directory ID, or omit it to use
 the last-used Windows Chrome profile. For a separate OpenSSH config, pass
-`--ssh-config /path/to/config`. Use `--make-default` to start all new browser
-sessions on this device. The script adds the device under
+`--ssh-config /path/to/config`. With plugin browser sessions closed,
+`--make-default` selects this device for the plugin. The script adds the device under
 `plugins.entries.original-chrome-default.settings.windows_devices`. Apply the
 Hermes reload or restart that your installation requires after setup.
 
-Use `chrome_profiles` with `list_devices` to see configured devices.
-`list` accepts the device ID. To choose it for one task, select its device and
-profile before opening the page and then use the same `browser_exec` session.
-Use the ID `local` for the Mac.
+## Choose one Chrome device
+
+`chrome_profiles` with `list_devices` shows the active device and available
+choices. When the plugin's browser sessions have finished, use `set_device`
+to apply the choice to all browser sessions in this Hermes profile. Use
+`local` to return to the Mac. A failure on the selected device is reported
+as a browser error.
 
 ```json
-{"action":"select","device":"windows","profile":"Default","session":"research"}
+{"action":"set_device","device":"windows"}
+```
+
+Then use `list` and `select` to pick a Chrome profile on the selected device.
+Use the same session alias in your next `browser_exec` call.
+
+```json
+{"action":"select","profile":"Profile 1","session":"research"}
 ```
 
 One selection for a named session also applies when the first `browser_exec`

@@ -1,5 +1,6 @@
 """Original Chrome as a native Hermes browser provider, without tool replacements."""
 import atexit
+from contextvars import copy_context
 import hashlib
 import json
 import logging
@@ -83,7 +84,8 @@ class ChromeProvider(BrowserProvider):
         atexit.register(self.unload)
 
     def is_available(self):
-        return sys.platform == 'darwin' and (CHROME.exists() or bool(self.configured_devices()))
+        # Keep routing to this provider even when the selected browser is unavailable.
+        return sys.platform == 'darwin' and (self.default_device() != 'local' or CHROME.exists())
 
     def get_setup_schema(self):
         return {'name': self.display_name, 'badge': 'local',
@@ -95,14 +97,24 @@ class ChromeProvider(BrowserProvider):
 
     def default_device(self):
         name = self.get_setting('default_device')
-        return name if isinstance(name, str) and name else 'local'
+        return 'local' if name is None else name
+
+    def validate_device(self, device):
+        if device != 'local' and (not isinstance(device, str)
+                or not isinstance(self.configured_devices().get(device), dict)):
+            raise ValueError('Chrome device is unavailable. Use chrome_profiles list_devices and set_device.')
+
+    def require_device(self, device):
+        active = self.default_device()
+        self.validate_device(active)
+        if device != active:
+            raise RuntimeError(f'Chrome device {device!r} is inactive. The selected device is {active!r}.')
 
     def desktop(self, device):
+        self.require_device(device)
         if device == 'local':
             return None
-        settings = self.configured_devices().get(device)
-        if not isinstance(settings, dict):
-            raise ValueError('Choose a configured Chrome device from chrome_profiles.')
+        settings = self.configured_devices()[device]
         key = (device, json.dumps(settings, sort_keys=True))
         if key not in self.windows_devices:
             self.windows_devices[key] = WindowsChrome(device, settings)
@@ -120,6 +132,7 @@ class ChromeProvider(BrowserProvider):
 
     def verify_at(self, device, profile):
         if device == 'local':
+            self.require_device(device)
             return verify_profile(profile, self.data)
         current = self.profile_at(device, profile.id)
         if current.identity != profile.identity:
@@ -127,8 +140,8 @@ class ChromeProvider(BrowserProvider):
         return current
 
     @staticmethod
-    def rule_namespace(choice, device=None):
-        device = device or choice.device
+    def rule_namespace(choice):
+        device = choice.device
         return choice.app_id if device == 'local' else 'windows/' + device + '/' + choice.app_id
 
     def _kept_choice(self, name):
@@ -145,11 +158,24 @@ class ChromeProvider(BrowserProvider):
         return {'session_name': 'original-chrome-' + identifier, 'bb_session_id': identifier,
                 'cdp_url': session.url, 'features': {'original_chrome': True}}
 
+    @staticmethod
+    def _unavailable_session():
+        # An exception here makes the native Hermes dispatcher start local Chromium.
+        return {'session_name': NAME + '-unloaded', 'bb_session_id': 'unloaded',
+                'cdp_url': 'ws://original-chrome-provider-unloaded.invalid/devtools/browser/unloaded',
+                'features': {'original_chrome': True}}
+
     def create_session(self, task_id):
         # Startup failures stay on this provider's CDP endpoint. A create_session
         # exception would make Hermes fall back to packaged Chromium.
         with self.lock:
             name = task_id.removeprefix('bu-named-').split('@', 1)[0]
+            choice = self.profile_choices.get(self.profile_routes.get(name))
+            device = choice.device if choice else self.default_device()
+            try:
+                self.require_device(device)
+            except (ValueError, RuntimeError):
+                return self._unavailable_session()
             kept = self._kept_choice(name)
             if kept and not kept.finished and not self.unloading and name not in self.finishing:
                 for identifier, session in self._browser_sessions(name):
@@ -158,19 +184,20 @@ class ChromeProvider(BrowserProvider):
             # Finalization removes the hook's admission for this exact native name.
             if (self.unloading or kept or name in self.finishing
                     or (task_id.startswith('bu-named-') and name not in self.owners)):
-                # Native Hermes falls back to Chromium on create_session exceptions.
-                # Retired providers and closing sessions fail at CDP without a new listener.
-                return {'session_name': NAME + '-unloaded', 'bb_session_id': 'unloaded',
-                        'cdp_url': 'ws://original-chrome-provider-unloaded.invalid/devtools/browser/unloaded',
-                        'features': {'original_chrome': True}}
-            choice = self.profile_choices.get(self.profile_routes.get(name))
-            profile = choice.profile if choice and choice.browser_name == name else None
-            directory = profile.id if profile else profile_directory(self.get_setting('profile_directory'))
-            desktop = self.desktop(choice.device) if choice else None
-            options = {'profile_identity': profile.identity if profile else None}
-            if desktop:
-                options['desktop'] = desktop
-            session = ChromeSession(self.data, directory, **options)
+                return self._unavailable_session()
+            try:
+                desktop = self.desktop(device)
+                profile = choice.profile if choice and choice.browser_name == name else None
+                if profile is None and desktop:
+                    profile = self.profile_at(device, None)
+                directory = profile.id if profile else profile_directory(self.get_setting('profile_directory'))
+                settings_context = copy_context()
+                session = ChromeSession(self.data, directory, profile_identity=profile.identity if profile else None,
+                                        desktop=desktop,
+                                        check_device=lambda: settings_context.copy().run(self.require_device, device))
+            except (KeyError, OSError, RuntimeError, ValueError) as error:
+                logging.getLogger(__name__).warning('Original Chrome could not open the selected device: %s', error)
+                return self._unavailable_session()
             session.cache_key = task_id
             identifier = uuid.uuid4().hex
             self.sessions[identifier] = session
@@ -318,6 +345,7 @@ class ChromeProvider(BrowserProvider):
                     result['args']['session'] = base
                     return result
                 try:
+                    self.require_device(choice.device)
                     if app_id and kwargs.get('defer_profile'):
                         if choice.browser_name is None:
                             choice.browser_name = base
@@ -329,7 +357,7 @@ class ChromeProvider(BrowserProvider):
                     else:
                         choice.profile = self.verify_at(choice.device, choice.profile)
                 except (OSError, ValueError, RuntimeError, KeyError) as error:
-                    return {'action': 'block', 'message': 'Original Chrome profile selection failed: ' + str(error)}
+                    return {'action': 'block', 'message': f'Could not access Chrome on {choice.device!r}: {error}'}
                 name = choice.browser_name
                 if name in self.finishing:
                     return {'action': 'block', 'message': 'Original Chrome session is closing.'}
@@ -397,6 +425,7 @@ class ChromeProvider(BrowserProvider):
             if choice is None or choice.browser_name != name or choice.owner[1:] != owner[1:]:
                 raise ValueError('No matching Chrome window. Use the session ID returned by browser_exec.')
             if action == 'keep_window':
+                self.require_device(choice.device)
                 if choice.owner != owner or choice.parked or choice.finished or choice.switching or choice.active:
                     raise RuntimeError('Keep a window from the current turn after its browser action has finished.')
                 sessions = self._browser_sessions(name)
@@ -442,13 +471,25 @@ class ChromeProvider(BrowserProvider):
                 if choice.finished or choice.switching:
                     raise RuntimeError('This browser session is finishing or changing Chrome profile.')
                 action = args.get('action', 'list')
-                device = args.get('device') or choice.device
-                if not isinstance(device, str):
-                    raise ValueError('Choose a configured Chrome device.')
-                namespace = self.rule_namespace(choice, device)
+                active = self.default_device()
                 if action == 'list_devices':
                     return {'success': True, 'devices': ['local', *sorted(self.configured_devices())],
-                            'selected_device': choice.device, 'default_device': self.default_device()}
+                            'selected_device': active, 'default_device': active}
+                if action == 'set_device':
+                    requested = args.get('device')
+                    self.validate_device(requested)
+                    if requested != active:
+                        if self.sessions or self.owners or self.finishing:
+                            raise RuntimeError('Finish or close the active plugin browser sessions before switching devices.')
+                        if self.set_setting is None:
+                            raise RuntimeError('The plugin configuration writer is unavailable.')
+                        self.set_setting('default_device', requested)
+                        self.forget_profiles()
+                    return {'success': True, 'selected_device': requested}
+                device = args.get('device') or choice.device
+                self.require_device(device)
+                self.require_device(choice.device)
+                namespace = self.rule_namespace(choice)
                 if action == 'list':
                     profiles = self.profile_list(device)
                     rule, source = self.rules.resolve(namespace, choice.owner, choice.alias,
@@ -466,8 +507,6 @@ class ChromeProvider(BrowserProvider):
                             'rule': rule, 'rule_source': source,
                             'profiles': [{'id': item.id, 'name': item.name} for item in profiles]}
                 if action in {'set_rule', 'clear_rule'}:
-                    if device != choice.device:
-                        raise ValueError('Select the Chrome device for this session before setting its profile rule.')
                     scope = args.get('scope', 'session')
                     if not isinstance(scope, str):
                         raise ValueError('Choose a profile rule scope.')
@@ -510,7 +549,7 @@ class ChromeProvider(BrowserProvider):
                     if self.rules.read('', 'default', '*') is not None:
                         self.rules.change('', 'default', '*', '', None)
                     return {'success': True, 'default_profile': profile.id}
-                if (device == choice.device and choice.profile and choice.profile.id == profile.id
+                if (choice.profile and choice.profile.id == profile.id
                         and choice.profile.identity == profile.identity):
                     if rule_change is not None:
                         self.rules.apply(rule_change)
@@ -522,12 +561,12 @@ class ChromeProvider(BrowserProvider):
                 if choice.kept_title is not None:
                     raise RuntimeError('Close the kept Chrome window before switching its profile.')
                 choice.switching = True
-            self._replace_browser(base, choice, profile, rule_change=rule_change, device=device)
+            self._replace_browser(base, choice, profile, rule_change=rule_change)
             return {'success': True, 'session': base, 'selected_profile': profile.id}
         except (OSError, ValueError, RuntimeError, KeyError) as error:
             return {'success': False, 'error': str(error)}
 
-    def _replace_browser(self, base, choice, profile, *, rule_change=None, device=None):
+    def _replace_browser(self, base, choice, profile, *, rule_change=None):
         """Retire the old native name outside the provider's lock before handing out a new one."""
         previous = choice.browser_name
         try:
@@ -542,12 +581,10 @@ class ChromeProvider(BrowserProvider):
                     # The native cache may still have the retired name if saving fails.
                     choice.browser_name = base + '-' + uuid.uuid4().hex[:12]
                     self.profile_routes[choice.browser_name] = base
-                device = device or choice.device
-                profile = self.verify_at(device, profile)
+                profile = self.verify_at(choice.device, profile)
                 if rule_change is not None:
                     self.rules.apply(rule_change)
                 choice.profile = profile
-                choice.device = device
                 if previous is None:
                     choice.browser_name = base
                     self.profile_routes[base] = base
@@ -775,8 +812,10 @@ def register(ctx):
     ctx.register_tool(name=PROFILE_TOOL, toolset='browser', handler=profile_control,
                       check_fn=provider.is_available, schema={
         'name': PROFILE_TOOL,
-        'description': 'Control profile selection for the Original Chrome CDP provider and each agent\'s '
-                       'named browser_exec sessions. For Gemini Web and Google Flow actions from older '
+        'description': 'Select one Chrome device for Original Chrome, and choose profiles within that device. '
+                       'list_devices shows the active device. Use set_device only when the user requests a switch. '
+                       'Every agent uses the selected device. A device failure is reported without switching. '
+                       'For Gemini Web and Google Flow actions from older '
                        'browser_app conversations, call browser_exec with site_control. '
                        'list refreshes directory IDs and display names from Chrome, reflecting profile additions, '
                        'removals and renames. Agents can share a profile or choose different profiles with separate '
@@ -784,21 +823,21 @@ def register(ctx):
                        'that session\'s current windows and tabs. The next browser_exec using the same session alias '
                        'opens the chosen profile directly. A session uses the saved default on its first '
                        'browser_exec, with explicit selections taking precedence. '
-                       'Pass app to manage a website extension independently of ordinary browsing. '
+                       'Pass app to manage a website extension profile independently of ordinary browsing. '
                        'set_rule persists fixed/default/random policy for a session, agent, subagent '
                        'role, platform or default. Rules resolve in that order, followed by parent '
                        'inheritance and the service default. Random is chosen once for an active session. '
                        'clear_rule restores inherited policy. Defaults affect new sessions. '
                        'A pending app result keeps its source profile until observed or stopped.',
         'parameters': {'type': 'object', 'properties': {
-            'action': {'type': 'string', 'enum': ['list', 'list_devices', 'select', 'set_default', 'set_rule', 'clear_rule'], 'default': 'list',
+            'action': {'type': 'string', 'enum': ['list', 'list_devices', 'set_device', 'select', 'set_default', 'set_rule', 'clear_rule'], 'default': 'list',
                        'description': 'list returns current profiles. select chooses or switches your named '
                                       'session. set_default persists the default for new, unselected sessions. '
                                       'Use select to switch an existing session.'},
             'profile': {'type': 'string',
                         'description': 'For select and set_default, pass a profile\'s id field from list, '
                                        'such as Default or Profile 2.'},
-            'device': {'type': 'string', 'description': 'Configured Windows device ID or local. Use list_devices to see choices.'},
+            'device': {'type': 'string', 'description': 'For set_device, choose local or a configured Windows ID from list_devices.'},
             'app': {'type': 'string', 'description': 'Website package ID. Omit for ordinary browser sessions.'},
             'mode': {'type': 'string', 'enum': ['fixed', 'default', 'random'],
                      'description': 'For set_rule. fixed needs profile. default uses profile_directory. random chooses from fresh inventory.'},
