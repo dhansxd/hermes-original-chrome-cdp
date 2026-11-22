@@ -367,10 +367,11 @@ steering, interruption, and final answers.
 While the Hermes turn is active, continue through the same package and alias
 to retain the document and source profile for `running` or `needs_inspection`.
 A completed result returns `ok`. Turn end, Stop, disable and host unload close
-the owned connection. The saved checkpoint and `result.json` remain available
-through the `data_directory` shown by `describe`. Packages can resume saved work
-through their documented controls. Rotating jobs expose a durable job ID and
-source-reconciliation callbacks through the rolling contract.
+the owned connection under normal cleanup. A request to keep the window uses
+the explicit action described below. The saved checkpoint and `result.json`
+remain available through the `data_directory` shown by `describe`. Rotating jobs
+expose a durable job ID and source-reconciliation callbacks through the rolling
+contract.
 
 ```json
 {"action": "disable", "app": "my-site"}
@@ -388,6 +389,18 @@ Re-enabling uses fresh native names. Remove deletes its source after cleanup,
 retaining plugin-data artifacts, checkpoints and receipts. Linked packages are
 removed by unlinking the directory entry. A saved disabled flag also records
 removal for future template installation.
+
+## Keep a window across turns
+
+Ask Hermes to leave the Chrome window open when you want to return to the page.
+
+> Open https://example.com, tell me its title, and leave the Chrome window open.
+
+In the same Hermes conversation, ask Hermes to continue in that window or close
+it. Hermes uses `keep_window`, `list_windows`, and `close_window` through
+`browser_exec.site_control`. Use the returned session ID to resume or close
+the exact window. The window remains available while the Hermes process and
+Chrome connection are running.
 
 ## Update
 

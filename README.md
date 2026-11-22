@@ -69,16 +69,10 @@ manages these Python dependencies during installation and enablement. The platfo
 markers keep its universal dependency resolver from applying this plugin's package
 ranges to Hermes's Android or other operating-system environments.
 
-Version 0.10.3 uses documented public Hermes plugin APIs for BrowserProvider,
-configuration, session-route context, and CDP supervisor teardown. A regression
-check rejects private Hermes runtime imports. The plugin owns its Chrome startup,
-consent, CDP relay, targets, and cleanup. Hermes manages its native browser driver
-and session cache. [Hermes public plugin API](https://hermes-agent.nousresearch.com/docs/developer-guide/plugins/public-api)
-
-The compatibility baseline is Hermes commit
-`b200f5bc60e31588ba2cb60e288029c4a54ba5fa` and `browser-harness` 0.1.13 on macOS.
-Run the tests below when upgrading Hermes or Chrome. Startup and consent use macOS
-APIs. Native Stop route handling and late-session rejection remain covered.
+Version 0.12.1 was verified with Hermes v0.23.2 on macOS. The plugin registers
+the Chrome provider through the public Hermes API and manages Chrome startup,
+consent, the CDP relay, and owned windows. Hermes manages its native browser
+driver and session cache. [Hermes public plugin API](https://hermes-agent.nousresearch.com/docs/developer-guide/plugins/public-api)
 
 ## Install
 
@@ -96,13 +90,17 @@ Hermes can start Chrome on the next browser request. The plugin handles Chrome's
 separate connection dialog during startup. See the
 [detailed Chrome setup](docs/TUTORIAL.md#enable-chrome-remote-debugging-once).
 
-Install and enable the plugin through Hermes.
+Install from the public GitHub repository and enable it through Hermes.
 
 ```sh
 hermes plugins install https://github.com/dhansxd/hermes-original-chrome-cdp
 hermes plugins enable original-chrome-default
 hermes tools
 ```
+
+For a reproducible install, pass the full commit SHA from a
+[GitHub release](https://github.com/dhansxd/hermes-original-chrome-cdp/releases)
+to `hermes plugins install --ref`.
 
 For mapped site controls, approve the plugin's declared `tools.override` capability
 during enablement. This lets the plugin add the `site_control` parameter on the existing
@@ -315,9 +313,11 @@ remembered for the conversation/alias until exhaustion. See the
 While the Hermes turn is active, use the same app and alias to observe a result
 reported as `running` or `needs_inspection`. The pending result stays with its
 source profile. A newly saved policy takes effect after the pending result.
-At turn end the plugin releases the owned Chrome window. Stop, disable and
-unload also release owned resources. `context.checkpoint(value)` saves the
-package's work position, and `result.json` remains beside its artifacts.
+At turn end the plugin releases the owned Chrome window unless it was explicitly
+[kept for a later turn](#keep-a-window-available-across-turns). Stop on the
+active task, package disable, and host unload release their owned resources.
+`context.checkpoint(value)` saves the package's work position, and `result.json`
+remains beside its artifacts.
 
 ```json
 {"action": "disable", "app": "my-site"}
@@ -511,9 +511,12 @@ out of issue reports.
 From a checkout of this repository, use the Hermes Python environment.
 
 ```sh
-hermes plugins validate .
 hermes --run-module unittest discover -s tests -p 'test_*.py'
 ```
+
+The Hermes v0.23.2 catalog validator flags the declared `browser_exec` override
+as a built-in tool name collision. The public Git URL installation uses Hermes's
+standard plugin commands and the explicit `tools.override` grant.
 
 The 0.10.3 regression suite covers registration, task
 namespaces, startup and consent identity, input focus, target ownership, transport

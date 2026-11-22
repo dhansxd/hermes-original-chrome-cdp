@@ -30,6 +30,10 @@ and verification evidence before calling a checklist item complete.
   screenshot operations in the task window. Keep `browser_app` out of the
   manifest and registry. Verify tool discovery and installed site controls in
   a fresh Hermes session.
+- Manage plugin activation with the official Hermes commands. Select Original
+  Chrome manually after enable, and restore the previous browser settings
+  manually before disable or remove. The Git URL is the supported install
+  source for this plugin.
 - Execute site behavior only on explicit `site_control` calls. Leave native
   fallback clicks and results to Hermes. Use `record_missing_control` to report
   findings explicitly in the same owned session.
@@ -42,7 +46,8 @@ and verification evidence before calling a checklist item complete.
   memory, personal prompts, and user instructions about which tool to call.
 - Treat pending work as progress. Verify the requested outcome and complete
   every requested step before the final answer. Close the task's owned browser
-  resources at completion, and use the existing cleanup for Stop or failure.
+  resources at completion unless the user request calls for keeping the
+  window. Use the existing cleanup for Stop or failure.
 - Use the mapped control directly when available. For an unmapped control,
   inspect the relevant DOM and use a screenshot as needed through the same
   browser tool and window. When this happens on a site with an extension,

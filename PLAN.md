@@ -1,14 +1,14 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 29, 22 November 2026.
+Revisi PRD 30, 22 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-Di cabang perombakan, Hermes memanggil tombol lewat parameter `site_control`
-dan helper DOM lewat `code` pada tool `browser_exec` yang sama. Katalog sesi baru
-memakai satu alat untuk browsing. Kendala validator di butir 2 berlaku untuk
-distribusi melalui katalog Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah
-menjadi acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
+Host 0.12.1 menyediakan browsing umum, kontrol situs, dan tindakan jendela
+lintas giliran melalui satu `browser_exec`. Jalur distribusi publik memakai
+[URL Git](README.md#install). Pilih dan pulihkan browser secara manual melalui
+Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
+[HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
 
 ### Tujuan produk
 
@@ -39,13 +39,13 @@ tetap diperiksa pada jalur browser yang terdampak.
   perintah terminal.
 - Pasang, aktifkan, nonaktifkan, dan hapus plugin melalui pengelola plugin resmi
   Hermes (`hermes plugins install`, `enable`, `disable`, dan `remove`).
-  Saat plugin diaktifkan, `browser_exec` otomatis memakai Chrome asli melalui
-  CDP. Saat plugin dinonaktifkan atau langsung dihapus dalam keadaan aktif,
-  Hermes otomatis kembali ke pilihan browser sebelum aktivasi. Jika sebelumnya
-  memakai pengaturan bawaan, pulihkan pengaturan bawaan itu. Jika pengguna
-  memilih provider tertentu, pulihkan pilihannya. Mengaktifkan kembali plugin
-  harus langsung memilih Chrome asli lagi. Pengguna cukup menjalankan tindakan
-  plugin yang sesuai tanpa memilih ulang browser di `hermes tools`.
+  Setelah enable, pilih **Original Chrome · CDP** di
+  `hermes tools → Browser Automation`. Sebelum disable atau remove, pulihkan
+  pilihan browser dan pengaturan yang sebelumnya diubah. Jika
+  `browser.cloud_provider` awalnya tidak disetel, gunakan
+  `hermes config unset browser.cloud_provider`. Saat enable ulang, pilih
+  Chrome asli lagi. Lihat [langkah resmi pada
+  tutorial](docs/TUTORIAL.md#switch-back-disable-and-uninstall).
 - Plugin sudah mendaftarkan Chrome asli sebagai provider browser Hermes.
   Pertahankan perilaku `browser_exec`, termasuk navigasi, pembacaan DOM,
   screenshot dan penggunaan jendela tugas. Tambahan untuk Gemini, Google Flow
@@ -159,43 +159,16 @@ tetap diperiksa pada jalur browser yang terdampak.
    `example.com`. Sesi kedua memakai kontrol `tools_menu` Gemini, lalu membaca
    dua pilihan menunya melalui DOM di sesi browser yang sama. Kedua percakapan
    selesai dan memakai ID sesi browser yang berbeda.
-2. [ ] Selesaikan perombakan dan verifikasi pemasangan plugin.
-   - [ ] Terapkan dan verifikasi perpindahan browser otomatis sesuai kontrak.
-     Versi 0.11.10 masih memerlukan pemilihan browser secara manual sesuai
+2. [x] Selesaikan perombakan dan dokumentasikan pemasangan melalui Git.
+   - [x] Dokumentasikan pemilihan dan pemulihan browser secara manual.
+     Audit Hermes v0.23.2 pada profil sementara menunjukkan bahwa enable,
+     disable, dan remove mengelola plugin, sementara konfigurasi pemilihan
+     browser disimpan terpisah. Saat gateway berhenti, remove juga
+     mempertahankan nilai `browser.cloud_provider`. Perintah `config set`
+     memulihkan pilihan browser sebelumnya dan `config unset` memulihkan
+     seleksi otomatis ketika kunci semula belum disetel. Pengaturan browser
+     lain pada profil uji tetap utuh. Ikuti
      [tutorial](docs/TUTORIAL.md#switch-back-disable-and-uninstall).
-     - Periksa dulu jalur resmi enable, disable, dan remove, termasuk remove
-       saat gateway berhenti. Tentukan kapan pilihan sebelumnya dapat disimpan
-       dan dipulihkan. Pada Hermes v0.23.2, `ctx.set_config` hanya menulis
-       pengaturan milik plugin dan CLI remove menghapus berkas plugin. Jika satu
-       jalur tidak mendukung pemulihan, catat batasannya untuk dibahas sebelum
-       memilih implementasi. [API pengaturan](https://github.com/NousResearch/hermes-agent/blob/v0.23.2/hermes_cli/plugins_context.py#L75-L89) · [Alur remove](https://github.com/NousResearch/hermes-agent/blob/v0.23.2/hermes_cli/plugins_cmd_remove.py#L121-L141)
-     - Gunakan profil Hermes uji. Mulai dari konfigurasi bawaan, lalu ulangi
-       dengan provider pilihan pengguna dan dengan endpoint CDP yang sudah
-       dikonfigurasi.
-       Jalankan `browser_exec` setelah enable, disable, enable ulang, dan remove
-       langsung saat aktif. Cocokkan browser yang dipakai dan konfigurasi yang
-       dipulihkan dengan keadaan awal, termasuk pilihan yang semula kosong.
-     - Audit Hermes v0.23.2 (`ae2a81c`) pada tiga profil sementara. Handler
-       `enable`, `disable`, dan enable ulang mengubah ketersediaan provider
-       di registry. Rute `browser_exec` tetap mengikuti konfigurasi awal
-       yang kosong, Browserbase, atau CDP eksplisit. Publikasi konfigurasi asli
-       Hermes dipakai dengan pembangunan dependensi dan koneksi browser
-       disimulasikan. CDP eksplisit menang juga saat pilihan provider uji
-       diubah menjadi Chrome asli.
-     - Reproduksi CLI `remove` tanpa gateway dan tanpa plugin dimuat:
-       Hermes menghapus paket serta pengaturan plugin yang menyimpan pilihan
-       asal, sementara `browser.cloud_provider` masih menunjuk provider yang
-       dihapus. Pilihan Browserbase asal tidak pulih. `ctx.set_config` terbatas
-       pada pengaturan plugin dan `on_unload` bekerja ketika plugin yang telah
-       dimuat dibongkar. Otomasi penuh menunggu mekanisme resmi Hermes yang
-       dapat menerapkan pilihan runtime dan membatalkannya saat plugin dilepas.
-     - Uji CLI resmi v0.23.2 pada profil sementara dengan host 0.11.10.
-       `plugins remove` saat gateway mati meninggalkan pilihan Chrome di
-       `browser.cloud_provider`. `config set` memulihkan Browserbase dan
-       `config unset` memulihkan keadaan ketika pilihan belum pernah disetel.
-       Pengaturan browser lain pada profil uji tetap utuh. Kode upstream
-       cabang utama masih menyimpan pilihan provider secara terpisah dari
-       status plugin.
    - [x] Hapus registrasi dan deklarasi `browser_app`. Pemanggilan nama lama
      pada registry profil uji menghasilkan `Unknown tool`. Instalasi paket,
      pengelolaan status, panduan, dan operasi situs tetap tersedia.
@@ -228,22 +201,11 @@ tetap diperiksa pada jalur browser yang terdampak.
      provider 9Router menggunakan `open_chat`, `model_picker` dan pembacaan DOM
      untuk melaporkan pilihan model. Tanpa toolset Terminal, Hermes menyaring
      `browser_exec` dari katalog percakapan.
-   - [ ] Untuk distribusi melalui katalog resmi, lulus `hermes plugins validate`.
-     Hermes mendukung perluasan handler melalui izin `tools.override` pada
-     profil pengguna.
-     Validator katalog tetap melaporkan benturan nama `browser_exec` ketika
-     registrasi tersebut tercantum di manifest.
-     - Audit v0.23.2 dan source validator cabang utama Hermes menemukan aturan
-       yang sama. Validator membandingkan nama tool bawaan dengan deklarasi
-       manifest dan registrasi dari probe tanpa izin operator. Menghapus entri
-       `browser_exec` pada salinan uji membuat validator lulus, tetapi runtime
-       dengan izin tetap mendaftarkan `browser_exec`. Deklarasi itu wajib
-       menurut dokumentasi resmi sehingga perubahan manifest tersebut ditolak.
-       Dalam profil sementara, `site_control` tidak muncul tanpa izin. Dengan
-       izin, Gemini dan Flow bisa dideskripsikan, operasi Gemini fixture dan
-       DOM memakai jendela Chrome asli yang sama, lalu jendela uji ditutup.
-       Instalasi dari URL Git tetap tersedia. Untuk katalog diperlukan
-       mekanisme resmi yang mengakui perluasan tool bawaan di validator.
+   - [x] Gunakan instalasi dari URL Git untuk distribusi publik. Pada audit
+     Hermes v0.23.2, validator katalog melaporkan benturan nama tool bawaan
+     `browser_exec`. Kontrol situs tetap memakai deklarasi resmi dan izin
+     `tools.override`. Instalasi melalui katalog menunggu dukungan validator
+     upstream untuk perluasan tool bawaan.
    - [x] Pada 21 November 2026, plugin lama dilepas lewat Hermes sebelum
      commit `36019f1` dipasang di profil Telegram. Gateway yang sudah dimulai
      ulang melaporkan plugin 0.11.0 aktif dan Telegram terhubung. Katalog tool
@@ -547,6 +509,10 @@ Periksa hasil dan identitas permintaan asal sebelum melanjutkan ke profil lain.
   memakai, atau menutup jendela tersebut. Penutupan berdasarkan ID, cleanup
   tugas biasa, dan isolasi enam jendela pada satu profil lulus. Sebanyak 440
   tes otomatis lulus.
+- [x] Pada 0.12.1, Hermes CLI memanggil penahanan sekali memakai nama sesi
+  aktif, lalu melanjutkan dan menutup jendela yang sama pada giliran
+  berikutnya. Skill `original-chrome-default:site-controls` tersedia di
+  katalog skill sesi baru. Suite 440 tes dan uji Chrome asli lulus.
 
 ### Bukti historis hingga 16 November 2026
 
@@ -1106,8 +1072,10 @@ identitas media dan file asli dapat dikaitkan dengan permintaan asal.
   profil Hermes aktif, termasuk `HERMES_HOME` kustom.
 - [ ] **REL-02** Update host mempertahankan paket pengguna, lalu tambah/update/
   disable/remove extension tambahan melalui kontrak yang sama.
-- [ ] **REL-03** README, tutorial, template dan panduan menjelaskan ekstensi,
-  profil, rolling, hasil, serta batas kemampuan yang masih terbuka.
+- [x] **REL-03** README, tutorial, template dan panduan paket menjelaskan
+  pemilihan browser manual, kontrol situs, profil, rolling dan hasil. README
+  dan tutorial menjelaskan cara mempertahankan serta melanjutkan jendela
+  dan bahwa distribusi host tersedia dari URL Git.
 - [ ] **REL-04** Pemeriksaan asal-usul/lisensi source dan dependency, paket bersih,
   secret scan, Git bersih, commit/push, serta SHA remote yang cocok.
 

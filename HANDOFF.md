@@ -4,8 +4,11 @@ Diperbarui pada 16 November 2026 untuk persiapan reset Mac milik pengelola proye
 
 **Titik lanjut saat ini.** Baca [AGENTS.md](AGENTS.md) dan
 [kontrak aktif PLAN.md](PLAN.md#kontrak-browser-dan-ekstensi) terlebih dahulu.
-Serah-terima di bawah merekam baseline sebelum reset. Pada cabang perombakan,
+Serah-terima di bawah merekam baseline sebelum reset. Pada versi aktif,
 browsing umum serta kontrol situs memakai `browser_exec` di halaman yang sama.
+Gunakan [panduan instalasi Git](README.md#install) dan
+[tutorial pemulihan browser](docs/TUTORIAL.md#switch-back-disable-and-uninstall)
+untuk pemilihan browser secara manual.
 Contoh `browser_app` di bawah merekam cara pemanggilan pada versi lama.
 [Hasil audit](PLAN.md#hasil-audit-acuan) dan
 [rencana perbaikan](PLAN.md#urutan-perbaikan-dan-verifikasi) memuat hasil diskusi terbaru.
