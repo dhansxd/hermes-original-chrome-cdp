@@ -54,6 +54,12 @@ finally:
     return file
 
 
+def started(context, directory, media_id):
+    if getattr(context, 'device', 'local') != 'local':
+        return context.remote_download_started(media_id)
+    return (Path(directory) / 'downloads' / (media_id + '.json')).is_file()
+
+
 def collect(ui, directory, media_id, action, timeout=60):
     if getattr(ui.context, 'device', 'local') != 'local':
         return ui.context.remote_download(media_id, action, ui.execute, timeout=timeout)

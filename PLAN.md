@@ -50,6 +50,13 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   satu jendela Chrome Windows. Percobaan pergantian saat jendela milik tugas
   aktif ditolak. Setelah jendela ditutup, perangkat Windows uji yang tidak
   dapat dihubungi menghasilkan error dan tidak membuat sesi Chrome lokal.
+- [x] Pada host 0.14.1, kontrol Gemini dan Flow mengunduh MP4 H.264 dari
+  halaman uji terkontrol di Chrome Windows. Masing-masing memakai satu
+  jendela milik tugas. File di Mac cocok ukuran dan SHA-256 dengan sumber
+  serta lulus dekode FFmpeg. Pada Flow 0.4.6, unduhan yang ditunda dilanjutkan
+  dari tanda terima Chrome yang sama dan server menerima satu permintaan.
+  Bukti ini menguji jalur kode kedua paket dengan fixture, sedangkan uji
+  pada situs asli menunggu video yang dapat dibuka dari profil Windows.
 
 ### Tujuan produk
 

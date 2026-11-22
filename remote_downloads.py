@@ -41,10 +41,9 @@ while time.monotonic() < deadline:
 """
 
 
-def collect(context, key, action, execute, save, timeout):
+def collect(context, record, action, execute, save, timeout):
     desktop = context.host.provider.desktop(context.device)
     profile = context.profile
-    record = context.directory / 'downloads' / (key + '.json')
     record.parent.mkdir(exist_ok=True)
     if record.exists():
         state = json.loads(record.read_text())
@@ -76,7 +75,7 @@ def collect(context, key, action, execute, save, timeout):
     folder = context.directory / 'results'
     folder.mkdir(exist_ok=True)
     suffix = PureWindowsPath(candidates[0]['name']).suffix
-    target = folder / (key + suffix)
+    target = folder / (record.stem + suffix)
     file = desktop.fetch_download(profile, candidates[0], target, context._choice)
     state['file'] = {**file, 'guid': state['guid']}
     save(record, state)

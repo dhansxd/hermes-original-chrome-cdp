@@ -104,6 +104,8 @@ its SHA-256 on the Mac. The local path returned by the control is ready for
 Hermes to attach. Chrome must save files to a local Windows download folder.
 Existing editable site package copies are preserved by updates. Use the
 bundled Windows-compatible versions of Gemini and Flow for these transfers.
+Host 0.14.1 and Flow 0.4.6 let Flow resume a pending Windows download from
+the original Chrome receipt.
 See the [site package update procedure](TUTORIAL.md#use-google-flow)
 for existing copies.
 

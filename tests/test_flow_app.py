@@ -974,7 +974,7 @@ class FlowAppTests(unittest.TestCase):
 
     def test_pending_download_preserves_the_request_and_collects_without_another_click(self):
         with tempfile.TemporaryDirectory() as root:
-            context, ui = Mock(directory=Path(root)), Mock()
+            context, ui = Mock(directory=Path(root), device='local'), Mock()
             project = self.app.project_url('source')
             ui.snapshot.return_value = {'url': project, 'tiles': [
                 {'kind': 'image', 'id': 'native', 'ready': True}], 'notices': []}
@@ -999,6 +999,30 @@ class FlowAppTests(unittest.TestCase):
             open_output.assert_called_once()
             self.assertTrue(collect.call_args_list[0].args[3])
             self.assertEqual(collect.call_args_list[1].args[3], '')
+
+    def test_windows_download_resume_uses_the_host_receipt(self):
+        with tempfile.TemporaryDirectory() as root:
+            context = Mock(directory=Path(root), device='windows')
+            context.remote_download_started.return_value = True
+            ui = Mock(context=context)
+            project = self.app.project_url('source')
+            ui.snapshot.return_value = {'url': project, 'tiles': [
+                {'kind': 'video', 'id': 'native', 'ready': True}], 'notices': []}
+            ui.read.return_value = '/project/source'
+            checkpoint = {'operation': 'generate_video', 'project': 'source', 'prompt': 'fixture',
+                          'kind': 'video', 'count': 1, 'baseline': [], 'notices_before': [],
+                          'settings': {'mode': 'classic'}, 'request_id': 'accepted', 'credits_before': 10}
+            file = {'path': '/fixture/native.mp4'}
+            with patch.object(self.app, 'open_output') as open_output, \
+                    patch.object(self.app, 'collect', return_value=file) as collect, \
+                    patch.object(self.app, 'verify', return_value=file), \
+                    patch.object(self.app, 'account', return_value={'credits': 10}):
+                result = self.app.observe_generation(context, ui, checkpoint)
+            self.assertEqual(result['status'], 'ok')
+            self.assertEqual(result['data']['files'], [file])
+            context.remote_download_started.assert_called_once_with('native')
+            open_output.assert_not_called()
+            collect.assert_called_once_with(ui, context.directory, 'native', '')
 
     def test_quota_notice_cannot_end_an_accepted_job_with_missing_results(self):
         for show_completed in (False, True):

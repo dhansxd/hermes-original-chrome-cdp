@@ -254,9 +254,20 @@ class AppContext:
     def chrome_profile_directory(self):
         return self.host.provider.data / self.profile
 
-    def remote_download(self, identifier, action, execute, *, timeout=60):
+    def _remote_download_record(self, identifier):
         key = hashlib.sha256(identifier.encode()).hexdigest()
-        return collect_remote_download(self, key, action, execute, write_json, timeout)
+        return self.directory / 'downloads' / (key + '.json')
+
+    def remote_download_started(self, identifier):
+        record = self._remote_download_record(identifier)
+        if not record.is_file():
+            return False
+        state = json.loads(record.read_text())
+        return bool(state.get('clicked') or state.get('file'))
+
+    def remote_download(self, identifier, action, execute, *, timeout=60):
+        record = self._remote_download_record(identifier)
+        return collect_remote_download(self, record, action, execute, write_json, timeout)
 
     def _remote_browser(self):
         provider = self.host.provider

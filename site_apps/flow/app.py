@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from .ui import AGENT_DEFAULTS, AGENT_SETTINGS_HOME, PROJECT_LOCATION, SNAPSHOT, UI
-from .downloads import collect, verify
+from .downloads import collect, started as download_started, verify
 from .references import upload, bind, acknowledge_upload
 from . import entities, preparation
 
@@ -476,9 +476,7 @@ def observe_generation(context, ui, checkpoint):
         for tile in outputs:
             if not tile.get('id'):
                 break
-            receipt = context.directory / 'downloads' / (tile['id'] + '.json')
-            saved = json.loads(receipt.read_text()) if receipt.exists() else {}
-            if not saved:
+            if not download_started(context, context.directory, tile['id']):
                 asset = open_output(ui, tile, checkpoint['prompt'], checkpoint['settings']['mode'], project)
                 if ui.click('button[aria-label="Download media"],button[aria-label="Download media asset"]',
                             project=asset) is False:
