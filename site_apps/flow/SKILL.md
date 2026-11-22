@@ -123,6 +123,8 @@ in the Agent prompt and verify the result against the request.
 Use `upload` with a local `path`, then `bind_reference` with the returned exact
 `title` and `kind`. Images can use `slot: "first"` or `slot: "last"` in classic
 Frames mode. The native picker and loaded ingredient/frame are checked.
+When Chrome runs on a paired Windows device, give the same local path on
+the Mac. The plugin stages the reference on Windows for Chrome's file picker.
 Generation also accepts a `references` array containing local `path`, `kind` and
 optional `slot`, or the exact native `title` for an existing asset. It uploads
 and binds after filling the prompt. Character portraits and voice audio IDs are

@@ -525,13 +525,17 @@ class FlowAppTests(unittest.TestCase):
         scope['wait_for_network_idle'].assert_called_once_with(timeout=30, idle_ms=1000)
 
     def test_upload_activates_focused_menu_only_when_chooser_has_not_opened(self):
-        for pointer_opens_chooser in (True, False):
-            with self.subTest(pointer_opens_chooser=pointer_opens_chooser), tempfile.TemporaryDirectory() as root:
+        cases = [('local', True), ('local', False), ('windows', True)]
+        for device, pointer_opens_chooser in cases:
+            with self.subTest(device=device, pointer_opens_chooser=pointer_opens_chooser), tempfile.TemporaryDirectory() as root:
                 directory = Path(root)
                 source = directory / 'portrait.jpg'
                 source.write_bytes(b'portrait')
                 ui = Mock()
                 ui.context.profile = 'Default'
+                ui.context.device = device
+                windows_path = r'C:\Windows reference\portrait.jpg'
+                ui.context.stage_reference.return_value = windows_path
                 ui.read.side_effect = ['/project/p', False, True]
                 opened = []
                 keys = []
@@ -556,6 +560,9 @@ class FlowAppTests(unittest.TestCase):
                     if method == 'DOM.setFileInputFiles':
                         receipts = list((directory / 'references').glob('*.json'))
                         self.assertTrue(json.loads(receipts[0].read_text())['assignment_intent'])
+                        if device == 'windows':
+                            ui.context.stage_reference.assert_called_once()
+                            ui.context.release_reference.assert_not_called()
                         assignments.append(params)
 
                 def execute(code):
@@ -564,10 +571,19 @@ class FlowAppTests(unittest.TestCase):
 
                 ui.execute.side_effect = execute
                 with patch.dict(self.app.upload.__globals__, {'upload_picker': Mock()}):
-                    self.app.upload(ui, directory, str(source))
+                    result = self.app.upload(ui, directory, str(source))
                 self.assertEqual(keys.count('Enter'), int(not pointer_opens_chooser))
                 self.assertEqual(len(assignments), 1)
                 self.assertEqual(assignments[0]['backendNodeId'], 7)
+                path = windows_path if device == 'windows' else result['path']
+                self.assertEqual(assignments[0]['files'], [path])
+                if device == 'windows':
+                    receipt = next((directory / 'references').glob('*.json'))
+                    self.assertTrue(json.loads(receipt.read_text())['complete'])
+                    ui.context.release_reference.assert_called_once_with(Path(result['path']), result['sha256'])
+                else:
+                    ui.context.stage_reference.assert_not_called()
+                    ui.context.release_reference.assert_not_called()
 
     def test_upload_names_are_distinct_for_agents_sharing_a_project(self):
         with tempfile.TemporaryDirectory() as root:

@@ -122,6 +122,7 @@ class ChromeSession:
         self.identity = None
         self.cleanup_complete = False
         self.clients = {}
+        self.uploads = {}
         self.path = '/devtools/browser/' + secrets.token_urlsafe(32)
         # No page data in websocket debug logs.
         self.logger = logging.Logger('original-chrome-cdp', logging.CRITICAL + 1)
@@ -135,6 +136,35 @@ class ChromeSession:
     @property
     def disconnected(self):
         return self.ready and self.wire.closed
+
+    def stage_upload(self, source, digest, check_owner):
+        key = (source, digest)
+        with self.lock:
+            if self.closed:
+                raise RuntimeError('The owning Chrome session has closed.')
+            if key in self.uploads:
+                return self.uploads[key].path
+        staged = self.desktop.stage_upload(source, digest, check_owner)
+        with self.lock:
+            kept = None if self.closed else self.uploads.setdefault(key, staged)
+        if kept is not staged:
+            staged.close()
+        if kept is None:
+            raise RuntimeError('The owning Chrome session closed during upload.')
+        return kept.path
+
+    def release_upload(self, source, digest):
+        key = (source, digest)
+        with self.lock:
+            staged = self.uploads.get(key)
+        if staged is None:
+            return True
+        if not staged.close():
+            logging.getLogger(__name__).warning('Windows Chrome upload cleanup is not confirmed.')
+            return False
+        with self.lock:
+            self.uploads.pop(key, None)
+        return True
 
     def owned_window(self):
         """Identify a single owned Chrome window before promising to keep it open."""
@@ -493,6 +523,7 @@ class ChromeSession:
                 return True
             with self.lock:
                 self.closed = True
+                uploads = list(self.uploads)
             success = True
             wire = self.wire if self.wire and not self.wire.closed else cleanup_wire
             if wire:
@@ -533,6 +564,8 @@ class ChromeSession:
                 # The seed is gone even if a later local transport close needs another attempt.
                 self.owned.clear()
                 self.seed_url = None
+            for source, digest in uploads:
+                success = self.release_upload(source, digest) and success
             with self.lock:
                 clients = list(self.clients)
             for client in clients:

@@ -91,3 +91,12 @@ Existing editable site package copies are preserved by updates. Use the
 bundled Windows-compatible versions of Gemini and Flow for these transfers.
 See the [site package update procedure](TUTORIAL.md#use-google-flow)
 for existing copies.
+
+## Flow reference uploads
+
+Pass a file on the Mac to the Flow `upload` control or in `references`.
+The plugin copies it to a temporary directory on Windows through OpenSSH's
+SFTP subsystem and verifies the size and SHA-256 before Chrome's file picker
+receives it. The plugin removes the temporary Windows copy when Flow confirms
+the upload or when it closes the task's browser session. Use host 0.13.2 and
+Flow 0.4.5 or newer. The OpenSSH Server setup normally enables SFTP.

@@ -104,16 +104,22 @@ def upload(ui, directory, path):
         shutil.copyfile(source, destination)
     value = {'path': str(destination), 'sha256': digest, 'filename': destination.name,
              'title': display_title(destination.name)}
+    remote = getattr(ui.context, 'device', 'local') != 'local'
     if receipt.exists():
         if saved.get('complete'):
+            if remote:
+                ui.context.release_reference(destination, digest)
             return value
         if saved.get('version') != 2 or saved.get('assignment_intent'):
             # A previous call may have already uploaded the file. Reconcile its exact unique title.
             upload_picker(ui)
             find_asset(ui, value['title'])
             receipt.write_text(json.dumps({**value, 'complete': True}))
+            if remote:
+                ui.context.release_reference(destination, digest)
             ui.execute("press_key('Escape')")
             return value
+    browser_path = ui.context.stage_reference(destination, digest) if remote else str(destination)
     receipt.write_text(json.dumps({**value, 'version': 2, 'complete': False, 'assignment_intent': False}))
     ui.execute(f'''import json,time
 from pathlib import Path
@@ -135,7 +141,7 @@ try:
             state=json.loads(receipt.read_text())
             state['assignment_intent']=True
             receipt.write_text(json.dumps(state))
-            cdp('DOM.setFileInputFiles',backendNodeId=chooser['backendNodeId'],files=[{str(destination)!r}])
+            cdp('DOM.setFileInputFiles',backendNodeId=chooser['backendNodeId'],files=[{browser_path!r}])
             break
         if time.monotonic()>=deadline:
             raise RuntimeError('Flow did not open its native upload chooser')
@@ -163,6 +169,8 @@ finally:
         time.sleep(.5)
     ui.execute("press_key('Escape')")
     receipt.write_text(json.dumps({**value, 'complete': True}))
+    if remote:
+        ui.context.release_reference(destination, digest)
     return value
 
 

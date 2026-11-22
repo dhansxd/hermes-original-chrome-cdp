@@ -54,10 +54,100 @@ for ($level=0; $level -lt 8 -and $ancestor; $level++) {
 throw 'Windows OpenSSH connection process could not be verified.'
 '''
 
+UPLOAD_REQUEST = r'''
+$ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$request=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('REQUEST_JSON')) | ConvertFrom-Json
+$name=[string]$request.name
+if ($request.id -cnotmatch '^[a-f0-9]{32}$' -or -not $name -or $name.EndsWith('.') -or
+    $name.EndsWith(' ') -or $name.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0) {
+    throw 'Invalid Windows Chrome upload path.'
+}
+$directory=Join-Path (Join-Path $env:LOCALAPPDATA 'Temp') ('HermesChromeUpload-' + $request.id)
+$target=Join-Path $directory $name
+
+function Remove-Upload {
+    if ([IO.Directory]::Exists($directory)) {
+        [IO.File]::Delete($target)
+        [IO.Directory]::Delete($directory)
+    }
+}
+'''
+
+PREPARE_UPLOAD = r'''
+[void][IO.Directory]::CreateDirectory($directory)
+@{path=$target} | ConvertTo-Json -Compress
+'''
+
+VERIFY_UPLOAD = r'''
+$file=Get-Item -LiteralPath $target
+$digest=(Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($file.Length -ne $request.bytes -or $digest -ne $request.sha256) {
+    throw 'The Windows Chrome upload did not verify after transfer.'
+}
+'''
+
 
 def encoded_command(script):
     return ('powershell.exe', '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
             base64.b64encode(script.encode('utf-16-le')).decode('ascii'))
+
+
+class WindowsUpload:
+    """A verified reference file staged for one owned Windows browser session."""
+
+    def __init__(self, command, source, digest, check_owner):
+        self.command = command
+        self.request = {'id': uuid.uuid4().hex, 'name': source.name,
+                        'bytes': source.stat().st_size, 'sha256': digest}
+        try:
+            check_owner()
+            prepared = subprocess.run(self._command(PREPARE_UPLOAD), stdin=subprocess.DEVNULL,
+                                      capture_output=True, timeout=15)
+            if prepared.returncode:
+                raise RuntimeError('Could not prepare a temporary file on Windows.')
+            path = json.loads(prepared.stdout).get('path', '')
+            if (not ntpath.isabs(path) or ntpath.basename(path) != source.name
+                    or ntpath.basename(ntpath.dirname(path)) != 'HermesChromeUpload-' + self.request['id']):
+                raise RuntimeError('Windows returned an invalid temporary upload path.')
+            target = self.command[-1] + ':/' + path.replace('\\', '/')
+            self._run(['scp', '-B', *self.command[2:-1], '--', str(source), target], check_owner,
+                      'Windows Chrome upload transfer failed over SSH.')
+            self._run(self._command(VERIFY_UPLOAD), check_owner,
+                      'The Windows Chrome upload did not verify after transfer.')
+            check_owner()
+            self.path = path
+        except BaseException:
+            self.close()
+            raise
+
+    @staticmethod
+    def _run(command, check_owner, error):
+        check_owner()
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            while process.poll() is None:
+                check_owner()
+                time.sleep(.2)
+            if process.returncode:
+                raise RuntimeError(error)
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+
+    def _command(self, script):
+        payload = base64.b64encode(json.dumps(self.request).encode()).decode()
+        return [*self.command, *encoded_command(UPLOAD_REQUEST.replace('REQUEST_JSON', payload) + script)]
+
+    def close(self):
+        try:
+            result = subprocess.run(self._command('Remove-Upload'), stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+            return result.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False
 
 
 class Bridge:
@@ -259,6 +349,9 @@ class WindowsChrome:
 
     def download_files(self, profile):
         return self._run('download_files', profile=profile)['files']
+
+    def stage_upload(self, source, digest, check_owner):
+        return WindowsUpload(self.command, source, digest, check_owner)
 
     def fetch_download(self, profile, receipt, destination, check_owner):
         source = self._run('download_file', profile=profile, **receipt)

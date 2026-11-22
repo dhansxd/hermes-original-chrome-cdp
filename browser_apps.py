@@ -257,6 +257,24 @@ class AppContext:
         key = hashlib.sha256(identifier.encode()).hexdigest()
         return collect_remote_download(self, key, action, execute, write_json, timeout)
 
+    def _remote_browser(self):
+        provider = self.host.provider
+        with provider.lock:
+            choice = self._choice()
+            desktop = provider.desktop(choice.device)
+            sessions = [session for _, session in provider._browser_sessions(self.session)
+                        if session.ready and not session.closed and not session.disconnected
+                        and session.desktop is desktop and session.profile == choice.profile.id]
+        if desktop is None or len(sessions) != 1:
+            raise RuntimeError('The extension needs its active Windows Chrome session for file upload.')
+        return sessions[0]
+
+    def stage_reference(self, source, digest):
+        return self._remote_browser().stage_upload(source, digest, self._choice)
+
+    def release_reference(self, source, digest):
+        self._remote_browser().release_upload(source, digest)
+
     def verify_video(self, path):
         checked = verify_media({'path': str(path)})
         if not any(stream['codec_type'] == 'video' for stream in checked['media']['streams']):

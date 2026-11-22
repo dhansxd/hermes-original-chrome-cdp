@@ -374,6 +374,18 @@ class RelayTests(unittest.TestCase):
         self.other.send.assert_not_called()
         self.command('Runtime.evaluate', {'expression': 'document.title'}, 'frame-sid')
 
+    def test_cleanup_retries_a_staged_reference_without_closing_manual_targets(self):
+        staged = Mock()
+        staged.close.side_effect = [False, True]
+        self.session.uploads[(Path('/fixture/reference.png'), 'digest')] = staged
+
+        self.assertFalse(self.session.close())
+        self.assertTrue(self.session.uploads)
+        self.assertTrue(self.session.close())
+        self.assertFalse(self.session.uploads)
+        self.assertEqual(staged.close.call_count, 2)
+        self.assertEqual([target['targetId'] for target in self.targets], ['manual'])
+
     def test_cleanup_preserves_manual_target_and_never_quits_chrome(self):
         self.targets.append(self.info('popup', 'owned'))
         self.assertTrue(self.session.close())

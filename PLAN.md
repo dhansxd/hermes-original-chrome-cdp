@@ -29,6 +29,13 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   `DevToolsActivePort`. Companion Windows memeriksa waktu perubahan file
   sebelum dan sesudah pembacaan. Chrome perlu menerbitkan alamat stabil
   untuk proses yang baru sebelum plugin membuka koneksi.
+- [x] Pada host 0.13.2 dan Flow 0.4.5, kontrol unggah memakai SFTP untuk
+  menyalin referensi dari Mac ke Chrome Windows. Uji `browser_exec` pada
+  halaman terkontrol membaca ulang semua 767 byte PNG dari pemilih file native.
+  Transfer dengan SHA-256 yang salah ditolak. Salinan sementara di Windows
+  terhapus setelah konfirmasi. Pada Chrome Windows dengan profil yang dipilih,
+  kontrol Flow juga mengonfirmasi PNG muncul di pemilih aset proyek uji
+  Google Flow. Uji ini hanya mengunggah referensi.
 
 ### Tujuan produk
 
