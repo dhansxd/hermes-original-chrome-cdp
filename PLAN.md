@@ -1,21 +1,42 @@
 # PRD — Original Chrome for Hermes dan extension situs
 
-Revisi PRD 28, 21 November 2026.
+Revisi PRD 29, 22 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
 Di cabang perombakan, Hermes memanggil tombol lewat parameter `site_control`
-dan helper DOM lewat `code` pada tool `browser_exec` yang sama. Katalog sesi baru tidak lagi menawarkan `browser_app`.
-Untuk distribusi publik masih ada satu masalah pada validator katalog Hermes,
-dijelaskan di butir 2. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi
-acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
+dan helper DOM lewat `code` pada tool `browser_exec` yang sama. Katalog sesi baru
+memakai satu alat untuk browsing. Kendala validator di butir 2 berlaku untuk
+distribusi melalui katalog Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah
+menjadi acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
+
+### Tujuan produk
+
+Hermes memakai Google Chrome asli lewat CDP untuk membuka situs apa pun yang
+dapat dijangkau Chrome. Gunakan `browser_exec` dan dukungan CDP bawaan Hermes.
+Plugin menyediakan pilihan profil Chrome dan mengelola jendela milik setiap
+tugas. Perilaku browsing dan chat Hermes mengikuti upstream.
+
+Paket situs hanya menambahkan kontrol UI siap pakai untuk tindakan yang
+sering diulang. Gemini dan Google Flow adalah dua paket awal. Kontrol klik,
+ketik, dan unduh memakai halaman aktif di `browser_exec` yang sama. Jika suatu
+tombol belum tersedia, tetap gunakan DOM atau screenshot bawaan di jendela itu.
+Situs tanpa paket juga langsung memakai browsing bawaan.
+
+Nilai browsing umum lewat situs tanpa paket. Nilai setiap kontrol situs dari
+aksi yang benar-benar terjadi di UI Chrome. Deep Research adalah salah satu
+contoh pengujian Gemini. Hasil layanan dan penyelesaian contoh tersebut dicatat
+pada pengujian paket Gemini. Regresi browser yang terlihat selama pengujian itu
+tetap diperiksa pada jalur browser yang terdampak.
 
 ### Kontrak browser dan ekstensi
 
-- Prioritas pesan baru, steer, interrupt, jawaban model, dan tool selain
-  browser mengikuti Hermes upstream. Plugin menyediakan status dan kontrol
-  progres yang dipanggil eksplisit. Plugin tidak menyisipkan panggilan tool,
-  mengganti jawaban, atau mengalihkan skrip browser dan perintah terminal.
+- Seluruh perilaku chat mengikuti Hermes upstream. Ini termasuk pesan biasa
+  yang masuk saat giliran aktif, prioritas pesan, slash command, steer,
+  interrupt, jawaban model, dan tool selain browser. Plugin menyediakan status
+  dan kontrol progres yang dipanggil eksplisit. Plugin tidak menyisipkan
+  panggilan tool, mengganti jawaban, atau mengalihkan skrip browser dan
+  perintah terminal.
 - Pasang, aktifkan, nonaktifkan, dan hapus plugin melalui pengelola plugin resmi
   Hermes (`hermes plugins install`, `enable`, `disable`, dan `remove`).
   Saat plugin diaktifkan, `browser_exec` otomatis memakai Chrome asli melalui
@@ -29,8 +50,11 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
   Pertahankan perilaku `browser_exec`, termasuk navigasi, pembacaan DOM,
   screenshot dan penggunaan jendela tugas. Tambahan untuk Gemini, Google Flow
   dan situs lain hanya berupa kontrol UI siap pakai melalui tool yang sama.
-  Hapus tool `browser_app` beserta deklarasi, registrasi, dan jalur
-  pemanggilannya. Pertahankan paket ekstensi beserta kontrol situsnya.
+  `browser_exec` adalah satu-satunya alat browsing. Paket ekstensi menyediakan
+  kontrol situs di alat ini lewat `site_control`. Skrip DOM dan screenshot
+  memakai eksekutor native tanpa pembungkus khusus dari paket situs. Untuk
+  mencatat kontrol yang belum dipetakan, panggil `record_missing_control`
+  secara eksplisit pada sesi yang sama.
   Klik atau ketik langsung lewat CDP pada halaman aktif menghemat waktu dan
   token karena Hermes cukup memakai kontrol yang sudah dikenal. Panduan
   situs dapat menjelaskan cara menggunakan kontrol tersebut.
@@ -128,7 +152,12 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
    Hermes membaca judul dan label tautan `example.com` lewat `browser_exec`.
    Inventori Chrome asli menunjukkan satu jendela tugas. Akhir giliran menutup
    jendela itu dan jendela pembanding tetap dapat dipakai.
-2. [ ] Selesaikan perombakan dan validasi distribusi publik.
+   Uji CLI pada Hermes aktif menjalankan dua percakapan bersamaan dengan
+   provider Original Chrome. Sesi pertama membaca judul dan tautan di
+   `example.com`. Sesi kedua memakai kontrol `tools_menu` Gemini, lalu membaca
+   dua pilihan menunya melalui DOM di sesi browser yang sama. Kedua percakapan
+   selesai dan memakai ID sesi browser yang berbeda.
+2. [ ] Selesaikan perombakan dan verifikasi pemasangan plugin.
    - [ ] Terapkan dan verifikasi perpindahan browser otomatis sesuai kontrak.
      Versi 0.11.1 masih memerlukan pemilihan browser secara manual sesuai
      [tutorial](docs/TUTORIAL.md#switch-back-disable-and-uninstall).
@@ -144,6 +173,20 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
        Jalankan `browser_exec` setelah enable, disable, enable ulang, dan remove
        langsung saat aktif. Cocokkan browser yang dipakai dan konfigurasi yang
        dipulihkan dengan keadaan awal, termasuk pilihan yang semula kosong.
+     - Audit Hermes v0.23.2 (`ae2a81c`) pada tiga profil sementara. Handler
+       `enable`, `disable`, dan enable ulang mengubah ketersediaan provider
+       di registry. Rute `browser_exec` tetap mengikuti konfigurasi awal
+       yang kosong, Browserbase, atau CDP eksplisit. Publikasi konfigurasi asli
+       Hermes dipakai dengan pembangunan dependensi dan koneksi browser
+       disimulasikan. CDP eksplisit menang juga saat pilihan provider uji
+       diubah menjadi Chrome asli.
+     - Reproduksi CLI `remove` tanpa gateway dan tanpa plugin dimuat:
+       Hermes menghapus paket serta pengaturan plugin yang menyimpan pilihan
+       asal, sementara `browser.cloud_provider` masih menunjuk provider yang
+       dihapus. Pilihan Browserbase asal tidak pulih. `ctx.set_config` terbatas
+       pada pengaturan plugin dan `on_unload` bekerja ketika plugin yang telah
+       dimuat dibongkar. Otomasi penuh menunggu mekanisme resmi Hermes yang
+       dapat menerapkan pilihan runtime dan membatalkannya saat plugin dilepas.
    - [x] Hapus registrasi dan deklarasi `browser_app`. Pemanggilan nama lama
      pada registry profil uji menghasilkan `Unknown tool`. Instalasi paket,
      pengelolaan status, panduan, dan operasi situs tetap tersedia.
@@ -176,10 +219,22 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      provider 9Router menggunakan `open_chat`, `model_picker` dan pembacaan DOM
      untuk melaporkan pilihan model. Tanpa toolset Terminal, Hermes menyaring
      `browser_exec` dari katalog percakapan.
-   - [ ] Lulus `hermes plugins validate` untuk katalog publik. Hermes mendukung
-     perluasan handler melalui izin `tools.override` pada profil pengguna.
+   - [ ] Untuk distribusi melalui katalog resmi, lulus `hermes plugins validate`.
+     Hermes mendukung perluasan handler melalui izin `tools.override` pada
+     profil pengguna.
      Validator katalog tetap melaporkan benturan nama `browser_exec` ketika
      registrasi tersebut tercantum di manifest.
+     - Audit v0.23.2 dan source validator cabang utama Hermes menemukan aturan
+       yang sama. Validator membandingkan nama tool bawaan dengan deklarasi
+       manifest dan registrasi dari probe tanpa izin operator. Menghapus entri
+       `browser_exec` pada salinan uji membuat validator lulus, tetapi runtime
+       dengan izin tetap mendaftarkan `browser_exec`. Deklarasi itu wajib
+       menurut dokumentasi resmi sehingga perubahan manifest tersebut ditolak.
+       Dalam profil sementara, `site_control` tidak muncul tanpa izin. Dengan
+       izin, Gemini dan Flow bisa dideskripsikan, operasi Gemini fixture dan
+       DOM memakai jendela Chrome asli yang sama, lalu jendela uji ditutup.
+       Instalasi dari URL Git tetap tersedia. Untuk katalog diperlukan
+       mekanisme resmi yang mengakui perluasan tool bawaan di validator.
    - [x] Pada 21 November 2026, plugin lama dilepas lewat Hermes sebelum
      commit `36019f1` dipasang di profil Telegram. Gateway yang sudah dimulai
      ulang melaporkan plugin 0.11.0 aktif dan Telegram terhubung. Katalog tool
@@ -197,7 +252,8 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      eksplisit. Jika pembacaan hasil perlu inspeksi, Hermes dapat mengamati
      DOM memakai `browser_exec` pada sesi milik tugas. Agen bisa menetapkan
      selector hasil pada `observe`. Job ber-ID diverifikasi oleh paketnya.
-   - [ ] Periksa satu tugas nyata dari sesi Telegram baru di versi yang diuji.
+   - [ ] Periksa satu tugas situs berdurasi panjang lewat sesi Hermes baru.
+     CLI Hermes cukup untuk memeriksa perilaku browser dan ekstensi.
      Cocokkan panggilan setelah status `running` dengan perubahan status di
      situs, hasil yang diterima pengguna, dan penutupan jendela tugas. Jika
      terhenti, catat operasi terakhir beserta hasilnya agar patch berikutnya
@@ -309,6 +365,18 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
      serta pengalihan skrip browser saat menunggu. Uji registrasi memastikan
      plugin hanya memperluas browser dan tetap memakai hook Stop resmi.
      Uji skrip browser memastikan input eksplisit diteruskan ke jalur native.
+   - Fallback DOM kembali langsung ke eksekutor native. Pengamat klik dan
+     penahan kiriman Gemini di dalam skrip fallback dilepas. Kontrol situs
+     yang dipanggil eksplisit serta `record_missing_control` tersedia pada
+     `browser_exec` dan sesi yang sama. Sebanyak 439 tes otomatis lulus.
+     Uji Chrome asli pada situs lokal memverifikasi klik langsung, fallback,
+     screenshot, dan cleanup terarah dengan jendela agen lain tetap tersedia.
+   - Host 0.11.10 memakai hook akhir giliran resmi Hermes untuk menutup
+     jendela milik tugas. Selama giliran masih berjalan, kontrol situs dan
+     fallback tetap memakai jendela yang sama. Checkpoint dan hasil tersimpan
+     agar operasi yang mendukung pemulihan dapat dibuka kembali secara eksplisit.
+     Uji Chrome asli memverifikasi penutupan jendela tugas saat situs masih
+     `running`, pemeliharaan checkpoint, serta jendela agen lain dan manual.
    - Temuan Telegram 0.11.2 di percakapan yang sudah ada: setelah satu
      submit Deep Research, 32 panggilan `observe` tanpa selector membaca
      teks “Membuat rencana riset” pada sesi yang sama hingga pengguna
@@ -446,7 +514,8 @@ acuan. [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
    mencatat kontrol yang belum dipetakan dalam `missing-controls.jsonl`.
    Untuk kontrol tanpa label yang ditemukan secara visual, Hermes dapat
    mencatat temuan dan menjalankan aksi lewat satu panggilan `browser_exec`.
-   Pengujian jalur tersebut dari sesi Telegram baru masih terbuka.
+   Pada sesi nyata, `record_missing_control` menyimpan tiga temuan Gemini
+   yang memakai fallback DOM. Panggilan eksplisit berlaku pada CLI dan Telegram.
 
 Untuk Google Flow, pertahankan pemisahan cara menggunakan mode Klasik dan Agent
 sesuai butir 4 dan panduan paket. Pilihan profil serta mode perpindahan manual

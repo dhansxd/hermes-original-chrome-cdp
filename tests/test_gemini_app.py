@@ -89,8 +89,9 @@ class GeminiAppTests(ChromeFixture):
         self.click.assert_called_once_with(62, 37)
         self.navigate.assert_not_called()
         self.dispatch.assert_called_once()
-        self.provider.ended(session_id='chat', task_id='agent', turn_id='turn')
         self.assertIn(result['session'], self.provider.owners)
+        self.provider.ended(session_id='chat', task_id='agent', turn_id='turn')
+        self.assertNotIn(result['session'], self.provider.owners)
 
     def test_blocked_control_keeps_the_native_fallback_session(self):
         self.js.return_value = {'reason': 'obscured'}

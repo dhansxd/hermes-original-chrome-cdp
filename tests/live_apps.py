@@ -283,30 +283,23 @@ def verify_research_fallback(call):
     assert sent['status'] == 'running'
     repeat = call('research', **request, operation='click', params={'control': 'send'})
     assert repeat['status'] == 'running' and repeat['data']['reason'] == 'research_submission_pending'
-    raw = call('research', session=name, code=r'''js("""document.querySelector('[role=textbox]').textContent = 'Another topic';
-        document.querySelector('#send').click();
-        document.querySelector('#references').click();""")''')
+    code = 'js("document.querySelector(\'#references\').click()")'
+    raw = call('research', session=name, code=code)
     verified = call('research', session=name, code='print(js("JSON.stringify([window.sends, window.references])"))')
     assert json.loads(verified['output'].strip()) == [1, 1], (raw, verified)
-    assert raw['status'] == 'running'
-    assert raw['data']['reason'] == 'research_submission_pending'
-    paired = call('research', session=name, code='js("document.querySelector(\'#send\').click()")',
+    assert raw['success'] and 'status' not in raw
+    paired = call('research', session=name, code=code,
                   site_control=json.dumps({'app': 'gemini', 'action': 'record_missing_control',
                     'params': {'page_or_mode': 'Gemini conversation',
                                'control': 'Inspect references', 'fallback': 'dom'}}))
-    assert paired['status'] == 'running' and paired['data']['reason'] == 'research_submission_pending'
-    enter = call('research', session=name, code=r'''js("""const editor = document.querySelector('[role=textbox]');
-        editor.addEventListener('keydown', e => {if (e.key === 'Enter') window.sends++});
-        editor.focus();""")
-press_key('Enter')''')
-    assert enter['data']['reason'] == 'research_submission_pending'
+    assert paired['success'] and 'status' not in paired
     snapshot = call('research', session=name,
                     code='print(js("document.body.innerText")); print(capture_screenshot())')
     words, image = snapshot['output'].strip().rsplit('\n', 1)
     assert snapshot.get('exit_code', 0) == 0 and 'References' in words
     assert Path(image).read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
-    verified = call('research', session=name, code='print(js("window.sends"))')
-    assert verified['output'].strip() == '1'
+    verified = call('research', session=name, code='print(js("JSON.stringify([window.sends, window.references])"))')
+    assert json.loads(verified['output'].strip()) == [1, 2]
     return name
 
 
@@ -358,9 +351,8 @@ def verify(*, research_only=False):
         local_gemini = packages / 'gemini'
         shutil.copytree(source / 'site_apps/gemini', local_gemini,
                         ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-        for name in ('app.py', 'fallback.js'):
-            path = local_gemini / name
-            path.write_text(path.read_text().replace('https://gemini.google.com', url))
+        gemini_app = local_gemini / 'app.py'
+        gemini_app.write_text(gemini_app.read_text().replace('https://gemini.google.com', url))
         (home / 'config.yaml').write_text('''browser:
   cloud_provider: original-chrome-default
   auto_local_for_private_urls: false
@@ -417,7 +409,7 @@ plugins:
                 assert not provider.sessions and not provider.owners
                 report['discovery_and_guide_without_browser'] = True
                 research_session = verify_research_fallback(call)
-                report['unverified_research_rejects_native_resend'] = True
+                report['mapped_send_and_native_fallback_share_one_window'] = True
                 if research_only:
                     verify_research_wait_and_stop(call, provider, research_session)
                     report['explicit_research_checks_keep_window_and_official_stop_cancels'] = True
@@ -521,14 +513,18 @@ plugins:
                 assert run('parent', app='new-site')['profile'] == new_site['profile']
                 assert run('parent')['document'] == first[0]['document']
                 report['child_role_profile_switch_is_scoped_to_its_app'] = True
-                invoke_hook('on_session_end', session_id='child-chat', task_id='child',
-                            completed=True, failed=False, interrupted=False)
+                child_window = next(item for item in provider.sessions.values()
+                                    if item.cache_key.split('@', 1)[0] == 'bu-named-' + child_site['session'])
+                invoke_hook('on_session_end', session_id='child-chat', task_id='child', turn_id=turns['child'],
+                            completed=True, failed=False, interrupted=False, turn_exit_reason='text_response')
+                assert child_site['session'] not in provider.owners
+                assert child_window.cleanup_complete and not child_window.owned
+                assert (Path(child_site['data']['directory']) / 'checkpoint.json').is_file()
                 turns['child'] = uuid.uuid4().hex
-                resumed = run('child', app='new-site', status='running')
-                assert resumed['document'] == child_site['document']
-                assert resumed['session'] == child_site['session']
-                assert resumed['data']['directory'] == child_site['data']['directory']
-                report['pending_app_retains_document_profile_and_artifacts_across_turns'] = True
+                resumed = run('child', app='new-site', initialize=True, status='running')
+                assert resumed['profile'] == destination
+                assert resumed['session'] != child_site['session']
+                report['turn_end_releases_pending_window_and_keeps_artifacts'] = True
 
                 invoke_hook('agent_loop_stopped', session_key='apps-fixture-child', platform='cli',
                             reason='user_stop', invalidation_reason='session_interrupt')

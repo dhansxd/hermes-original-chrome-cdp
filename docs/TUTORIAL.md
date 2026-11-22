@@ -364,13 +364,12 @@ Return the observed result or `needs_inspection` when the UI needs attention.
 Keep submission in the original action. Hermes handles incoming messages,
 steering, interruption, and final answers.
 
-`running` and `needs_inspection` preserve the owned browser session across turn
-end in the serving Hermes process. Continue through the same package and alias
-to retain the document, source profile and artifact directory. A completed result
-returns `ok`. Stop, session finalization, disable and host unload close the owned
-connection. The saved checkpoint and `result.json` remain available through the
-`data_directory` shown by `describe`. Recovery after host restart follows the
-package's saved checkpoint. Opt-in rotating jobs also expose a durable job ID and
+While the Hermes turn is active, continue through the same package and alias
+to retain the document and source profile for `running` or `needs_inspection`.
+A completed result returns `ok`. Turn end, Stop, disable and host unload close
+the owned connection. The saved checkpoint and `result.json` remain available
+through the `data_directory` shown by `describe`. Packages can resume saved work
+through their documented controls. Rotating jobs expose a durable job ID and
 source-reconciliation callbacks through the rolling contract.
 
 ```json

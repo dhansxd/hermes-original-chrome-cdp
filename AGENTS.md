@@ -5,19 +5,34 @@ before planning, changing, or testing anything in this repo. Use that contract
 to interpret older docs, commits, and reference repos. Check the actual diff
 and verification evidence before calling a checklist item complete.
 
+## Product scope
+
+- The goal is general browsing in the user's installed Google Chrome over CDP
+  through Hermes's native `browser_exec`. Reuse Hermes's CDP support. The plugin
+  adds Chrome profile selection and task window ownership to that path.
+- Site extensions add ready-to-use UI controls for repeated actions. Gemini
+  and Google Flow are the first packages. A control acts on the current page
+  through the same `browser_exec`. Any site Chrome can reach can use ordinary
+  navigation, DOM, and screenshots regardless of its extension coverage.
+- Check general browsing on a site without an extension. Judge each mapped
+  control by what it does in the site UI. A site's service behavior or the
+  completion of one example task does not define general browser acceptance.
+
 ## Browser tasks
 
-- Hermes upstream owns message priority, steering, interruption, model
-  responses, and non-browser tools. The plugin supplies explicit browser
-  controls and progress readers. It must not rewrite replies, insert automatic
-  tool calls, or reroute terminal or native browser scripts to check progress.
-- Hermes already browses the original Chrome through native `browser_exec`.
-  Add each site's ready-to-use UI controls to that existing browsing path.
-  Calling a mapped control clicks or types in the task's active page over CDP.
-  Keep the existing DOM and screenshot operations available in that same window.
-  Remove the `browser_app` tool from the manifest and Hermes registration as
-  part of this change. Verify in a fresh session that its name is unregistered
-  and that the installed site's controls work through `browser_exec`.
+- Hermes upstream owns all chat behavior, including ordinary messages sent
+  during an active turn, message priority, slash commands, steering,
+  interruption, model responses, and non-browser tools. The plugin supplies
+  explicit browser controls and progress readers. It must not rewrite replies,
+  insert automatic tool calls, or reroute terminal or native browser scripts
+  to check progress.
+- Keep `browser_exec` as the single browsing tool and retain its native DOM and
+  screenshot operations in the task window. Keep `browser_app` out of the
+  manifest and registry. Verify tool discovery and installed site controls in
+  a fresh Hermes session.
+- Execute site behavior only on explicit `site_control` calls. Leave native
+  fallback clicks and results to Hermes. Use `record_missing_control` to report
+  findings explicitly in the same owned session.
 - Use one owned window in the original Chrome for the entire task. Reuse its
   CDP session for clicks, typing, progress checks, result collection and any
   requested delivery. Keep the other agents' and manual windows independent.
@@ -53,10 +68,11 @@ and verification evidence before calling a checklist item complete.
   README, tutorial, and site guides before changing their behavior.
 - Read and apply the user's coding guidelines before modifying code.
 - During design discussions, update the active plan as requirements are clarified.
-  Record the requested behavior, open implementation questions, and how the
-  result will be verified. Keep proposals open until the user decides them.
-  When a confirmed rule conflicts with existing guidance, correct or remove the
-  conflicting instruction where it appears. Label historical behavior as such.
+  Record explicit prohibitions and behavior the user rejects as constraints.
+  Apply those constraints when reading the plan, guides and Git history before
+  planning or editing. Correct or remove conflicting guidance at its source.
+  Keep suggestions and examples out of the contract unless the user adopts
+  them. Label historical behavior as such.
 - Make the smallest change that addresses an observed issue or requested feature.
 - State material assumptions and concrete success criteria. Reuse existing code
   and keep planning and verification proportional to the change.

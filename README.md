@@ -310,13 +310,12 @@ recoverable jobs, and `run` accepts a returned `job` ID. The current account is
 remembered for the conversation/alias until exhaustion. See the
 [rolling contract](docs/ROLLING.md) for callbacks, evidence and recovery.
 
-An app returning `running` or `needs_inspection` retains its owned session across
-turns in that Hermes process. Call the same app and alias to continue observing.
-The source profile remains attached to that pending result. A newly saved policy
-is reported as deferred when a result is pending. `context.checkpoint(value)`
-atomically saves the package's known work position. Package result envelopes
-are saved as `result.json` beside its artifacts. Stop, finalization, disable and
-unload release the owned browser resources.
+While the Hermes turn is active, use the same app and alias to observe a result
+reported as `running` or `needs_inspection`. The pending result stays with its
+source profile. A newly saved policy takes effect after the pending result.
+At turn end the plugin releases the owned Chrome window. Stop, disable and
+unload also release owned resources. `context.checkpoint(value)` saves the
+package's work position, and `result.json` remains beside its artifacts.
 
 ```json
 {"action": "disable", "app": "my-site"}

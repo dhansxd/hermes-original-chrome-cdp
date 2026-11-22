@@ -45,13 +45,11 @@ class SessionProfile:
     alias: str = 'default'
     platform: str = ''
     pending: bool = False
-    retained: bool = False
     running: tuple[str, str | None] | None = None
     can_read_result: bool = False
     running_since: float = 0.0
     last_observation: float = 0.0
     result_selector: str = ''
-    last_ui_inspection: str = ''
     active: int = 0
     directory_key: str = ''
 
@@ -176,17 +174,12 @@ class ChromeProvider(BrowserProvider):
                     existing = next((item for item in self.profile_choices.values()
                                      if item.owner == owner and item.turn_id == turn and item.alias == alias
                                      and item.browser_name in self.owners and not item.finished), None)
-                reuse = existing is not None and (
-                    (existing.owner == owner and existing.turn_id == turn)
-                    or (existing.retained and existing.owner[1:] == owner[1:]
-                        and bool(session_id) and alias == existing.browser_name))
+                reuse = existing is not None and existing.owner == owner and existing.turn_id == turn
                 if tool_name == PROFILE_TOOL and app_id and existing and existing.app_id != app_id:
                     reuse = False  # Independent profile rules apply when starting a new task window.
                 if kwargs.get('require_existing') and (not reuse or existing.app_id not in ('', app_id)):
                     return {'action': 'block', 'message': 'Use the current owned site window for this action.'}
                 if reuse:
-                    if existing.active and existing.owner != owner:
-                        return {'action': 'block', 'message': 'The previous extension operation is still returning.'}
                     if app_id and existing.app_id and app_id != existing.app_id and (existing.pending or existing.active):
                         return {'action': 'block', 'message': 'Finish the active site operation in this window first.'}
                     app_id = app_id or existing.app_id
@@ -206,19 +199,10 @@ class ChromeProvider(BrowserProvider):
             if result and result.get('action') == 'modify':
                 name = result['args']['session']
                 base = self.profile_routes.get(existing.browser_name if reuse else name, name)
-                if app_id and not reuse:
-                    retained = next(((key, item) for key, item in self.profile_choices.items()
-                                     if item.app_id == app_id and item.owner[1:] == owner[1:]
-                                     and item.alias == alias and item.retained and not item.finished), None)
-                    if retained:
-                        base, existing = retained
-                        if existing.active:
-                            return {'action': 'block', 'message': 'The previous extension operation is still returning.'}
                 choice = self.profile_choices.setdefault(base, SessionProfile(owner, alias=alias))
                 if choice.finished or choice.switching:
                     return {'action': 'block', 'message': 'This browser session is finishing or changing Chrome profile.'}
                 choice.owner = owner
-                choice.retained = False
                 if choice.app_id != app_id:
                     choice.directory_key = ''
                 choice.app_id = app_id
@@ -413,8 +397,7 @@ class ChromeProvider(BrowserProvider):
                 return
             if expected_turn is not None:
                 choice = self.profile_choices.get(session_name)
-                if (choice is None or choice.turn_id != expected_turn
-                        or (choice.pending and not interrupted)):
+                if choice is None or choice.turn_id != expected_turn:
                     return
                 session_name = choice.browser_name or session_name
             if not keep_profile:
@@ -458,24 +441,16 @@ class ChromeProvider(BrowserProvider):
             with self.lock:
                 self.parents.pop(session_id, None)
 
-    def ended(self, session_id=None, task_id=None, turn_id=None, interrupted=False,
-              failed=False, turn_exit_reason=None, **kwargs):
+    def ended(self, session_id=None, task_id=None, turn_id=None, interrupted=False, **kwargs):
         if not session_id:
             return
-        terminal_failure = failed or turn_exit_reason == 'guardrail_halt'
         with self.lock:
-            for choice in self.profile_choices.values():
-                if (choice.pending and choice.owner[1] == session_id
-                        and (task_id is None or choice.owner[0] == task_id)
-                        and (turn_id is None or choice.turn_id == turn_id)):
-                    choice.retained = True
-            turns = [(base, choice.turn_id, interrupted or (terminal_failure and choice.running is not None))
+            turns = [(base, choice.turn_id)
                      for base, choice in self.profile_choices.items()
                      if choice.owner[1] == session_id and (task_id is None or choice.owner[0] == task_id)
-                     and (turn_id is None or choice.turn_id == turn_id)
-                     and (interrupted or not choice.pending or (terminal_failure and choice.running is not None))]
-        for base, expected, abandon in turns:
-            self.finish(session_name=base, expected_turn=expected, completed=True, interrupted=abandon)
+                     and (turn_id is None or choice.turn_id == turn_id)]
+        for base, expected in turns:
+            self.finish(session_name=base, expected_turn=expected, completed=True, interrupted=interrupted)
 
     def stopped(self, session_key='', **kwargs):
         """Match Hermes's Stop route to the browser names admitted in that context."""

@@ -149,15 +149,22 @@ class BrowserAppTests(unittest.TestCase):
         self.assertIn('agent_loop_stopped', [call.args[0] for call in context.register_hook.call_args_list])
 
     def test_running_site_does_not_replace_explicit_native_browser_code(self):
-        self.package()
+        self.package(source='''FALLBACK_CLICK_OBSERVER = "legacy observer"
+def fallback_send_pending(context):
+    return True
+def run(context, operation, params):
+    return params
+''')
         started = self.invoke(params={'status': 'running'})
-        script = 'import time\ntime.sleep(120)\nprint(page_info())'
         native = Mock(return_value=json.dumps({'success': True, 'output': 'browser output'}))
-        result = self.dispatch_native({'session': started['session'], 'code': script}, native,
-                                      task_id='A', session_id='chat-A', turn_id='turn')
-        self.assertEqual(json.loads(result)['output'], 'browser output')
-        self.assertTrue(native.call_args.args[0]['code'].endswith(script))
-        self.assertEqual(native.call_args.args[0]['session'], started['session'])
+        for script in ('import time\ntime.sleep(120)\nprint(page_info())',
+                       'js("document.querySelector(\'#send\').click()")'):
+            with self.subTest(script=script):
+                result = self.dispatch_native({'session': started['session'], 'code': script}, native,
+                                              task_id='A', session_id='chat-A', turn_id='turn')
+                self.assertEqual(result, native.return_value)
+                self.assertEqual(native.call_args.args[0]['code'], plugin.prepare_code(script))
+                self.assertEqual(native.call_args.args[0]['session'], started['session'])
         self.dispatch.assert_not_called()
 
     def test_unconfirmed_mapped_result_keeps_the_request_pending_for_dom(self):
@@ -462,10 +469,12 @@ class BrowserAppTests(unittest.TestCase):
         self.assertEqual(len(set(paths)), 3)
         self.assertTrue(all(Path(path).is_dir() for path in paths))
 
-    def test_native_fallback_keeps_a_pending_app_window_across_turns(self):
+    def test_turn_end_retires_a_pending_window_before_native_fallback(self):
         self.package(source='def run(context, operation, params): return {"status": "running"}\n')
         app = self.invoke()
-        self.provider.ended(session_id='chat-A', task_id='A', turn_id='turn')
+        self.provider.ended(session_id='chat-A', task_id='A', turn_id='turn',
+                            completed=True, turn_exit_reason='text_response')
+        self.assertNotIn(app['session'], self.provider.owners)
 
         def prepare(session, chat, route):
             with patch.dict(os.environ, {}, clear=True):
@@ -476,8 +485,8 @@ class BrowserAppTests(unittest.TestCase):
         self.assertNotEqual(prepare('same', 'chat-A', 'route-A'), app['session'])
         self.assertNotEqual(prepare(app['session'], 'chat-B', 'route-A'), app['session'])
         self.assertNotEqual(prepare(app['session'], 'chat-A', 'route-B'), app['session'])
-        self.assertEqual(prepare(app['session'], 'chat-A', 'route-A'), app['session'])
-        self.assertEqual(self.invoke(task='B', turn='next-turn')['session'], app['session'])
+        self.assertNotEqual(prepare(app['session'], 'chat-A', 'route-A'), app['session'])
+        self.assertNotEqual(self.invoke(task='B', turn='next-turn')['session'], app['session'])
 
     def test_two_callers_execute_a_package_in_independent_modules(self):
         self.package(source='from pathlib import Path\nvalue = None\ndef run(context, operation, params):\n    global value\n    value = context.task_id\n    context.directory.joinpath("ready").touch()\n    params["barrier"].wait(3)\n    return value\n')
@@ -594,21 +603,24 @@ class BrowserAppTests(unittest.TestCase):
         self.assertTrue((self.host.root / 'fixture/app.py').is_file())
         self.assertTrue(self.manage('remove')['removed'])
 
-    def test_pending_operation_keeps_its_session_and_directory_across_turns(self):
+    def test_pending_operation_keeps_its_window_during_turn_and_saves_artifacts(self):
         self.package(source='''def run(context, operation, params):
     context.checkpoint({'job': 'fixture', 'status': params.get('status', 'running')})
     return {'status': params.get('status', 'running'), 'data': str(context.directory)}
 ''')
         first = self.invoke()
-        self.provider.ended(session_id='chat-A', task_id='A')
+        continued = self.invoke()
+        self.assertEqual(continued['session'], first['session'])
+        self.assertEqual(continued['data'], first['data'])
         self.assertIn(first['session'], self.provider.owners)
+        self.provider.ended(session_id='chat-A', task_id='A')
+        self.assertNotIn(first['session'], self.provider.owners)
+        self.assertTrue(Path(first['data'], 'checkpoint.json').is_file())
         second = self.invoke(task='next-task', chat='chat-A', turn='next-turn', alias=first['session'])
-        self.assertEqual(second['session'], first['session'])
-        self.assertEqual(second['data'], first['data'])
-        done = self.invoke(task='next-task', chat='chat-A', turn='next-turn', params={'status': 'ok'})
+        self.assertNotEqual(second['session'], first['session'])
+        self.assertNotEqual(second['data'], first['data'])
         self.provider.ended(session_id='chat-A', task_id='next-task')
-        self.assertNotIn(done['session'], self.provider.owners)
-        self.assertTrue(Path(done['data']).is_dir())
+        self.assertNotIn(second['session'], self.provider.owners)
 
     def test_removing_a_large_package_does_not_lock_other_agents(self):
         self.package()

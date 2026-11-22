@@ -28,9 +28,8 @@ For a confirmed missing control on an installed site, use `site_control` with
 `page_or_mode`, `control`, and `fallback` (`dom` or `screenshot`). Check the
 relevant panel and model first. Include that report alongside the native `code`
 in the same `browser_exec` call when acting on the newly discovered control.
-Gemini records a labelled, unmapped button clicked through native fallback in
-its owned tab. Explicitly report controls you identify visually or that have
-no stable label. A missing selector alone does not confirm a finding.
+Use the same report for controls identified visually. A missing selector alone
+does not confirm a finding.
 
 After submitting once, follow `next_control` in that session while the site
 reports `running`. The plugin spaces out these progress checks. A long sleep

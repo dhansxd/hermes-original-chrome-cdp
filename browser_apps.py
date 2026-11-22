@@ -1,5 +1,4 @@
 """User-owned site packages executed through the provider's native browser session."""
-import ast
 import hashlib
 import importlib.abc
 import importlib.machinery
@@ -396,97 +395,9 @@ class AppHost:
             route['code'] = args['code']
         return self.provider.prepare_call(tool_name, route, task_id, **context)
 
-    def native_fallback(self, args, native, context, choice, *, record=True):
-        code = args.get('code', '')
-        try:
-            tree = ast.parse(code)
-        except (TypeError, SyntaxError):
-            return native(args, **context)
-        calls = {n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
-        method = ('screenshot' if 'screenshot' in calls else 'dom' if calls.intersection({'js', 'dom', 'page_info', 'click'})
-                  else choice.last_ui_inspection)
-        observe_click = record and method and ('click' in code or 'press_key' in calls)
-        marker = ''
-        if observe_click or choice.pending:
-            try:
-                directory, _, source = read_package(self.root, choice.app_id)
-                with loaded_package(directory, source) as module:
-                    observer = getattr(module, 'FALLBACK_CLICK_OBSERVER', None)
-                    selectors = getattr(module, 'FALLBACK_CLICK_SELECTORS', {})
-                    pending = getattr(module, 'fallback_send_pending', None)
-                    protect_send = bool(choice.pending and pending and pending(
-                        AppContext(self, choice.app_id, args['session'], *choice.owner[:2])))
-            except Exception:
-                # Ordinary native browsing remains available if a site's optional observer cannot load.
-                return native(args, **context)
-            if observer and (observe_click or protect_send):
-                token = uuid.uuid4().hex
-                marker = 'HERMES_UI_' + token + '='
-                begin = observer + '(' + ','.join(json.dumps(value) for value in
-                    ('begin', token, selectors, protect_send)) + ')'
-                end = observer + '("finish",' + json.dumps(token) + ',{})'
-                # Keep the module docstring and future imports before the observation hook.
-                split = int(ast.get_docstring(tree) is not None)
-                while split < len(tree.body) and isinstance(tree.body[split], ast.ImportFrom) and tree.body[split].module == '__future__':
-                    split += 1
-                if split == len(tree.body):
-                    return native(args, **context)
-                setup = ast.parse(f'try:\n    js({begin!r})\nexcept Exception:\n    pass').body
-                cleanup = ast.parse(f'try:\n    print({marker!r} + __import__("json").dumps(js({end!r})))'
-                                    '\nexcept Exception:\n    pass').body
-                tree.body[split:] = [*setup, ast.Try(body=tree.body[split:], handlers=[], orelse=[], finalbody=cleanup)]
-                args = {**args, 'code': ast.unparse(tree)}
-        response = native(args, **context)
-        if not (method or marker):
-            return response
-        try:
-            result = json.loads(response) if isinstance(response, str) else response
-        except ValueError:
-            return response
-        if not isinstance(result, dict):
-            return response
-        if result.get('success') and not result.get('exit_code', 0):
-            choice.last_ui_inspection = method
-        if not marker:
-            return response
-        output, separator, tail = (result.get('output') or '').rpartition(marker)
-        if not separator:
-            return response
-        result['output'] = output
-        try:
-            captured = json.loads(tail) or []
-            if isinstance(captured, dict):
-                if captured.get('send_blocked'):
-                    result.update(status='running', data={'reason': 'research_submission_pending'},
-                                  message='Send was held. Check the existing research submission in this window.',
-                                  next_control=progress_control(choice.app_id, choice.can_read_result))
-                captured = captured.get('findings', [])
-            findings = [(row['page_or_mode'], row['control']) for row in captured] if observe_click else []
-        except (ValueError, TypeError, KeyError):
-            findings = []
-        for mode, label in findings:
-            try:
-                self.record_missing_control({'app': choice.app_id, 'session': args['session'], 'params': {
-                    'page_or_mode': mode, 'control': label, 'fallback': method}}, context['task_id'], context['session_id'])
-            except (OSError, ValueError, RuntimeError) as error:
-                # The click has already happened. Report the recording error independently.
-                result['missing_control_error'] = str(error)
-                break
-        return json.dumps(result, ensure_ascii=False) if isinstance(response, str) else result
-
-    def execute_native(self, args, native, context, *, record=True):
-        session = args.get('session')
-        with self.provider.lock:
-            choice = self.provider.profile_choices.get(self.provider.profile_routes.get(session)) if isinstance(session, str) else None
-            owned = (choice and not choice.finished and not choice.active and choice.app_id
-                     and choice.owner[:2] == (context.get('task_id'), context.get('session_id')))
-        if owned:
-            return self.native_fallback(args, native, context, choice, record=record)
-        return native(args, **context)
-
     def execute(self, args, native, **context):
         if not has_site_request(args):
-            return self.execute_native(args, native, context)
+            return native(args, **context)
         from hermes_cli.config import load_config_readonly
         config = load_config_readonly()
         if config.get('browser', {}).get('cloud_provider') != self.provider.name:
@@ -503,7 +414,7 @@ class AppHost:
             return json.dumps({'success': False, 'error': str(error)})
         result = self.handle({**command, 'session': args.get('session')}, **context)
         if command['action'] == 'record_missing_control' and args.get('code') and json.loads(result).get('success'):
-            return self.execute_native({k: v for k, v in args.items() if k != 'site_control'}, native, context, record=False)
+            return native({k: v for k, v in args.items() if k != 'site_control'}, **context)
         return result
 
     def manage(self, action, identifier):

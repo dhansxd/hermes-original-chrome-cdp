@@ -11,15 +11,8 @@ from . import controls, reply, video
 ORIGIN = 'https://gemini.google.com'
 _SNAPSHOT = (Path(__file__).parent / 'snapshot.js').read_text(encoding='utf-8')
 SNAPSHOT = f'(origin) => ({_SNAPSHOT})(origin, {json.dumps(controls.SELECTORS)})'
-FALLBACK_CLICK_OBSERVER = '(' + (Path(__file__).parent / 'fallback.js').read_text() + ')'
-FALLBACK_CLICK_SELECTORS = controls.SELECTORS
 RESULT_MARKER = 'GEMINI_INSPECT='
 CHAT_PATH = r'/(?:u/\d+/)?app/([a-zA-Z0-9-]+)/?'
-
-
-def fallback_send_pending(context):
-    submission = controls.load_submission(context.directory / 'checkpoint.json')
-    return bool(submission and not submission.get('finished'))
 
 
 def chat_id(value):
