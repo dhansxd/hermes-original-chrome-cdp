@@ -4,7 +4,7 @@ Revisi PRD 31, 22 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-Host 0.12.2 menyediakan browsing umum, kontrol situs, dan tindakan jendela
+Host 0.13.1 menyediakan browsing umum, kontrol situs, dan tindakan jendela
 lintas giliran melalui satu `browser_exec`. Jalur distribusi publik memakai
 [URL Git](README.md#install). Pilih dan pulihkan browser secara manual melalui
 Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
@@ -16,8 +16,19 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   menjadi pilihan awal. Pengguna dapat memilih perangkat Windows dan profilnya.
 - Siapkan Windows sekali dengan Chrome, akun desktop aktif, dan OpenSSH.
   Gunakan SSH lewat LAN atau Tailscale. Rilis memuat skrip dan [panduan setup](docs/WINDOWS.md).
-- Verifikasi akses CDP, persetujuan dialog Chrome, jendela per tugas, serta
-  pemindahan hasil unduhan ke Hermes sebelum merilis dukungan Windows.
+- [x] Pada 0.13.0, uji LAN dan Tailscale saat Chrome sudah punya jendela.
+  Dua tugas memakai profil yang sama dengan jendela terpisah. Cleanup satu
+  tugas mempertahankan jendela tugas lain. Unduhan Chrome terverifikasi di Mac.
+- [x] Pada 0.13.1, uji langsung via `browser_exec` saat Chrome tertutup total
+  dan saat Chrome aktif tanpa jendela. Keduanya memilih profil yang diminta,
+  menyetujui dialog koneksi secara otomatis, serta memakai satu jendela yang
+  sama untuk membaca DOM dan mengambil screenshot. Cleanup menutup jendela
+  tugas. Pada kondisi tanpa jendela, PID Chrome tetap sama selama tugas.
+- Uji startup dari kondisi tertutup menemukan bahwa Chrome dapat memakai
+  kembali port lama sebelum memperbarui alamat WebSocket di
+  `DevToolsActivePort`. Companion Windows memeriksa waktu perubahan file
+  sebelum dan sesudah pembacaan. Chrome perlu menerbitkan alamat stabil
+  untuk proses yang baru sebelum plugin membuka koneksi.
 
 ### Tujuan produk
 

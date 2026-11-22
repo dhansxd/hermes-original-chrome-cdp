@@ -34,7 +34,9 @@ function ChromeIdentity {
     if ($local.devtools.remote_debugging.'user-enabled' -ne $true) {
         throw 'Enable Remote Debugging once in Chrome on Windows.'
     }
-    $lines = @(Get-Content -LiteralPath (Join-Path $chromeData 'DevToolsActivePort'))
+    $portFile = Join-Path $chromeData 'DevToolsActivePort'
+    $writtenAt = (Get-Item -LiteralPath $portFile).LastWriteTimeUtc
+    $lines = @(Get-Content -LiteralPath $portFile)
     if ($lines.Count -lt 2 -or $lines[0] -notmatch '^\d{1,5}$' -or
         $lines[1] -notmatch '^/devtools/browser/[A-Za-z0-9_-]+$') {
         throw 'Windows Chrome did not publish a valid debugging endpoint.'
@@ -52,8 +54,9 @@ function ChromeIdentity {
         -not $process.CommandLine -or $process.CommandLine -match '(?:^|\s)--(?:type|user-data-dir)=') {
         throw 'The debugging endpoint does not belong to the original desktop Chrome.'
     }
-    if ((Get-Item -LiteralPath (Join-Path $chromeData 'DevToolsActivePort')).LastWriteTimeUtc -lt
-        $process.CreationDate.ToUniversalTime()) {
+    # Chrome can reuse the old port before replacing the file with a new WebSocket path.
+    if ($writtenAt -lt $process.CreationDate.ToUniversalTime() -or
+        (Get-Item -LiteralPath $portFile).LastWriteTimeUtc -ne $writtenAt) {
         throw 'Windows Chrome debugging endpoint is stale.'
     }
     [ordered]@{ pid=[int]$process.ProcessId; started=$process.CreationDate.ToUniversalTime().Ticks
