@@ -249,8 +249,18 @@ tetap diperiksa pada jalur browser yang terdampak.
      eksplisit. Jika pembacaan hasil perlu inspeksi, Hermes dapat mengamati
      DOM memakai `browser_exec` pada sesi milik tugas. Agen bisa menetapkan
      selector hasil pada `observe`. Job ber-ID diverifikasi oleh paketnya.
-   - [ ] Periksa satu tugas situs berdurasi panjang lewat sesi Hermes baru.
-     CLI Hermes cukup untuk memeriksa perilaku browser dan ekstensi.
+   - [x] Uji satu tugas berdurasi panjang dari sesi Hermes CLI baru pada
+     host 0.13.1 dengan 9Router dan Chrome Windows. Pada situs uji terkendali,
+     Hermes melakukan satu submit dan tiga pemeriksaan progres lewat DOM di
+     `browser_exec`. Dari pembacaan `running` pertama hingga hasil siap,
+     sesi browser bertahan 158 detik, melewati batas idle 120 detik.
+     Empat sampel Windows mencatat jendela tugas yang sama dan jendela
+     pembanding. Hermes membaca kode hasil sebelum jawaban akhir, dan kode
+     itu cocok dengan hasil yang dibaca penguji langsung dari situs.
+     Jendela pembanding bertahan setelah giliran selesai dan ditutup terpisah.
+   - [ ] Periksa satu tugas situs berdurasi panjang lewat kontrol paket
+     `next_control` pada sesi Hermes baru. Uji CLI di atas membuktikan
+     jalur DOM. Jalur kontrol progres paket masih perlu diverifikasi.
      Cocokkan panggilan setelah status `running` dengan perubahan status di
      situs, hasil yang diterima pengguna, dan penutupan jendela tugas. Jika
      terhenti, catat operasi terakhir beserta hasilnya agar patch berikutnya
