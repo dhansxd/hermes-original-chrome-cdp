@@ -101,8 +101,10 @@ class Connection:
 
 
 class ChromeSession:
-    def __init__(self, data, profile, *, profile_identity=None):
-        self.data, self.profile = Path(data).resolve(), profile
+    def __init__(self, data, profile, *, profile_identity=None, desktop=None):
+        self.desktop = desktop
+        self.data = desktop.guard_key if desktop else Path(data).resolve()
+        self.profile = profile
         self.profile_identity = profile_identity
         self.lock = threading.RLock()
         self.start_lock = threading.Lock()
@@ -153,6 +155,29 @@ class ChromeSession:
         with self.lock:
             return not self.closed and self.ready and not self.disconnected and self.kept_target in self.owned
 
+    def _profile(self):
+        return self.desktop.profile(self.profile, refresh=True) if self.desktop else get_profile(self.profile, self.data)
+
+    def _identity(self):
+        return self.desktop.identity() if self.desktop else startup.endpoint_identity(self.data)
+
+    def _open_seed(self):
+        if self.desktop:
+            self.seed_url = self.desktop.seed()
+            self.identity = self.desktop.launch(self.profile, self.seed_url, self.profile_identity, prepare_attach=True)
+            return self.desktop.connect(self.identity, logger=self.logger, max_size=64 * 1024 * 1024)
+        self.seed_dir = tempfile.TemporaryDirectory(prefix='hermes-chrome-window-')
+        seed_file = Path(self.seed_dir.name) / 'start.html'
+        self.seed_title = 'Hermes browser session ' + secrets.token_hex(12)
+        seed_file.write_text('<!doctype html><title>' + self.seed_title + '</title>')
+        self.seed_url = seed_file.as_uri()
+        endpoint = startup.launch(self.data, self.profile, self.seed_url)
+        self.identity = self._identity()
+        if self.identity['endpoint'] != endpoint:
+            raise RuntimeError('Chrome changed during startup.')
+        return connect_with_consent(endpoint, self.data,
+            lambda *a, **kw: connect(*a, **kw, logger=self.logger, max_size=64 * 1024 * 1024))
+
     def _start(self):
         with self.start_lock:
             if self.closed:
@@ -164,24 +189,18 @@ class ChromeSession:
                     raise ConnectionError(DISCONNECTED)
                 return
             try:
-                with consent_guard(self.data, timeout=60):
+                with consent_guard(self.data, timeout=150 if self.desktop else 60):
                     if (self.profile_identity is not None
-                            and get_profile(self.profile, self.data).identity != self.profile_identity):
+                            and self._profile().identity != self.profile_identity):
                         raise RuntimeError('The selected Chrome profile was replaced before startup.')
-                    self.seed_dir = tempfile.TemporaryDirectory(prefix='hermes-chrome-window-')
-                    seed_file = Path(self.seed_dir.name) / 'start.html'
-                    self.seed_title = 'Hermes browser session ' + secrets.token_hex(12)
-                    seed_file.write_text('<!doctype html><title>' + self.seed_title + '</title>')
-                    seed = self.seed_url = seed_file.as_uri()
-                    endpoint = startup.launch(self.data, self.profile, seed)
-                    self.identity = startup.endpoint_identity(self.data)
-                    if self.identity['endpoint'] != endpoint:
-                        raise RuntimeError('Chrome changed during startup.')
-                    ws = connect_with_consent(endpoint, self.data,
-                        lambda *a, **kw: connect(*a, **kw, logger=self.logger, max_size=64 * 1024 * 1024))
-                    self.wire = Connection(ws, self._event)
-                    targets = self.wire.call('Target.getTargets')['targetInfos']
-                    seeds = [t for t in targets if t.get('type') == 'page' and t.get('url') == seed]
+                    self.wire = Connection(self._open_seed(), self._event)
+                    deadline = time.monotonic() + (6 if self.desktop else 0)
+                    while True:
+                        targets = self.wire.call('Target.getTargets')['targetInfos']
+                        seeds = [t for t in targets if t.get('type') == 'page' and t.get('url') == self.seed_url]
+                        if seeds or time.monotonic() >= deadline:
+                            break
+                        time.sleep(.1)
                     if len(seeds) != 1:
                         raise RuntimeError('The requested Chrome window could not be identified.')
                     target = seeds[0]['targetId']
@@ -198,7 +217,9 @@ class ChromeSession:
                         if actual:
                             break
                         time.sleep(.05)
-                    if not actual or Path(actual).resolve() != self.data / self.profile:
+                    matches = actual and (self.desktop.profile_matches(actual, self.profile) if self.desktop
+                                          else Path(actual).resolve() == self.data / self.profile)
+                    if not matches:
                         raise RuntimeError('Chrome opened a different profile; no browsing was performed.')
                     self.wire.call('Page.navigate', {'url': 'about:blank'}, sid)
                     deadline = time.monotonic() + 6
@@ -214,7 +235,7 @@ class ChromeSession:
                 self.error = str(exc)
                 if self.seed_url and self.identity is None:
                     try:
-                        self.identity = startup.endpoint_identity(self.data)
+                        self.identity = self._identity()
                     except Exception:
                         pass  # Cleanup retains the unresolved seed until ownership can be verified.
                 raise
@@ -235,15 +256,19 @@ class ChromeSession:
 
     def _create_profile_target(self, params):
         """Open a page in the selected persistent profile through Chrome's own singleton."""
-        if not self.seed_url or startup.endpoint_identity(self.data) != self.identity:
+        if not self.seed_url or self._identity() != self.identity:
             raise RuntimeError('Chrome identity changed before profile window creation.')
         if (self.profile_identity is not None
-                and get_profile(self.profile, self.data).identity != self.profile_identity):
+                and self._profile().identity != self.profile_identity):
             raise RuntimeError('The selected Chrome profile was replaced before window creation.')
-        arguments = [str(startup.CHROME / 'Contents/MacOS/Google Chrome'),
-                     f'--user-data-dir={self.data}', f'--profile-directory={self.profile}',
-                     '--new-window', self.seed_url]
-        startup.notify_running_chrome(self.data, (self.identity['pid'], self.identity['started']), arguments)
+        if self.desktop:
+            if self.desktop.launch(self.profile, self.seed_url, self.profile_identity) != self.identity:
+                raise RuntimeError('Chrome changed during profile window creation.')
+        else:
+            arguments = [str(startup.CHROME / 'Contents/MacOS/Google Chrome'),
+                         f'--user-data-dir={self.data}', f'--profile-directory={self.profile}',
+                         '--new-window', self.seed_url]
+            startup.notify_running_chrome(self.data, (self.identity['pid'], self.identity['started']), arguments)
         deadline = time.monotonic() + 20
         while True:
             matches = [t for t in self._inventory() if t.get('url') == self.seed_url]
@@ -318,14 +343,25 @@ class ChromeSession:
         if method == 'Target.createTarget':
             if params.get('browserContextId', self.context) != self.context:
                 raise RuntimeError('Cannot create a target in another Chrome profile.')
+            bootstrap = (params.get('url') == 'about:blank' and not params.get('newWindow')
+                         and set(params) <= {'url', 'background', 'browserContextId', 'newWindow'})
+            if self.desktop and bootstrap and self.initial_target:
+                # Returning our existing page does not start Chrome or change
+                # consent while another Windows session is still attaching.
+                targets = self._inventory()
+                with self.lock:
+                    initial = self.initial_target
+                    if (not self.closed and initial and not self.kept_target and
+                            any(t['targetId'] == initial and t.get('url') == 'about:blank' and
+                                t.get('browserContextId') == self.context for t in targets)):
+                        self.initial_target = None
+                        return {'targetId': initial}
             with consent_guard(self.data):
                 # Cleanup uses this same guard. A queued create must recheck admission
                 # after acquiring it so no window can appear after the final inventory.
                 if self.closed:
                     raise RuntimeError('Browser session is closed.')
                 targets = self._inventory()
-                bootstrap = (params.get('url') == 'about:blank' and not params.get('newWindow')
-                             and set(params) <= {'url', 'background', 'browserContextId', 'newWindow'})
                 if self.kept_target and bootstrap and not sessions:
                     if any(t['targetId'] == self.kept_target for t in targets):
                         return {'targetId': self.kept_target}
@@ -405,7 +441,7 @@ class ChromeSession:
             return self.wire.call(method, params)
         if not sid:
             raise RuntimeError('This command requires an owned page attachment.')
-        if (method == 'Input.dispatchKeyEvent' and 'nativeVirtualKeyCode' in params
+        if (not self.desktop and method == 'Input.dispatchKeyEvent' and 'nativeVirtualKeyCode' in params
                 and params['nativeVirtualKeyCode'] == params.get('windowsVirtualKeyCode')):
             # The native helper mirrors Win32 codes into this macOS-only field.
             # Omit that encoding so unhandled page keys cannot reach Cocoa menus.
@@ -483,10 +519,14 @@ class ChromeSession:
                     success = False
             elif self.owned or self.seed_url:
                 try:
-                    success = bool(self.identity and not startup.process_alive(self.identity))
+                    alive = self.desktop.process_alive if self.desktop else startup.process_alive
+                    success = bool(self.identity and not alive(self.identity))
                     if not success and not self.owned:
                         with consent_guard(self.data):
-                            success = startup.close_seed_tab(self.data,self.identity,self.seed_url,self.seed_title)
+                            if self.desktop:
+                                success = self.desktop.close_seed(self.identity, self.seed_url)
+                            else:
+                                success = startup.close_seed_tab(self.data,self.identity,self.seed_url,self.seed_title)
                 except Exception:
                     success = False
             if success:

@@ -1,5 +1,5 @@
 name: original-chrome-default
-version: 0.12.2
+version: 0.13.0
 manifest_version: 2
 api_version: 1
 homepage: https://github.com/dhansxd/hermes-original-chrome-cdp
@@ -23,6 +23,14 @@ provides_hooks:
   - on_human_input_request
   - on_human_input_resolved
 config_schema:
+  default_device:
+    type: str
+    default: local
+    description: Default Chrome device for new sessions. Local or a configured Windows device ID.
+  windows_devices:
+    type: dict
+    default: {}
+    description: Windows targets keyed by device ID, with ssh_host, optional ssh_config, and optional profile_directory.
   handoff_mode:
     type: dict
     default: {}

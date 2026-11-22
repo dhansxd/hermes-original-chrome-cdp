@@ -10,6 +10,15 @@ lintas giliran melalui satu `browser_exec`. Jalur distribusi publik memakai
 Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
 [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
 
+### Chrome di perangkat lain
+
+- Hermes tetap memakai penyedia Chrome dan `browser_exec` yang sama. macOS lokal
+  menjadi pilihan awal. Pengguna dapat memilih perangkat Windows dan profilnya.
+- Siapkan Windows sekali dengan Chrome, akun desktop aktif, dan OpenSSH.
+  Gunakan SSH lewat LAN atau Tailscale. Rilis memuat skrip dan [panduan setup](docs/WINDOWS.md).
+- Verifikasi akses CDP, persetujuan dialog Chrome, jendela per tugas, serta
+  pemindahan hasil unduhan ke Hermes sebelum merilis dukungan Windows.
+
 ### Tujuan produk
 
 Hermes memakai Google Chrome asli lewat CDP untuk membuka situs apa pun yang

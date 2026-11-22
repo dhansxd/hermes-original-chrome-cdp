@@ -123,6 +123,8 @@ def download(context, pending, *, resume=False):
     if not selected:
         return {'status': 'needs_inspection', 'message': 'Inspect the download button on the selected video.'}
     key = hashlib.sha256(selected['key'].encode()).hexdigest()
+    if getattr(context, 'device', 'local') != 'local':
+        return remote_video(context, pending, selected, key)
     record = context.directory / ('video-' + key + '.json')
     shared = context.directory.parent / 'download-locks'
     shared.mkdir(exist_ok=True)
@@ -179,3 +181,27 @@ def download(context, pending, *, resume=False):
             save(record, state)
             pending.unlink(missing_ok=True)
             return {'status': 'failed', 'message': state['error']}
+
+
+def remote_video(context, pending, selected, key):
+    def execute(code, timeout):
+        result = context.browser_exec(code, timeout_s=timeout)
+        if not result.get('success') or result.get('exit_code', 0):
+            raise RuntimeError('Gemini could not confirm the download in the owned Windows page.')
+
+    save(pending, selected)
+    expression = BUTTON + '(' + json.dumps(selected['key']) + ')'
+    action = f'if not js({expression!r}):\n    raise RuntimeError("The selected Gemini result changed.")'
+    file = context.remote_download('gemini-video-' + key, action, execute)
+    if file.get('pending'):
+        return {'status': 'running', 'data': {'stage': 'downloading'}}
+    media = context.verify_video(file['path'])
+    video = next(s for s in media['streams'] if s['codec_type'] == 'video')
+    for field in ('width', 'height'):
+        if selected.get(field) and selected[field] != video[field]:
+            raise ValueError('Downloaded dimensions do not match the selected video.')
+    if selected.get('duration') and abs(float(media['duration']) - selected['duration']) > 1:
+        raise ValueError('Downloaded duration does not match the selected video.')
+    pending.unlink(missing_ok=True)
+    return {'status': 'ok', 'data': {'file': {**file, 'media': media}},
+            'message': 'Attach the verified absolute path for requested delivery.'}

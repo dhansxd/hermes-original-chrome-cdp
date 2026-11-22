@@ -267,7 +267,8 @@ class GeminiAppTests(ChromeFixture):
 
     def test_native_video_receipt_ignores_other_chats_and_reuses_verified_download(self):
         from site_apps.gemini import video
-        context = Mock(directory=self.data / 'task', chrome_profile_directory=self.data, profile='Default')
+        context = Mock(directory=self.data / 'task', chrome_profile_directory=self.data,
+                       profile='Default', device='local')
         context.directory.mkdir()
         history = sqlite3.connect(self.data / 'History')
         self.addCleanup(history.close)

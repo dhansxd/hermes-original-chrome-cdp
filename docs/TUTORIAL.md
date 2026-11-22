@@ -2,6 +2,7 @@
 
 This walkthrough connects Hermes's native browser tools to your original Google
 Chrome profile on macOS. It uses your own local Chrome installation and sign-ins.
+For Chrome on a second device, see [Windows setup](WINDOWS.md).
 
 Use `browser_exec` for both ordinary browsing and site controls. Pass each
 site request below as JSON text in its `site_control` parameter. Ordinary Python goes in

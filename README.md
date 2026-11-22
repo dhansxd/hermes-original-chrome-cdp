@@ -25,6 +25,9 @@ Use `chrome_profiles` to list current profiles, choose a profile for an agent's
 named browser session, or change the default for new sessions. Several agents can
 choose the same profile or different profiles, each with their own windows.
 
+The [Windows setup guide](docs/WINDOWS.md) covers selecting Chrome on a second
+device through OpenSSH over a LAN or Tailscale.
+
 Use `site_control` in `browser_exec` to discover and run user-owned website extension packages.
 Their Python code and guides live outside the plugin installation and can be
 updated independently. Version 0.10.3 bundles Flow 0.3.0 with real-account rolling,

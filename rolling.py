@@ -9,9 +9,9 @@ import uuid
 from contextlib import contextmanager
 
 if __package__:
-    from .profiles import get_profile, list_profiles, profile_directory
+    from .profiles import profile_directory
 else:
-    from profiles import get_profile, list_profiles, profile_directory
+    from profiles import profile_directory
 
 
 HANDOFF_MODES = ('manual', 'automatic')
@@ -88,7 +88,8 @@ class JobStore:
 class RollingJob:
     def __init__(self, host, context, module, *, mode=None):
         self.host, self.context, self.module = host, context, module
-        self.store = host.jobs(context.app)
+        self.device = context.device
+        self.store = host.jobs(context.app, self.device)
         self.mode = mode
         self.record = None
 
@@ -105,9 +106,9 @@ class RollingJob:
         self.save()
 
     def policy_key(self, choice):
-        rule, source = self.host.provider.rules.resolve(choice.app_id, choice.owner, choice.alias,
+        rule, source = self.host.provider.rules.resolve(self.host.provider.rule_namespace(choice), choice.owner, choice.alias,
             choice.platform, self.host.provider.parents.get(choice.owner[1]))
-        default = self.host.get_setting('profile_directory') if rule['mode'] == 'default' else None
+        default = self.host.get_setting('profile_directory') if rule['mode'] == 'default' and self.device == 'local' else None
         return hashlib.sha256(json.dumps([rule, source, default], sort_keys=True).encode()).hexdigest()
 
     def accepted(self, request_id, data=None):
@@ -163,7 +164,7 @@ class RollingJob:
                            'awaiting_profile')
 
     def bind(self, profile, identity=None):
-        current = get_profile(profile, self.host.provider.data)
+        current = self.host.provider.profile_at(self.device, profile)
         if identity is not None and list(current.identity) != list(identity):
             raise RuntimeError('The job source Chrome profile was replaced.')
         self.context.select_profile(profile)
@@ -171,7 +172,7 @@ class RollingJob:
         return current
 
     def candidates(self, target_profile):
-        profiles = list_profiles(self.host.provider.data)
+        profiles = self.host.provider.profile_list(self.device)
         by_id = {profile.id: profile for profile in profiles}
         start = self.record['next_profile']
         if target_profile is not None:
@@ -226,7 +227,7 @@ class RollingJob:
                         initial = choice.profile or self.host.provider.choose_profile(choice)
                         start = initial.id
                     except (OSError, ValueError, RuntimeError, KeyError):
-                        rule, _ = self.host.provider.rules.resolve(choice.app_id, choice.owner, choice.alias,
+                        rule, _ = self.host.provider.rules.resolve(self.host.provider.rule_namespace(choice), choice.owner, choice.alias,
                             choice.platform, self.host.provider.parents.get(choice.owner[1]))
                         start = rule.get('profile') or self.host.get_setting('profile_directory') or 'Default'
                     start = profile_directory(start)
@@ -234,7 +235,7 @@ class RollingJob:
                     cursor = self.store.cursor(owner, alias)
                     if cursor.get('policy') == policy:
                         try:
-                            current = get_profile(cursor['profile'], self.host.provider.data)
+                            current = self.host.provider.profile_at(self.device, cursor['profile'])
                             valid = cursor.get('identity') is None or list(current.identity) == cursor['identity']
                         except (OSError, ValueError, RuntimeError, KeyError):
                             valid = False
@@ -475,7 +476,7 @@ class RollingJob:
             try:
                 self.bind(profile.id, profile.identity)
             except (OSError, ValueError, RuntimeError):
-                current = list_profiles(self.host.provider.data)
+                current = self.host.provider.profile_list(self.device)
                 if not any(item.id == profile.id and item.identity == profile.identity for item in current):
                     continue
                 raise

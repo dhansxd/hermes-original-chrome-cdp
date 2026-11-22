@@ -37,6 +37,29 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(a, self.call('agent-a', alias))
             self.assertEqual(a, self.call('agent-a', a['args']['session']))
 
+    def test_windows_profile_selection_preserves_other_tasks_and_the_local_default(self):
+        windows = {'pc': {'ssh_host': 'chrome-pc'}}
+        remote = plugin.ChromeProfile('Default', 'Windows profile', (11, None, None))
+        provider = plugin.ChromeProvider({'windows_devices': windows}.get)
+        self.addCleanup(provider.unload)
+        with patch('plugin.WindowsChrome') as factory:
+            desktop = factory.return_value
+            desktop.profile.return_value = remote
+            profiles = provider.prepare_call('chrome_profiles', {}, 'A', session_id='chat',
+                                             config=self.config())['args']['session']
+            result = provider.profiles({'action': 'select', 'session': profiles, 'device': 'pc',
+                                        'profile': 'Default'}, task_id='A', session_id='chat')
+            self.assertTrue(result['success'], result)
+            a = provider.prepare_call('browser_exec', {}, 'A', session_id='chat', config=self.config())
+            b = provider.prepare_call('browser_exec', {}, 'B', session_id='chat', config=self.config())
+            with patch.object(plugin.ChromeSession, '_start') as start:
+                for selection in (a, b):
+                    provider.create_session('bu-named-' + selection['args']['session'] + '@test')
+                start.assert_called_once()
+            active = {session.cache_key.split('@')[0]: session for session in provider.sessions.values()}
+            self.assertIs(active['bu-named-' + a['args']['session']].desktop, desktop)
+            self.assertIsNone(active['bu-named-' + b['args']['session']].desktop)
+
     def test_native_turn_identity_keeps_replacement_separate_from_stopped_turn(self):
         with patch.dict(os.environ, {}, clear=True):
             old = plugin.prepare_call('browser_exec', {'session': 'same'}, 'A',

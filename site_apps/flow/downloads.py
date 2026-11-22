@@ -55,6 +55,8 @@ finally:
 
 
 def collect(ui, directory, media_id, action, timeout=60):
+    if getattr(ui.context, 'device', 'local') != 'local':
+        return ui.context.remote_download(media_id, action, ui.execute, timeout=timeout)
     receipt = Path(directory) / 'downloads' / (media_id + '.json')
     receipt.parent.mkdir(parents=True, exist_ok=True)
     code = r'''import hashlib, json, re, shutil, tempfile, time

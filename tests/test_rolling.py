@@ -480,7 +480,7 @@ def prepare_source_retry(context, packet):
                 self.scenario['profiles']['Profile 3'] = {}
                 self.save_scenario()
             return read(data)
-        with patch('rolling.list_profiles', side_effect=inventory):
+        with patch('plugin.list_profiles', side_effect=inventory):
             result = self.invoke()
         self.assertTrue(result['success'], result)
         self.assertEqual([event['profile'] for event in self.events('run')], ['Default', 'Profile 3'])

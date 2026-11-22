@@ -20,9 +20,11 @@ from hermes_constants import get_hermes_home
 if __package__:
     from .site_apps.flow.downloads import verify as verify_media
     from .rolling import HANDOFF_MODES, JobStore, RollingJob
+    from .remote_downloads import collect as collect_remote_download
 else:
     from site_apps.flow.downloads import verify as verify_media
     from rolling import HANDOFF_MODES, JobStore, RollingJob
+    from remote_downloads import collect as collect_remote_download
 
 
 STATUSES = {'ok', 'running', 'quota_exhausted', 'needs_inspection', 'failed'}
@@ -233,19 +235,27 @@ class AppContext:
         return self._choice().profile.id
 
     @property
+    def device(self):
+        return self._choice().device
+
+    @property
     def directory(self):
         choice = self._choice()
         if not choice.directory_key:
             choice.directory_key = hashlib.sha256(
                 f'{self.task_id}\0{self.session_id}\0{self.session}'.encode()).hexdigest()
         owner = choice.directory_key
-        path = self.host.data_dir() / 'browser-apps' / self.app / owner
+        path = self.host.app_data(self.app, choice.device) / owner
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
         return path
 
     @property
     def chrome_profile_directory(self):
         return self.host.provider.data / self.profile
+
+    def remote_download(self, identifier, action, execute, *, timeout=60):
+        key = hashlib.sha256(identifier.encode()).hexdigest()
+        return collect_remote_download(self, key, action, execute, write_json, timeout)
 
     def verify_video(self, path):
         checked = verify_media({'path': str(path)})
@@ -308,8 +318,14 @@ class AppHost:
         self.changing = set()
         self.bundled_source = bundled_source
 
-    def jobs(self, identifier):
-        return JobStore(self.data_dir() / 'browser-apps' / identifier / 'jobs', write_json)
+    def app_data(self, identifier, device='local'):
+        root = self.data_dir() / 'browser-apps' / identifier
+        if device != 'local':
+            root /= 'device-' + hashlib.sha256(device.encode()).hexdigest()[:24]
+        return root
+
+    def jobs(self, identifier, device='local'):
+        return JobStore(self.app_data(identifier, device) / 'jobs', write_json)
 
     def record_missing_control(self, args, task_id, session_id):
         identifier = app_identifier(args.get('app'))
@@ -533,7 +549,14 @@ class AppHost:
                               'guide': guide.read_text() if guide.exists() else ''}
                     if metadata.get('profile_policy') == 'rotate_on_limit':
                         try:
-                            result['jobs'] = self.jobs(identifier).summaries(session_id)
+                            device = self.provider.default_device()
+                            session = args.get('session')
+                            if isinstance(session, str):
+                                base = self.provider.profile_routes.get(session)
+                                choice = self.provider.profile_choices.get(base)
+                                if choice and choice.owner[:2] == (task_id, session_id):
+                                    device = choice.device
+                            result['jobs'] = self.jobs(identifier, device).summaries(session_id)
                         except (OSError, ValueError) as error:
                             result['jobs_error'] = str(error)
                     session = args.get('session')
