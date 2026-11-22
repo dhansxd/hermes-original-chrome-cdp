@@ -114,8 +114,10 @@ Review the source and dependency prompts that Hermes displays. In Browser Automa
 select **Original Chrome · CDP**. Enable the native Browser Automation and Terminal
 toolsets on the surface where you will use the agent.
 
-Hermes separates plugin installation, activation, and browser selection. Its plugin
-manager handles these operations through the normal plugin commands. [Hermes plugin guide](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins)
+**Manual browser selection.** After enabling the plugin, select **Original Chrome · CDP** in
+`hermes tools → Browser Automation`. Hermes saves that choice for subsequent sessions. Before
+disabling or removing the plugin, restore the profile's previous browser settings manually.
+[Hermes browser provider guide](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/browser-provider-plugin.md)
 
 ## Configure
 
@@ -482,7 +484,7 @@ site state after an interrupted click or submission before issuing it again.
 | Selected profile missing | Create or open that profile in Chrome, then verify its directory in `chrome://version` |
 | Browser/profile override conflict | Review the competing CDP override settings listed above |
 | Private URL rejected | Review Hermes's normal private-URL permission setting for the intended destination |
-| Plugin configured after removal | Select Local in the native Browser Automation picker and apply the reported reload |
+| Plugin configured after removal | Restore the previous browser settings and apply the reported reload |
 | Cleanup unconfirmed | Inspect the identified session before retrying cleanup, preserving other agents' and manual tabs |
 | Chrome disconnected while browsing | Wait for the previous session to be retired, then call `browser_exec` again to open a new window |
 
