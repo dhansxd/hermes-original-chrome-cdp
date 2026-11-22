@@ -36,6 +36,11 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   terhapus setelah konfirmasi. Pada Chrome Windows dengan profil yang dipilih,
   kontrol Flow juga mengonfirmasi PNG muncul di pemilih aset proyek uji
   Google Flow. Uji ini hanya mengunggah referensi.
+- [x] Pada 0.13.3, panggilan native pertama dengan alias yang sama mengenali
+  profil situs yang sudah dipilih sebelum Chrome membuka jendela tugas. Uji
+  CLI dengan macOS sebagai default memilih profil Windows terlebih dahulu,
+  lalu `browser_exec` biasa mengembalikan platform Windows. Jika satu alias
+  memiliki beberapa pilihan perangkat/profil, gunakan ID sesi yang tepat.
 
 ### Tujuan produk
 

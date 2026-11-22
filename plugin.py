@@ -256,9 +256,19 @@ class ChromeProvider(BrowserProvider):
                 turn = kwargs.get('turn_id', '')
                 existing = self.profile_choices.get(self.profile_routes.get(alias)) if isinstance(alias, str) else None
                 if existing is None:
-                    existing = next((item for item in self.profile_choices.values()
-                                     if item.owner == owner and item.turn_id == turn and item.alias == alias
-                                     and item.browser_name in self.owners and not item.finished), None)
+                    matches = [item for item in self.profile_choices.values()
+                               if item.owner == owner and item.turn_id == turn and item.alias == alias
+                               and not item.finished]
+                    existing = next((item for item in matches if item.browser_name in self.owners), None)
+                    if tool_name == 'browser_exec' and not app_id:
+                        # A profile can be selected before its first browser call owns a window.
+                        selected = [item for item in matches if item.profile is not None
+                                    and item.browser_name and item.browser_name not in self.owners]
+                        if selected:
+                            if existing is not None or len(selected) != 1:
+                                return {'action': 'block', 'message': 'This alias has several browser sessions. '
+                                        'Use the session ID returned by chrome_profiles.'}
+                            existing = selected[0]
                 reuse = existing is not None and existing.owner == owner and existing.turn_id == turn
                 resume = existing is not None and existing.parked
                 if resume:

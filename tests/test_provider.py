@@ -60,6 +60,53 @@ class ProviderTests(unittest.TestCase):
             self.assertIs(active['bu-named-' + a['args']['session']].desktop, desktop)
             self.assertIsNone(active['bu-named-' + b['args']['session']].desktop)
 
+    def test_site_profile_selection_applies_to_first_native_call_with_same_alias(self):
+        settings = {'windows_devices': {'pc': {'ssh_host': 'chrome-pc'}}}
+        remote = plugin.ChromeProfile('Profile 1', 'Windows profile', (11, None, None))
+        provider = plugin.ChromeProvider(settings.get)
+        self.addCleanup(provider.unload)
+        with patch('plugin.WindowsChrome') as factory, patch.dict(os.environ, {}, clear=True):
+            factory.return_value.profile.return_value = remote
+            owner = {'session_id': 'chat', 'turn_id': 'turn', 'config': self.config()}
+            selection = provider.prepare_call('chrome_profiles', {'session': 'work', 'app': 'gemini'},
+                                              'A', **owner)['args']['session']
+            result = provider.profiles({'action': 'select', 'session': selection,
+                                        'device': 'pc', 'profile': 'Profile 1'}, task_id='A', session_id='chat')
+            self.assertTrue(result['success'], result)
+            self.assertFalse(provider.owners)  # Profile selection happens before a browser opens.
+
+            first = provider.prepare_call('browser_exec', {'session': 'work', 'code': 'print(page_info())'},
+                                          'A', **owner)
+            self.assertEqual(first['args']['session'], selection)
+            self.assertEqual(provider.profile_choices[selection].device, 'pc')
+            self.assertEqual(provider.profile_choices[selection].profile, remote)
+            mapped = provider.prepare_call('browser_exec', {'session': 'work', 'app': 'gemini'}, 'A', **owner)
+            self.assertEqual(mapped['args']['session'], selection)
+            for task, scope in [('B', owner), ('A', {**owner, 'turn_id': 'next-turn'})]:
+                peer = provider.prepare_call('browser_exec', {'session': 'work'}, task, **scope)
+                self.assertNotEqual(peer['args']['session'], selection)
+                self.assertEqual(provider.profile_choices[peer['args']['session']].device, 'local')
+
+    def test_native_alias_does_not_guess_between_two_selected_site_profiles(self):
+        provider = plugin.ChromeProvider()
+        self.addCleanup(provider.unload)
+        owner = {'session_id': 'chat', 'turn_id': 'turn', 'config': self.config()}
+        choices = []
+        for app, profile in [('gemini', 'Profile 1'), ('flow', 'Profile 2')]:
+            prepared = provider.prepare_call('chrome_profiles', {'session': 'work', 'app': app}, 'A', **owner)
+            selected = provider.profiles({'action': 'select', 'session': prepared['args']['session'],
+                                          'profile': profile}, task_id='A', session_id='chat')
+            self.assertTrue(selected['success'], selected)
+            choices.append(selected['session'])
+
+        with patch.dict(os.environ, {}, clear=True):
+            ambiguous = provider.prepare_call('browser_exec', {'session': 'work'}, 'A', **owner)
+            self.assertEqual(ambiguous['action'], 'block')
+            self.assertFalse(provider.owners)
+            for selected in choices:
+                exact = provider.prepare_call('browser_exec', {'session': selected}, 'A', **owner)
+                self.assertEqual(exact['args']['session'], selected)
+
     def test_native_turn_identity_keeps_replacement_separate_from_stopped_turn(self):
         with patch.dict(os.environ, {}, clear=True):
             old = plugin.prepare_call('browser_exec', {'session': 'same'}, 'A',

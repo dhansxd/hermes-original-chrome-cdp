@@ -80,6 +80,11 @@ Use the ID `local` for the Mac.
 {"action":"select","device":"windows","profile":"Default","session":"research"}
 ```
 
+One selection for a named session also applies when the first `browser_exec`
+call uses ordinary browser code after selecting with `app`. If an alias
+matches several sessions with a pending selection, use the exact session ID
+returned by `chrome_profiles`.
+
 ## Downloads
 
 The Windows version of the bundled Gemini and Flow download controls can
