@@ -149,10 +149,13 @@ class ProviderTests(unittest.TestCase):
                        owned={'page'}, owned_window=Mock(return_value=('page', 'Fixture')))
         session.close.return_value = True
         with patch('plugin.ChromeSession', return_value=session), patch.dict(os.environ, {}, clear=True):
-            name = provider.prepare_call('browser_exec', {}, 'A', session_id='chat',
+            name = provider.prepare_call('browser_exec', {'session': 'fixture'}, 'A', session_id='chat',
                                          turn_id='turn', config=self.config())['args']['session']
             provider.create_session('bu-named-' + name)
-            provider.window_control('keep_window', name, 'A', 'chat')
+            with self.assertRaisesRegex(ValueError, 'No matching Chrome window'):
+                provider.window_control('keep_window', 'fixture', 'B', 'other')
+            kept = provider.window_control('keep_window', 'fixture', 'A', 'chat')
+            self.assertEqual(kept['session'], name)
             provider.ended(session_id='chat', task_id='A', turn_id='turn', interrupted=True)
         session.close.assert_called_once()
         self.assertNotIn(name, provider.owners)

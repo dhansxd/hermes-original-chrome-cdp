@@ -312,11 +312,20 @@ class ChromeProvider(BrowserProvider):
                            and not choice.finished and choice.owner[1:] == owner[1:]
                            and any(session.kept_window_exists() for _, session in self._browser_sessions(choice.browser_name))]
                 return {'success': True, 'status': 'ok', 'windows': windows}
+            if action == 'keep_window' and name is None:
+                name = 'default'
             if not isinstance(name, str) or not name:
-                raise ValueError('Pass the exact session ID of the Chrome window.')
+                raise ValueError('Pass the session of the Chrome window.')
             choice = self.profile_choices.get(self.profile_routes.get(name))
+            if choice is None and action == 'keep_window':
+                matches = [item for item in self.profile_choices.values()
+                           if item.alias == name and item.owner == owner and item.browser_name in self.owners
+                           and not (item.parked or item.finished)]
+                if len(matches) == 1:
+                    choice = matches[0]
+                    name = choice.browser_name
             if choice is None or choice.browser_name != name or choice.owner[1:] != owner[1:]:
-                raise ValueError('No matching Chrome window in this Hermes conversation.')
+                raise ValueError('No matching Chrome window. Use the session ID returned by browser_exec.')
             if action == 'keep_window':
                 if choice.owner != owner or choice.parked or choice.finished or choice.switching or choice.active:
                     raise RuntimeError('Keep a window from the current turn after its browser action has finished.')

@@ -53,8 +53,8 @@ verify that the page or ongoing action the user asked to leave available is
 ready. A `running` status alone does not request retention. When the user asks
 to return later, report the confirmed progress as pending.
 
-Pass `{"action":"keep_window"}` as `site_control` with `browser_exec.session`
-set to the exact session ID from the browser call. Wait for `state: kept` before
+Pass `{"action":"keep_window"}` as `site_control` with the current
+`browser_exec.session`. Wait for `state: kept` before
 saying that the window will remain open. In a later turn in the same Hermes
 conversation, `{"action":"list_windows"}` lists kept windows. To continue, use
 that exact ID as `browser_exec.session` for site controls or native `code`.

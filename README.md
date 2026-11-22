@@ -359,7 +359,7 @@ changes, parallel sessions, updates, and switching back to the built-in browser.
 ## Keep a window available across turns
 
 After the requested page or action is ready, use `{"action":"keep_window"}` in
-`browser_exec.site_control` with the exact `session` returned by the browser.
+`browser_exec.site_control` with the current browser `session`.
 Use it for a request to keep a window open or a task that clearly needs to remain
 available. In the same Hermes conversation, `{"action":"list_windows"}` shows
 the kept windows. Pass the listed session ID to `browser_exec` to continue in that

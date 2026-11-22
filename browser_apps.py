@@ -39,7 +39,7 @@ CONTROL_SCHEMA = {
                    'Examples: {"action":"list"}, {"action":"describe","app":"gemini"}, '
                    '{"app":"gemini","operation":"click","params":{"control":"tools_menu"}}. '
                    'Each installed site defines its own params. Window actions are keep_window, list_windows and close_window. '
-                   'Pass the exact browser session for keep_window or close_window.',
+                   'Use the current browser session for keep_window and the returned session ID for close_window.',
 }
 
 
