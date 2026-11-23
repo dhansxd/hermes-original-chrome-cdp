@@ -95,6 +95,17 @@ call uses ordinary browser code after selecting with `app`. If an alias
 matches several sessions with a pending selection, use the exact session ID
 returned by `chrome_profiles`.
 
+## Cleanup after a connection failure
+
+The plugin closes only the Windows Chrome pages owned by the task. After a
+failed startup, it refreshes Chrome's process identity and checks the exact
+startup marker. If an approved CDP connection drops, it can reconnect to the
+verified original Chrome process to close the recorded targets.
+
+If the PC is unreachable, the plugin saves unconfirmed window cleanup in the
+Hermes profile. The next successful Windows Chrome connection retries it, even
+after Hermes restarts. A manual window or another agent's target remains open.
+
 ## Downloads
 
 The Windows version of the bundled Gemini and Flow download controls can

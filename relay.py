@@ -8,6 +8,7 @@ This separates cooperative browser sessions; it is not a Python or web security 
 import concurrent.futures
 import json
 import logging
+import re
 import secrets
 import threading
 import time
@@ -29,6 +30,31 @@ else:
 
 
 DISCONNECTED = 'Chrome CDP disconnected. The previous browser command was not replayed.'
+
+
+def task_targets(infos, owned, seed_url, context):
+    owned.update(t['targetId'] for t in infos if t.get('type') == 'page'
+                 and seed_url and t.get('url') == seed_url)
+    # Popups in the same Chrome profile inherit ownership from their opener.
+    for _ in range(len(infos)):
+        added = {t['targetId'] for t in infos if t.get('type') == 'page'
+                 and t.get('browserContextId') == context and t.get('openerId') in owned}
+        if added <= owned:
+            break
+        owned.update(added)
+    return [t for t in infos if t['targetId'] in owned]
+
+
+def close_task_targets(wire, inventory):
+    for info in inventory():
+        if info.get('type') == 'page':
+            wire.call('Target.closeTarget', {'targetId': info['targetId']})
+    deadline = time.monotonic() + 3
+    remaining = {t['targetId'] for t in inventory()}
+    while remaining and time.monotonic() < deadline:
+        time.sleep(.05)
+        remaining = {t['targetId'] for t in inventory()}
+    return remaining
 
 
 class CDPError(RuntimeError):
@@ -124,6 +150,7 @@ class ChromeSession:
         self.seed_title = None
         self.identity = None
         self.cleanup_complete = False
+        self.cleanup_file = None
         self.clients = {}
         self.uploads = {}
         self.path = '/devtools/browser/' + secrets.token_urlsafe(32)
@@ -289,6 +316,7 @@ class ChromeSession:
                     self.wire.call('Target.setDiscoverTargets', {'discover': True})
                     self.initial_target = target
                     self.ready = True
+                    self._retry_windows_cleanup()
             except Exception as exc:
                 self.error = str(exc)
                 if self.seed_url and self.identity is None:
@@ -296,21 +324,13 @@ class ChromeSession:
                         self.identity = self._identity()
                     except Exception:
                         pass  # Cleanup retains the unresolved seed until ownership can be verified.
+                self._save_windows_cleanup()
                 raise
 
     def _inventory(self, wire=None):
         infos = (wire or self.wire).call('Target.getTargets')['targetInfos']
         with self.lock:
-            self.owned.update(t['targetId'] for t in infos if t.get('type') == 'page'
-                              and self.seed_url and t.get('url') == self.seed_url)
-            # Follow opener provenance after claiming this session's unique seed.
-            for _ in range(len(infos)):
-                added = {t['targetId'] for t in infos if t.get('type') == 'page'
-                         and t.get('browserContextId') == self.context and t.get('openerId') in self.owned}
-                if added <= self.owned:
-                    break
-                self.owned.update(added)
-            return [t for t in infos if t['targetId'] in self.owned]
+            return task_targets(infos, self.owned, self.seed_url, self.context)
 
     def _create_profile_target(self, params):
         """Open a page in the selected persistent profile through Chrome's own singleton."""
@@ -550,6 +570,77 @@ class ChromeSession:
                     except Exception:
                         pass
 
+    def _save_windows_cleanup(self):
+        if self.cleanup_file is None or not (self.owned or self.seed_url):
+            return
+        path = self.cleanup_file
+        temporary = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            try:
+                with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as output:
+                    temporary = Path(output.name)
+                    json.dump({'identity': self.identity, 'seed': self.seed_url,
+                               'targets': sorted(self.owned), 'context': self.context}, output)
+                temporary.replace(path)
+            finally:
+                if temporary:
+                    temporary.unlink(missing_ok=True)
+        except OSError:
+            logging.getLogger(__name__).warning('Could not save pending Windows Chrome window cleanup.')
+
+    def _retry_windows_cleanup(self):
+        if self.cleanup_file is None:
+            return
+        # Only failed or closing sessions write records. Reuse this approved connection.
+        for path in self.cleanup_file.parent.glob('*.json'):
+            if path == self.cleanup_file or path.is_symlink() or not re.fullmatch('[a-f0-9]{32}', path.stem):
+                continue
+            try:
+                record = json.loads(path.read_text())
+                identity, seed, targets = record['identity'], record['seed'], record['targets']
+                if (not isinstance(targets, list)
+                        or any(not isinstance(t, str) or not re.fullmatch('[a-f0-9A-F]{32}', t) for t in targets)
+                        or (seed is not None and (not isinstance(seed, str)
+                            or not re.fullmatch('data:text/plain,Hermes-Chrome-[a-f0-9]{32}', seed)))
+                        or (identity is not None and not isinstance(identity, dict))
+                        or (targets and identity is None)
+                        or (seed is not None and seed == self.seed_url) or self.owned.intersection(targets)):
+                    continue
+                if identity is not None and identity != self.identity:
+                    cleared = not self.desktop.process_alive(identity)
+                else:
+                    owned = set(targets)
+
+                    def inventory():
+                        infos = self.wire.call('Target.getTargets')['targetInfos']
+                        return task_targets(infos, owned, seed, record['context'])
+
+                    cleared = not close_task_targets(self.wire, inventory)
+                if cleared:
+                    path.unlink(missing_ok=True)
+            except (OSError, ValueError, KeyError, TypeError, RuntimeError, TimeoutError):
+                continue  # Leave the record for another verified connection.
+
+    def _recover_windows_cleanup(self):
+        with consent_guard(self.data):
+            if self.identity and not self.desktop.process_alive(self.identity):
+                return True
+            current = self.desktop.identity()
+            if self.identity is not None and current != self.identity:
+                return False
+            if not self.owned:
+                return self.desktop.close_seed(current, self.seed_url)
+            if self.identity is None:
+                return False
+            # These target IDs came from a previously approved CDP connection.
+            wire = Connection(self.desktop.connect_cleanup(
+                current, logger=self.logger, max_size=64 * 1024 * 1024), lambda event: None)
+            try:
+                return not close_task_targets(wire, lambda: self._inventory(wire))
+            finally:
+                wire.close()
+
     def close(self, cleanup_wire=None):
         with self.start_lock:
             if self.cleanup_complete:
@@ -557,46 +648,40 @@ class ChromeSession:
             with self.lock:
                 self.closed = True
                 uploads = list(self.uploads)
+                self._save_windows_cleanup()
             success = True
             wire = self.wire if self.wire and not self.wire.closed else cleanup_wire
             if wire:
                 try:
                     with consent_guard(self.data):
-                        # A rejected handshake can still leave the exact GUI seed tab.
-                        # An already approved peer connection may close that tab; never
-                        # open another handshake or close a whole shared window here.
-                        infos = wire.call('Target.getTargets')['targetInfos']
-                        seeds = [t for t in infos if t.get('type') == 'page'
-                                 and self.seed_url and t.get('url') == self.seed_url]
-                        self.owned.update(t['targetId'] for t in seeds)
-                        for info in self._inventory(wire):
-                            if info.get('type') == 'page':
-                                wire.call('Target.closeTarget', {'targetId': info['targetId']})
-                        deadline = time.monotonic() + 3
-                        remaining = {t['targetId'] for t in self._inventory(wire)}
-                        while remaining and time.monotonic() < deadline:
-                            time.sleep(.05)
-                            remaining = {t['targetId'] for t in self._inventory(wire)}
-                        self.owned.intersection_update(remaining)
+                        remaining = close_task_targets(wire, lambda: self._inventory(wire))
+                        with self.lock:
+                            self.owned.intersection_update(remaining)
                         success = not self.owned
                 except Exception:
                     success = False
-            elif self.owned or self.seed_url:
+            if self.desktop and (self.owned or self.seed_url) and (wire is None or not success and wire.closed):
                 try:
-                    alive = self.desktop.process_alive if self.desktop else startup.process_alive
-                    success = bool(self.identity and not alive(self.identity))
+                    success = self._recover_windows_cleanup()
+                except Exception:
+                    success = False
+            elif wire is None and (self.owned or self.seed_url):
+                try:
+                    success = bool(self.identity and not startup.process_alive(self.identity))
                     if not success and not self.owned:
                         with consent_guard(self.data):
-                            if self.desktop:
-                                success = self.desktop.close_seed(self.identity, self.seed_url)
-                            else:
-                                success = startup.close_seed_tab(self.data,self.identity,self.seed_url,self.seed_title)
+                            success = startup.close_seed_tab(self.data,self.identity,self.seed_url,self.seed_title)
                 except Exception:
                     success = False
             if success:
                 # The seed is gone even if a later local transport close needs another attempt.
                 self.owned.clear()
                 self.seed_url = None
+                if self.cleanup_file is not None:
+                    try:
+                        self.cleanup_file.unlink(missing_ok=True)
+                    except OSError:
+                        success = False
             for source, digest in uploads:
                 success = self.release_upload(source, digest) and success
             with self.lock:

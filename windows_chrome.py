@@ -342,6 +342,10 @@ class WindowsChrome:
     def process_alive(self, identity):
         return self._run('alive', identity=identity)['alive']
 
+    def connect_cleanup(self, identity, **options):
+        self._run('preflight', interactive=True, identity=identity, accepted=sorted(self.accepted.copy()))
+        return self.connect(identity, **options)
+
     def close_seed(self, identity, seed):
         if identity is None:
             return False

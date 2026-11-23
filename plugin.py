@@ -64,9 +64,10 @@ class ChromeProvider(BrowserProvider):
     name = NAME
     display_name = 'Original Chrome · CDP'
 
-    def __init__(self, get_setting=lambda key: None, *, data=PERSONAL, set_setting=None):
+    def __init__(self, get_setting=lambda key: None, *, data=PERSONAL, set_setting=None, cleanup_directory=None):
         self.get_setting, self.data = get_setting, data
         self.set_setting = set_setting
+        self.cleanup_directory = cleanup_directory
         self.instance_id = uuid.uuid4().hex
         self.sessions = {}
         self.owners = {}
@@ -80,7 +81,7 @@ class ChromeProvider(BrowserProvider):
         self.windows_devices = {}
         self.lock = threading.RLock()
         self.unloading = False
-        # Retain failed cleanup across host unload, until it succeeds or the process exits.
+        # Finalize local transports here. Windows also records unconfirmed window cleanup.
         atexit.register(self.unload)
 
     def is_available(self):
@@ -185,12 +186,15 @@ class ChromeProvider(BrowserProvider):
             if (self.unloading or kept or name in self.finishing
                     or (task_id.startswith('bu-named-') and name not in self.owners)):
                 return self._unavailable_session()
+            identifier = uuid.uuid4().hex
             try:
                 desktop = self.desktop(device)
                 profile = choice.profile if choice and choice.browser_name == name else None
                 if profile is None and desktop:
                     profile = self.profile_at(device, None)
                 directory = profile.id if profile else profile_directory(self.get_setting('profile_directory'))
+                cleanup_file = (self.cleanup_directory() / desktop.guard_key.name / (identifier + '.json')
+                                if desktop and self.cleanup_directory is not None else None)
                 settings_context = copy_context()
                 session = ChromeSession(self.data, directory, profile_identity=profile.identity if profile else None,
                                         desktop=desktop,
@@ -199,7 +203,7 @@ class ChromeProvider(BrowserProvider):
                 logging.getLogger(__name__).warning('Original Chrome could not open the selected device: %s', error)
                 return self._unavailable_session()
             session.cache_key = task_id
-            identifier = uuid.uuid4().hex
+            session.cleanup_file = cleanup_file
             self.sessions[identifier] = session
         if desktop:
             # SSH and Windows desktop startup can exceed the native driver's
@@ -791,7 +795,8 @@ def register_site_controls(ctx, apps):
 
 
 def register(ctx):
-    provider = ChromeProvider(ctx.get_config, set_setting=ctx.set_config)
+    provider = ChromeProvider(ctx.get_config, set_setting=ctx.set_config,
+                              cleanup_directory=lambda: ctx.state.data_dir / 'windows-cleanup')
     ctx.register_browser_provider(provider)
     root = Path(__file__).parent
     apps = AppHost(provider, ctx.get_config, ctx.dispatch_tool, prepare_code,

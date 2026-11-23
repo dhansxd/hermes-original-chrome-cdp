@@ -73,6 +73,16 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   Pemeriksaan SHA-256 dan dekode penuh FFmpeg lulus. Batas waktu panggilan
   browser tetap seperti pembanding agar kontrol yang lambat bisa selesai.
   Seluruh 454 tes unit lulus.
+- [x] Pada host 0.14.3, cleanup Windows memulihkan penanda awal dan ID target
+  yang belum tertutup. Pembanding `09729fa` dan kandidat memakai Chrome
+  Windows asli, profil yang sama, dan OpenSSH. Uji menyimulasikan jawaban
+  startup hilang setelah Chrome membuka jendela dan CDP putus setelah
+  jendela terdaftar. Pembanding menyisakan satu jendela pada masing-masing
+  gangguan. Kandidat menyisakan nol. Cleanup normal berhasil pada
+  keduanya. Kandidat juga memulihkan catatan cleanup saat sesi baru
+  terhubung setelah simulasi Windows tidak dapat dijangkau. Jendela
+  pembanding di luar plugin dan jendela sesi agen lain tetap terbuka
+  pada semua skenario. Seluruh 458 tes unit lulus.
 
 ### Tujuan produk
 

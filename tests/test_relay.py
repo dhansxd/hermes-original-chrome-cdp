@@ -2,6 +2,7 @@ import concurrent.futures
 from contextlib import contextmanager
 import json
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -455,6 +456,91 @@ class RelayTests(unittest.TestCase):
             self.assertFalse(self.session.close())
         with patch('relay.startup.process_alive', return_value=False):
             self.assertTrue(self.session.close())
+
+    def test_windows_cleanup_refetches_identity_after_unacknowledged_startup(self):
+        desktop = Mock(guard_key=Path('/fixture-windows'))
+        seed = 'data:text/plain,Hermes-Chrome-' + 'c' * 32
+        identity = {'pid': 15, 'started': 8}
+        desktop.seed.return_value = seed
+        desktop.launch.side_effect = RuntimeError('startup reply lost')
+        desktop.identity.side_effect = [RuntimeError('SSH unavailable'), identity]
+        desktop.close_seed.side_effect = lambda current, marker: (current, marker) == (identity, seed)
+        session = relay.ChromeSession(Path('/fixture'), 'Default', desktop=desktop)
+
+        with self.assertRaisesRegex(RuntimeError, 'startup reply lost'):
+            session._start()
+        self.assertIsNone(session.identity)
+        self.assertTrue(session.close())
+        desktop.close_seed.assert_called_once_with(identity, seed)
+        desktop.connect_cleanup.assert_not_called()
+
+    def test_windows_cleanup_reconnects_to_the_same_process_and_closes_only_owned_targets(self):
+        desktop = Mock(guard_key=self.session.data)
+        identity = {'pid': 15, 'started': 8}
+        desktop.identity.return_value = identity
+        desktop.process_alive.return_value = True
+        self.session.desktop = desktop
+        self.session.identity = identity
+        self.targets += [self.info('owned-popup', 'owned'), self.info('other-agent')]
+        self.wire.closed = True
+        recovered = Mock(closed=False)
+        recovered.call.side_effect = self.wire.call.side_effect
+        with patch('relay.Connection', return_value=recovered):
+            self.assertTrue(self.session.close())
+        desktop.connect_cleanup.assert_called_once_with(identity, logger=self.session.logger, max_size=64 * 1024 * 1024)
+        self.assertEqual({target['targetId'] for target in self.targets}, {'manual', 'other-agent'})
+        recovered.close.assert_called_once()
+
+    def test_windows_cleanup_never_reconnects_to_a_replaced_endpoint(self):
+        desktop = Mock(guard_key=self.session.data)
+        desktop.identity.return_value = {'pid': 15, 'started': 8, 'path': '/replaced'}
+        desktop.process_alive.return_value = True
+        self.session.desktop = desktop
+        self.session.identity = {'pid': 15, 'started': 8, 'path': '/original'}
+        self.wire.closed = True
+        self.assertFalse(self.session.close())
+        desktop.identity.assert_called_once_with()
+        desktop.connect_cleanup.assert_not_called()
+        self.assertEqual({target['targetId'] for target in self.targets}, {'manual', 'owned'})
+        self.wire.closed = False
+
+    def test_windows_pending_cleanup_reuses_a_new_session_connection(self):
+        desktop = Mock(guard_key=self.session.data)
+        desktop.identity.side_effect = RuntimeError('SSH unavailable')
+        desktop.process_alive.side_effect = RuntimeError('SSH unavailable')
+        identity = {'pid': 15, 'started': 8}
+        self.session.desktop = desktop
+        self.session.identity = identity
+        self.session.owned = {'1' * 32}
+        self.targets = [self.info('1' * 32), self.info('2' * 32), self.info('manual')]
+        self.wire.closed = True
+        with tempfile.TemporaryDirectory() as directory:
+            pending = Path(directory) / ('a' * 32 + '.json')
+            waiting_seed = 'data:text/plain,Hermes-Chrome-' + 'a' * 32
+            startup_pending = Path(directory) / ('c' * 32 + '.json')
+            startup_pending.write_text(json.dumps({
+                'identity': None, 'seed': waiting_seed, 'targets': [], 'context': None,
+            }))
+            self.targets.append(dict(self.info('startup-window'), url=waiting_seed))
+            self.session.cleanup_file = pending
+            self.assertFalse(self.session.close())
+            self.assertTrue(pending.is_file())
+            restored = relay.ChromeSession(Path('/fixture'), 'Default', desktop=desktop)
+            restored.context = self.session.context
+            restored.identity = identity
+            restored.wire = self.wire
+            restored.owned = {'2' * 32}
+            restored.cleanup_file = Path(directory) / ('b' * 32 + '.json')
+            self.wire.closed = False
+            try:
+                restored._retry_windows_cleanup()
+                self.assertFalse(pending.exists())
+                self.assertFalse(startup_pending.exists())
+                self.assertEqual({target['targetId'] for target in self.targets}, {'2' * 32, 'manual'})
+                desktop.connect_cleanup.assert_not_called()
+            finally:
+                restored.close()
+        self.session.cleanup_file = None
 
     def test_disconnected_relay_refuses_to_relaunch_or_replay_a_call(self):
         self.session.ready = True
