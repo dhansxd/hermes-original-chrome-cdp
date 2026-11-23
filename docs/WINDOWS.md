@@ -106,6 +106,10 @@ Existing editable site package copies are preserved by updates. Use the
 bundled Windows-compatible versions of Gemini and Flow for these transfers.
 Host 0.14.1 and Flow 0.4.6 let Flow resume a pending Windows download from
 the original Chrome receipt.
+Host 0.14.2 can also recover a download receipt from the selected Windows
+Chrome profile's history when the owned page emits no download event. Recovery
+requires one source window for the exact page and keeps the original download.
+It uses the SQLite library built into Windows.
 See the [site package update procedure](TUTORIAL.md#use-google-flow)
 for existing copies.
 

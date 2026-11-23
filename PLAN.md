@@ -55,8 +55,24 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   jendela milik tugas. File di Mac cocok ukuran dan SHA-256 dengan sumber
   serta lulus dekode FFmpeg. Pada Flow 0.4.6, unduhan yang ditunda dilanjutkan
   dari tanda terima Chrome yang sama dan server menerima satu permintaan.
-  Bukti ini menguji jalur kode kedua paket dengan fixture, sedangkan uji
-  pada situs asli menunggu video yang dapat dibuka dari profil Windows.
+  Bukti ini hanya mencakup jalur kode kedua paket pada halaman terkontrol.
+- [x] Pada host 0.14.2, uji Gemini di Hermes CLI v0.23.2 dengan Chrome 157
+  Windows memakai satu video lama dan satu jendela tugas. Pada pembanding
+  `ac1ca2e`, Chrome menyimpan 6.616.052 byte tanpa event unduhan pada koneksi
+  CDP halaman, sehingga transfer tetap menunggu. Pada kandidat, plugin
+  menemukan tanda terima baru dari riwayat unduhan Chrome untuk halaman
+  yang sama. MP4 1280 × 720 berdurasi 10,03 detik sampai ke Mac, lulus
+  pemeriksaan SHA-256 dan dekode FFmpeg. Fixture event CDP lulus pada kedua
+  versi dengan satu klik dan GUID yang sama. Regresi juga memeriksa pembacaan
+  ulang tanpa klik tambahan serta penolakan tanda terima ambigu. Pembacaan
+  riwayat berlangsung di Windows dan hanya dipakai jika URL dapat dikaitkan
+  ke satu jendela tugas pada profil itu.
+- [x] Pada kandidat yang sama, uji Google Flow 0.4.6 di Chrome Windows
+  mengunduh video lama melalui kontrol **Ukuran asli**. Satu klik menghasilkan
+  tanda terima CDP dan MP4 720 × 1280 sebesar 3.703.616 byte di Mac.
+  Pemeriksaan SHA-256 dan dekode penuh FFmpeg lulus. Batas waktu panggilan
+  browser tetap seperti pembanding agar kontrol yang lambat bisa selesai.
+  Seluruh 454 tes unit lulus.
 
 ### Tujuan produk
 

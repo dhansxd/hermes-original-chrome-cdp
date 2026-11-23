@@ -350,11 +350,29 @@ class WindowsChrome:
     def download_files(self, profile):
         return self._run('download_files', profile=profile)['files']
 
+    def download_receipts(self, profile, page, after=-1):
+        request = json.dumps({'profile': profile, 'page': page, 'after': after})
+        encoded = base64.b64encode(request.encode()).decode('ascii')
+        loader = ("[Console]::InputEncoding=[Text.Encoding]::UTF8; "
+                  "& ([ScriptBlock]::Create([Console]::In.ReadToEnd())) '" + encoded + "'")
+        script = Path(__file__).with_name('windows_download_history.ps1').read_text(encoding='utf-8')
+        try:
+            result = subprocess.run([*self.command, *encoded_command(loader)], input=script,
+                                    capture_output=True, text=True, encoding='utf-8', timeout=28)
+        except subprocess.TimeoutExpired:
+            return None
+        if result.returncode:
+            return None
+        return json.loads(result.stdout)['rows']
+
     def stage_upload(self, source, digest, check_owner):
         return WindowsUpload(self.command, source, digest, check_owner)
 
-    def fetch_download(self, profile, receipt, destination, check_owner):
+    def fetch_download(self, profile, receipt, destination, check_owner, *, expected_path=None):
         source = self._run('download_file', profile=profile, **receipt)
+        if (expected_path is not None
+                and ntpath.normcase(ntpath.normpath(source['path'])) != ntpath.normcase(ntpath.normpath(expected_path))):
+            raise RuntimeError('The Windows Chrome download path does not match its history receipt.')
         path = "'" + source['path'].replace("'", "''") + "'"
         script = (f"$ErrorActionPreference='Stop'; $file=[IO.File]::OpenRead({path}); "
                   "try { $file.CopyTo([Console]::OpenStandardOutput()) } finally { $file.Dispose() }")

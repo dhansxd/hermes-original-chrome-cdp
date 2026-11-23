@@ -2,6 +2,7 @@
 import json
 import re
 from pathlib import PureWindowsPath
+from uuid import UUID
 
 
 READ_EVENTS = """
@@ -41,6 +42,27 @@ while time.monotonic() < deadline:
 """
 
 
+def history_progress(desktop, profile, browser, history):
+    page, after = history['page'], history['after']
+    if browser.unique_download_page(page) != page:
+        return {'history': None}
+    receipts = desktop.download_receipts(profile, page, after)
+    if not receipts:
+        return {}
+    if browser.unique_download_page(page) != page:
+        return {'history': None}
+    if len(receipts) != 1:
+        raise RuntimeError('The Windows Chrome download history is ambiguous.')
+    receipt = receipts[0]
+    if receipt['state'] in (2, 4):
+        raise RuntimeError('Chrome reports that the download was cancelled or interrupted.')
+    if receipt['state'] != 1 or not receipt['bytes']:
+        return {}
+    return {'guid': str(UUID(receipt['guid'])), 'name': PureWindowsPath(receipt['path']).name,
+            'progress': {'state': 'completed', 'receivedBytes': receipt['bytes']},
+            'history_path': receipt['path']}
+
+
 def collect(context, record, action, execute, save, timeout):
     desktop = context.host.provider.desktop(context.device)
     profile = context.profile
@@ -49,12 +71,23 @@ def collect(context, record, action, execute, save, timeout):
         state = json.loads(record.read_text())
     else:
         state = {'before': {row['name']: row for row in desktop.download_files(profile)}}
+        page = context._remote_browser().unique_download_page()
+        if page:
+            receipts = desktop.download_receipts(profile, page)
+            if receipts is not None:
+                state['history'] = {'page': page, 'after': receipts[0]['id'] if receipts else 0}
         save(record, state)
     if state.get('file'):
         return state['file']
     if state.get('progress', {}).get('state') != 'completed':
-        execute(READ_EVENTS % (str(record), action, timeout), timeout + 15)
+        # Page events remain the primary receipt. Chrome History can provide
+        # the receipt for a download that did not produce those events.
+        observe = min(timeout, 8) if state.get('history') and not state.get('guid') else timeout
+        execute(READ_EVENTS % (str(record), action, observe), timeout + 15)
         state = json.loads(record.read_text())
+        if not state.get('guid') and state.get('history'):
+            state.update(history_progress(desktop, profile, context._remote_browser(), state['history']))
+            save(record, state)
     progress = state.get('progress', {})
     pending = {'pending': True, 'guid': state.get('guid')}
     if progress.get('state') == 'canceled':
@@ -66,7 +99,8 @@ def collect(context, record, action, execute, save, timeout):
     duplicate = re.compile(re.escape(original.stem) + r' \(\d+\)' + re.escape(original.suffix), re.I)
     size = progress.get('receivedBytes') or progress.get('totalBytes')
     candidates = [row for row in desktop.download_files(profile)
-                  if (row['name'].casefold() == name.casefold() or duplicate.fullmatch(row['name']))
+                  if (row['name'].casefold() == name.casefold()
+                      or not state.get('history_path') and duplicate.fullmatch(row['name']))
                   and row['bytes'] == size and state['before'].get(row['name']) != row]
     if len(candidates) > 1:
         raise RuntimeError('The Windows Chrome download filename is ambiguous.')
@@ -76,7 +110,8 @@ def collect(context, record, action, execute, save, timeout):
     folder.mkdir(exist_ok=True)
     suffix = PureWindowsPath(candidates[0]['name']).suffix
     target = folder / (record.stem + suffix)
-    file = desktop.fetch_download(profile, candidates[0], target, context._choice)
+    file = desktop.fetch_download(profile, candidates[0], target, context._choice,
+                                  expected_path=state.get('history_path'))
     state['file'] = {**file, 'guid': state['guid']}
     save(record, state)
     return state['file']

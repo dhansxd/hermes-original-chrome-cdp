@@ -54,6 +54,15 @@ class RelayTests(unittest.TestCase):
                          self.info('other-profile', 'owned', 'other-profile')]
         self.assertEqual({t['targetId'] for t in self.command('Target.getTargets')['targetInfos']}, {'owned', 'popup'})
 
+    def test_download_history_rejects_a_matching_window_that_opened_and_closed(self):
+        self.targets[0]['url'] = 'https://fixture.invalid/unrelated'
+        page = self.session.unique_download_page()
+        self.assertEqual(page, 'https://fixture.invalid')
+        self.session._event({'method': 'Target.targetInfoChanged', 'params': {'targetInfo': self.info('other-tab')}})
+        self.session._event({'method': 'Target.targetDestroyed', 'params': {'targetId': 'other-tab'}})
+        self.assertIsNone(self.session.unique_download_page(page))
+        self.assertNotIn('other-tab', self.session.owned)
+
     def test_foreign_attach_close_activate_are_refused_before_forwarding(self):
         for method in ('Target.attachToTarget', 'Target.closeTarget', 'Target.activateTarget'):
             with self.assertRaisesRegex(RuntimeError, 'does not belong'):

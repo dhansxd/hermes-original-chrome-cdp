@@ -117,6 +117,8 @@ class ChromeSession:
         self.context = None
         self.initial_target = None
         self.kept_target = None
+        self.download_page = None
+        self.download_page_shared = False
         self.seed_dir = None
         self.seed_url = None
         self.seed_title = None
@@ -185,6 +187,29 @@ class ChromeSession:
     def kept_window_exists(self):
         with self.lock:
             return not self.closed and self.ready and not self.disconnected and self.kept_target in self.owned
+
+    def unique_download_page(self, expected=None):
+        """Chrome History identifies the tab URL, so require a single source window."""
+        pages = self.wire.call('Target.getTargets')['targetInfos']
+        with self.lock:
+            owned = [p for p in pages if p.get('type') == 'page' and p['targetId'] in self.owned]
+            if len(owned) != 1 or not owned[0].get('url', '').startswith('https://'):
+                return None
+            page = owned[0]
+            url = page['url']
+            identity = (page['targetId'], url)
+            if expected is None:
+                self.download_page = identity
+                self.download_page_shared = False
+            elif expected != url or identity != self.download_page:
+                return None
+            self.download_page_shared |= any(self._other_download_page(p) for p in pages)
+            return None if self.download_page_shared else url
+
+    def _other_download_page(self, info):
+        target, url = self.download_page
+        return (info.get('type') == 'page' and info.get('browserContextId') == self.context
+                and info.get('url') == url and info.get('targetId') != target)
 
     def _profile(self):
         return self.desktop.profile(self.profile, refresh=True) if self.desktop else get_profile(self.profile, self.data)
@@ -338,6 +363,10 @@ class ChromeSession:
         info = params.get('targetInfo', {})
         target = info.get('targetId') or params.get('targetId')
         with self.lock:
+            if self.download_page and info:
+                owner, url = self.download_page
+                self.download_page_shared |= (self._other_download_page(info)
+                                              or target == owner and info.get('url') != url)
             if (method == 'Target.targetCreated' and info.get('type') == 'page'
                     and info.get('browserContextId') == self.context and info.get('openerId') in self.owned):
                 self.owned.add(target)
