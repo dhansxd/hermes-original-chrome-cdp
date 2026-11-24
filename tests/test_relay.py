@@ -434,6 +434,29 @@ class RelayTests(unittest.TestCase):
         close.assert_called_once_with(session.data,session.identity,
                                       'file:///fixture/owned-start.html',session.seed_title)
 
+    def test_rejected_local_chrome_identity_before_dispatch_does_not_leave_cleanup_pending(self):
+        session = relay.ChromeSession(Path('/fixture'), 'Default')
+        self.addCleanup(session.close)
+        process = Mock(pid=42)
+        process.name.return_value = 'Google Chrome'
+        process.as_dict.return_value = {
+            'name': 'Google Chrome', 'exe': '/fixture/Chrome',
+            'cmdline': ['--user-data-dir=/fixture'], 'create_time': 1,
+        }
+        with patch('psutil.process_iter', return_value=[process]), \
+                patch('relay.startup.gui_identity', return_value=(501, 77)), \
+                patch('relay.startup.chrome_executable', return_value=False), \
+                patch('relay.startup.notify_running_chrome') as notify, \
+                patch('relay.startup.subprocess.run') as launch, \
+                patch('relay.startup.endpoint_identity', side_effect=ValueError('no CDP')) as cdp:
+            with self.assertRaisesRegex(RuntimeError, 'Chrome destination mismatch'):
+                session._start()
+            self.assertTrue(session.close())
+        notify.assert_not_called()
+        launch.assert_not_called()
+        cdp.assert_not_called()
+        self.assertIsNone(session.seed_url)
+
     def test_unacknowledged_launch_retains_verified_identity_for_exact_seed_cleanup(self):
         session = relay.ChromeSession(Path('/fixture'), 'Default')
         self.addCleanup(session.close)

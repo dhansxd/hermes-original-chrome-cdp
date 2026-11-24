@@ -698,7 +698,8 @@ def verify_chrome_executable(executable,*,deadline=None):
         requirement='anchor apple generic and identifier "com.google.Chrome" and certificate leaf[subject.OU] = "EQHXZ8M8AV"'
         for p in paths:
             timeout=2 if deadline is None else remaining(deadline,'host_identity',2)
-            check=subprocess.run(['/usr/bin/codesign','--verify','--strict','-R='+requirement,str(p.parents[2])],capture_output=True,timeout=timeout)
+            # Keep signature and symlink validation when an update retains Finder metadata.
+            check=subprocess.run(['/usr/bin/codesign','--verify','--strict=symlinks','-R='+requirement,str(p.parents[2])],capture_output=True,timeout=timeout)
             if check.returncode:return False
         return all((p.stat().st_ino,p.stat().st_size,p.stat().st_mtime_ns,p.stat().st_ctime_ns)==(s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns) for p,s in zip(paths,before))
     except (OSError,subprocess.SubprocessError):return False

@@ -254,7 +254,12 @@ class ChromeSession:
         self.seed_title = 'Hermes browser session ' + secrets.token_hex(12)
         seed_file.write_text('<!doctype html><title>' + self.seed_title + '</title>')
         self.seed_url = seed_file.as_uri()
-        endpoint = startup.launch(self.data, self.profile, self.seed_url)
+        try:
+            endpoint = startup.launch(self.data, self.profile, self.seed_url)
+        except startup.ChromeLaunchNotDispatched:
+            self.seed_url = None
+            self.seed_title = None
+            raise
         self.identity = self._identity()
         if self.identity['endpoint'] != endpoint:
             raise RuntimeError('Chrome changed during startup.')

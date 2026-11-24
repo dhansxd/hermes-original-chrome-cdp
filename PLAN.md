@@ -84,6 +84,22 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   pembanding di luar plugin dan jendela sesi agen lain tetap terbuka
   pada semua skenario. Seluruh 458 tes unit lulus.
 
+### Update Chrome di macOS
+
+- Pada host 0.14.4, pembanding `09b47e1` menolak salinan aplikasi Chrome
+  158.0.8127.38 yang masih membawa metadata Finder di framework versi 157.
+  Pada macOS 27.2.1, kandidat menerima salinan yang sama dan menolak salinan
+  setelah satu resource yang disegel tanda tangan diubah. Verifikasi tetap
+  memeriksa tanda tangan Google, ID aplikasi, dan symlink.
+- Penolakan identitas sebelum Chrome menerima permintaan jendela langsung
+  melepas penanda startup lokal. Jika permintaan sudah dikirim, cleanup tetap
+  memakai identitas jendela yang dimiliki. Dua regresi baru gagal pada
+  pembanding, lalu lulus pada kandidat. Seluruh 460 tes unit lulus.
+- Uji Chrome asli melalui Hermes CLI dengan enam agen dan profil yang sama
+  maupun dua profil lulus di `09b47e1` dan kandidat. Tiap agen memakai satu
+  jendela. Stop dan giliran selesai menutup jendela milik agen tersebut serta
+  mempertahankan jendela pembanding. Jumlah jendela kembali ke kondisi awal.
+
 ### Tujuan produk
 
 Hermes memakai Google Chrome asli lewat CDP untuk membuka situs apa pun yang

@@ -11,6 +11,10 @@ CHROME = Path('/Applications/Google Chrome.app')
 PERSONAL = Path.home() / 'Library/Application Support/Google/Chrome'
 
 
+class ChromeLaunchNotDispatched(RuntimeError):
+    """Chrome rejected before any window request was sent."""
+
+
 def process_alive(identity):
     import psutil
     try:
@@ -194,7 +198,7 @@ def gui_launch(data,seed_url=None,*,profile_directory='Default'):
         raise ValueError('invalid explicit Chrome profile directory')
     import psutil
     destination=gui_identity()
-    def browsers():
+    def browsers(*, before_launch=False):
         found=[]
         for p in psutil.process_iter():
             try:
@@ -204,11 +208,12 @@ def gui_launch(data,seed_url=None,*,profile_directory='Default'):
                 root=Path(next((a.split('=',1)[1] for a in args if a.startswith('--user-data-dir=')),str(PERSONAL))).resolve()
                 if root!=data.resolve():continue
                 if not chrome_executable(info['exe']) or gui_identity(p.pid)!=destination:
-                    raise RuntimeError('safe_GUI_launch_unavailable: Chrome destination mismatch')
+                    error = ChromeLaunchNotDispatched if before_launch else RuntimeError
+                    raise error('safe_GUI_launch_unavailable: Chrome destination mismatch')
                 found.append((p.pid,info['create_time']))
             except psutil.NoSuchProcess:continue
         return found
-    running=browsers()
+    running=browsers(before_launch=True)
     args=[str(CHROME/'Contents/MacOS/Google Chrome'),f'--user-data-dir={data}',f'--profile-directory={profile_directory}']
     if data.resolve()!=PERSONAL.resolve():args+=['--remote-debugging-port=0','--no-first-run','--no-default-browser-check']
     if seed_url:args+=['--new-window',seed_url]

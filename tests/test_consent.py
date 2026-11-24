@@ -11,6 +11,38 @@ class MatchingTests(unittest.TestCase):
         self.assertIsNone(consent.button_for_dialog('Allow?', []))
         self.assertIsNone(consent.button_for_dialog('Allow remote debugging?', ['Izinkan proses debug jarak jauh?']))
 
+class ChromeSigningCloneTests(unittest.TestCase):
+    def test_chrome_clone_tolerates_finder_metadata_but_requires_google_signature(self):
+        import stat
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        executable = Path(
+            '/private/var/folders/test/desktop/X/com.google.Chrome.code_sign_clone/'
+            'code_sign_clone.update/Google Chrome.app.bundle/Contents/MacOS/Google Chrome'
+        )
+        metadata = SimpleNamespace(
+            st_mode=stat.S_IFREG, st_ino=42, st_size=100, st_mtime_ns=1, st_ctime_ns=1
+        )
+
+        def codesign(args, **kwargs):
+            google_requirement = any(
+                'anchor apple generic and identifier "com.google.Chrome"'
+                ' and certificate leaf[subject.OU] = "EQHXZ8M8AV"' in arg for arg in args
+            )
+            return SimpleNamespace(
+                returncode=0 if '--strict=symlinks' in args and google_requirement else 1
+            )
+
+        with patch.object(Path, 'stat', return_value=metadata), \
+                patch('consent.subprocess.run', side_effect=codesign) as verify:
+            self.assertTrue(consent.verify_chrome_executable(executable))
+            self.assertEqual(verify.call_args.args[0][-1], str(executable.parents[2]))
+            verify.side_effect = None
+            verify.return_value = SimpleNamespace(returncode=1)
+            self.assertFalse(consent.verify_chrome_executable(executable))
+
+
 class CorrelationTests(unittest.TestCase):
     def test_accepted_ipv4_peer_does_not_exempt_unknown_ipv6_peer_with_same_ports(self):
         import tempfile,os,json
