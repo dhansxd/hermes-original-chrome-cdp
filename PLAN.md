@@ -102,6 +102,19 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
 
 ### Katalog klik otomatis di Mac
 
+- Di 0.16.0, `browser_exec` belajar dari tautan satu origin yang membuka
+  tujuan yang diharapkan pada tab yang sama. Katalog menyimpan hash path
+  tujuan. Tombol dengan `aria-controls` atau `popovertarget` bisa dipakai
+  ulang setelah panel yang dirujuk menjadi terlihat. Bukti aksi searah
+  seperti Kirim tetap menunggu pemeriksaan hasil yang sesuai.
+- Di Hermes `ae2a81ccc0`, macOS 27.2.1 dan Chrome 158.0.8127.38, pembanding
+  `77eab10` membuka halaman tujuan dan panel, tetapi tidak menyimpannya.
+  0.16.0 menyimpan serta memakai ulang tautan muat penuh dan navigasi SPA,
+  serta panel dari klik screenshot pada zoom 1,2. Tautan yang dibatalkan
+  tidak dipelajari, dan perubahan tujuan ditolak sebelum klik. Kedua versi
+  lulus regresi tombol ARIA dari DOM dan screenshot. Kandidat lulus 467
+  tes unit dan uji enam agen pada satu dan dua profil. Cleanup mengembalikan
+  jumlah jendela ke kondisi awal.
 - Pada branch `feature/windows-chrome`, 0.15.0 tahap pertama mendaftarkan
   situs dari halaman milik agen. Pengamatan sepanjang panggilan DOM
   menghasilkan kandidat tombol dan menyimpan kontrol siap pakai ketika label

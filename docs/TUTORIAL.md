@@ -391,14 +391,21 @@ retaining plugin-data artifacts, checkpoints and receipts. Linked packages are
 removed by unlinking the directory entry. A saved disabled flag also records
 removal for future template installation.
 
-## Automatically learned buttons on Mac
+## Automatically learned controls on Mac
 
 Once a page is open, DOM clicks and single left clicks through
-`browser_exec` can teach the plugin a button in Chrome on Mac. A click based
+`browser_exec` can teach the plugin a control in Chrome on Mac. A click based
 on a screenshot or zoom is matched to the element that received it. The
 catalog stores the site origin and a page-specific match for that element.
-A unique label and a confirmed change in an accessible button state, such as
-opening a collapsed section, make the control available for reuse.
+The control becomes reusable when its label is unique and Chrome confirms
+one of these outcomes in the same tab:
+
+- A same-origin link reaches its expected path. The catalog hashes that path.
+- A panel referenced by `aria-controls` or `popovertarget` becomes visible.
+- The button changes a supported accessible state such as `aria-expanded`.
+
+Other observed button clicks can stay as candidates until there is proof of
+their effect. Reuse also checks the current element and its target before clicking.
 
 Use these requests in the same `browser_exec` session.
 

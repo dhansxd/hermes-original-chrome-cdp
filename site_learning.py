@@ -1,4 +1,4 @@
-"""Local, declarative controls learned from clicks in owned Chrome pages."""
+"""Local controls learned from confirmed clicks in owned Chrome pages."""
 from collections import deque
 from contextlib import closing, contextmanager
 import hashlib
@@ -8,15 +8,17 @@ import re
 import secrets
 import sqlite3
 import threading
+import time
 from urllib.parse import urlsplit
 
 
 LEARNED_ACTIONS = ('list_learned_controls', 'click_learned_control')
 STATES = ('aria-expanded', 'aria-pressed', 'aria-checked', 'aria-selected')
 
-# Limit automatic reuse to an unambiguous button with a visible, repeatable state change.
+# Reuse an unambiguous control with a repeatable, verifiable outcome.
 BUTTONS = r"""
 const selector = 'button,[role="button"]';
+const linkSelector = 'a[href]';
 const label = element => (element.getAttribute('aria-label') || element.textContent || '')
     .trim().replace(/\s+/g, ' ');
 const usable = element => {
@@ -26,6 +28,28 @@ const usable = element => {
     const style = getComputedStyle(element);
     return style.visibility === 'visible' && style.display !== 'none';
 };
+const linkPath = element => {
+    if (!element.matches(linkSelector) || element.hasAttribute('download')) return null;
+    const target = element.target || document.querySelector('base[target]')?.target || '_self';
+    if (target.toLowerCase() !== '_self') return null;
+    try {
+        const url = new URL(element.href);
+        return url.origin === location.origin && url.pathname !== location.pathname &&
+            !url.search && !url.hash && url.pathname.length <= 2048 ? url.pathname : null;
+    } catch {
+        return null;
+    }
+};
+const panelId = element => {
+    const id = element.getAttribute('aria-controls') || element.getAttribute('popovertarget') || '';
+    return id.length <= 128 && id && !/\s/.test(id) ? id : null;
+};
+const panelVisible = id => {
+    const panels = document.querySelectorAll('#' + CSS.escape(id));
+    return panels.length === 1 && usable(panels[0]);
+};
+const matchingControl = (kind, text) => [...document.querySelectorAll(kind)]
+    .filter(item => label(item) === text && usable(item));
 """
 
 _OBSERVER = r"""
@@ -45,7 +69,9 @@ _OBSERVER = r"""
     };
     const locationKey = () => [location.origin, location.pathname];
     const send = result => globalThis[BINDING](JSON.stringify(result));
-    send({url:locationKey()});
+    const reportLocation = () => send({url:locationKey()});
+    reportLocation();
+    window.navigation?.addEventListener('currententrychange', reportLocation);
     window.addEventListener('click', event => {
         // A pointer click is learned only when the relay matches it to native CDP input.
         if (event.isTrusted && (event.button !== 0 || event.detail !== 1)) return;
@@ -58,17 +84,27 @@ _OBSERVER = r"""
                                      event.clientY - viewport.offsetTop]);
             }
         }
-        const button = event.target instanceof Element && event.target.closest(selector);
+        const button = event.target instanceof Element && event.target.closest(selector + ',' + linkSelector);
         if (!button || !usable(button)) return;
         const text = label(button);
         if (!text || text.length > 100 || button.id.length > 128) return;
-        const matches = [...document.querySelectorAll(selector)]
-            .filter(item => label(item) === text && usable(item));
+        const destination = linkPath(button);
+        const kind = destination ? linkSelector : selector;
+        if (!button.matches(kind)) return;
+        const matches = matchingControl(kind, text);
         if (matches.length !== 1 || matches[0] !== button) return;
         const url = locationKey();
         const element = button.id;
-        const before = states.map(name => button.getAttribute(name));
         const observation = event.isTrusted ? documentId + '-' + (++sequence) : null;
+        if (destination) {
+            if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+            const receipt = observation ? {observation, ...pointer} : {};
+            send({url, label:text, element, state:'navigation', value:destination, ...receipt});
+            return;
+        }
+        const before = states.map(name => button.getAttribute(name));
+        const panel = panelId(button);
+        const panelWasHidden = panel && !panelVisible(panel);
         const inspect = () => {
             if (!button.isConnected || url[0] !== location.origin || url[1] !== location.pathname) return null;
             for (const [index, name] of states.entries()) {
@@ -77,6 +113,9 @@ _OBSERVER = r"""
                     ['true', 'false'].includes(after) && before[index] !== after) {
                     return {state:name, value:after};
                 }
+            }
+            if (panelWasHidden && panelId(button) === panel && panelVisible(panel)) {
+                return {state:'panel-visible', value:panel};
             }
             return null;
         };
@@ -96,16 +135,35 @@ _OBSERVER = r"""
 })()
 """
 
+_FIND_LINK = r"""
+((entry, origin, path) => {
+    if (location.origin !== origin || location.pathname !== path) return null;
+    const candidates = matchingControl(linkSelector, entry.label);
+    if (candidates.length !== 1 || candidates[0].id !== entry.element_id) return null;
+    return linkPath(candidates[0]);
+})(ENTRY, ORIGIN, ROUTE)
+"""
+
 _CLICK = r"""
 ((entry, origin, path) => {
     if (location.origin !== origin || location.pathname !== path) return 'wrong_page';
-    const candidates = [...document.querySelectorAll(selector)]
-        .filter(item => label(item) === entry.label && usable(item));
+    const candidates = matchingControl(entry.state === 'navigation' ? linkSelector : selector, entry.label);
     if (candidates.length !== 1 || candidates[0].id !== entry.element_id) return 'unmatched';
     const button = candidates[0];
     const rect = button.getBoundingClientRect();
     const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
     if (!button.contains(top)) return 'obscured';
+    if (entry.state === 'navigation') {
+        if (linkPath(button) !== entry.value) return 'unmatched';
+        button.click();
+        return 'navigation_dispatched';
+    }
+    if (entry.state === 'panel-visible') {
+        if (panelId(button) !== entry.value) return 'unmatched';
+        if (panelVisible(entry.value)) return 'state_changed';
+        button.click();
+        return button.isConnected && panelVisible(entry.value) ? 'verified' : 'unconfirmed';
+    }
     const before = button.getAttribute(entry.state);
     if (!['true', 'false'].includes(before) || before === entry.value) return 'state_changed';
     button.click();
@@ -184,6 +242,13 @@ def valid_point(point):
             and all(type(value) in (int, float) and -1_000_000 < value < 1_000_000 for value in point))
 
 
+def valid_proof(state, value):
+    if state == 'panel-visible':
+        return isinstance(value, str) and 0 < len(value) <= 128 and value.isprintable() and not any(
+            letter.isspace() for letter in value)
+    return state in STATES and value in ('true', 'false')
+
+
 class PageLearning:
     """Correlate page events with native commands on the exact owned attachment."""
     def __init__(self, catalog):
@@ -197,6 +262,7 @@ class PageLearning:
         self.pressed = {}
         self.releasing = {}
         self.awaiting_confirmation = {}
+        self.pending_routes = {}
         self.observations = deque(maxlen=128)
 
     def attach(self, wire, sid):
@@ -225,6 +291,7 @@ class PageLearning:
             self.pressed.pop(sid, None)
             self.releasing.pop(sid, None)
             self.awaiting_confirmation.pop(sid, None)
+            self.pending_routes.pop(sid, None)
             self.confirmation_ready.notify_all()
         try:
             if script is not None:
@@ -242,6 +309,10 @@ class PageLearning:
         finally:
             with self.lock:
                 self.evaluating.discard(sid)
+
+    def discard_navigation(self, sid):
+        with self.lock:
+            self.pending_routes.pop(sid, None)
 
     def pointer(self, wire, method, params, sid):
         phase = params.get('type')
@@ -271,7 +342,8 @@ class PageLearning:
         fields = {'url', 'label', 'element', 'state', 'value'}
         if set(data) == fields:
             return sid in self.evaluating
-        if (set(data) != fields | {'points', 'observation'} or data['state'] != '' or data['value'] != ''
+        if (set(data) != fields | {'points', 'observation'}
+                or not (data['state'] == 'navigation' or data['state'] == data['value'] == '')
                 or not isinstance(data['observation'], str)
                 or not re.fullmatch(r'[0-9-]{1,40}', data['observation'])):
             return False
@@ -288,7 +360,7 @@ class PageLearning:
         with self.confirmation_ready:
             # Chrome can acknowledge the release before delivering its binding event.
             self.confirmation_ready.wait_for(
-                lambda: sid in self.awaiting_confirmation or sid not in self.attached, timeout=.15,
+                lambda: sid not in self.releasing, timeout=.15,
             )
             observed = self.awaiting_confirmation.pop(sid, None)
         if observed is None:
@@ -302,10 +374,21 @@ class PageLearning:
             proof = value.get('value') if isinstance(value, dict) else None
         except (ConnectionError, OSError, RuntimeError, TimeoutError):
             return  # The original click has already been sent. Let native browsing continue.
-        if (isinstance(proof, dict) and proof.get('state') in STATES
-                and proof.get('value') in ('true', 'false')):
+        if isinstance(proof, dict) and valid_proof(proof.get('state'), proof.get('value')):
             with self.lock:
                 self.observations.append((origin, page, (label, element, proof['state'], proof['value'])))
+
+    def _record_location(self, sid, origin, page):
+        self.observations.append((origin, page, None))
+        route = self.pending_routes.get(sid)
+        if route is None:
+            return
+        source, before, label, element, destination, deadline = route
+        expired = time.monotonic() > deadline
+        if expired or (origin, page) != (source, before):
+            self.pending_routes.pop(sid, None)
+            if not expired and (origin, page) == (source, destination):
+                self.observations.append((origin, before, (label, element, 'navigation', destination)))
 
     def event(self, sid, params):
         if params.get('name') != self.binding:
@@ -324,18 +407,25 @@ class PageLearning:
             except (ValueError, UnicodeError):
                 return True
             if set(data) == {'url'}:
-                self.observations.append((origin, page, None))
+                self._record_location(sid, origin, page)
             elif self._matches_click(sid, data):
+                self.pending_routes.pop(sid, None)
+                self.confirmation_ready.notify_all()
                 label, element = data['label'], data['element']
                 state, value = data['state'], data['value']
-                if (isinstance(label, str) and 0 < len(label) <= 100 and label.isprintable()
-                        and isinstance(element, str) and len(element) <= 128 and (not element or element.isprintable())
-                        and ((state in STATES and value in ('true', 'false')) or (state == value == ''))):
+                if not (isinstance(label, str) and 0 < len(label) <= 100 and label.isprintable()
+                        and isinstance(element, str) and len(element) <= 128 and (not element or element.isprintable())):
+                    return True
+                if state == 'navigation':
+                    if isinstance(value, str) and 0 < len(value) <= 2048 and value.startswith('/'):
+                        _, destination = page_key([origin, value])
+                        if page != destination:
+                            self.pending_routes[sid] = (origin, page, label, element, destination, time.monotonic() + 2)
+                elif valid_proof(state, value) or state == value == '':
                     self.observations.append((origin, page, (label, element, state, value)))
                     context = params.get('executionContextId')
                     if 'observation' in data and type(context) is int and context > 0:
                         self.awaiting_confirmation[sid] = (origin, page, label, element, data['observation'], context)
-                        self.confirmation_ready.notify_all()
         return True
 
     def flush(self):
@@ -369,9 +459,24 @@ def cached_action(catalog, command, run_expression):
     if entry is None:
         return fallback('unmatched', dispatched=False)
     data = {key: entry[key] for key in ('label', 'element_id', 'state', 'value')}
-    expression = _CLICK.replace('(ENTRY, ORIGIN, ROUTE)', '(' + ', '.join(
-        json.dumps(item, ensure_ascii=True) for item in (data, origin, url[1])) + ')')
-    status = run_expression('(() => {' + BUTTONS + ' return ' + expression.strip() + '})()', click=True)
+
+    def expression(template):
+        arguments = ', '.join(json.dumps(item, ensure_ascii=True) for item in (data, origin, url[1]))
+        script = template.replace('(ENTRY, ORIGIN, ROUTE)', '(' + arguments + ')')
+        return '(() => {' + BUTTONS + ' return ' + script.strip() + '})()'
+
+    if data['state'] == 'navigation':
+        destination = run_expression(expression(_FIND_LINK))
+        if (not isinstance(destination, str) or not destination.startswith('/')
+                or page_key([origin, destination])[1] != data['value']):
+            catalog.stale(entry)
+            return fallback('unmatched', dispatched=False)
+        data['value'] = destination
+    status = run_expression(expression(_CLICK), click=True)
+    if status == 'navigation_dispatched':
+        expected = [origin, data['value']]
+        reached = run_expression('[location.origin, location.pathname]', until=expected)
+        status = 'verified' if reached == expected else 'unconfirmed'
     if status == 'verified':
         return {'success': True, 'status': 'ok', 'control': entry['id'], 'dispatched': True}
     no_click = status in ('unmatched', 'wrong_page', 'obscured', 'state_changed')

@@ -487,10 +487,24 @@ class AppHost:
         import sqlite3
         attempted = False
 
-        def run_expression(expression, *, click=False):
+        def run_expression(expression, *, click=False, until=None):
             nonlocal attempted
-            attempted = click
-            code = 'import json\nprint(json.dumps(js(' + repr(expression) + ')))'
+            attempted |= click
+            code = 'import json\n'
+            if until is None:
+                code += 'print(json.dumps(js(' + repr(expression) + ')))'
+            else:
+                code += (
+                    'for _attempt in range(15):\n'
+                    '    try:\n'
+                    '        _observed = js(' + repr(expression) + ')\n'
+                    '    except Exception:\n'
+                    '        _observed = None\n'
+                    '    if _observed == ' + repr(until) + ':\n'
+                    '        break\n'
+                    '    wait(.1)\n'
+                    'print(json.dumps(_observed))'
+                )
             result = native({'session': args['session'], 'code': code}, **context)
             data = json.loads(result) if isinstance(result, str) else result
             if not isinstance(data, dict) or not data.get('success'):

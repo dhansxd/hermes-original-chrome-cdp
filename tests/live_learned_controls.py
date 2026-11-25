@@ -44,6 +44,24 @@ document.querySelector('button').onclick = event => {{
   document.body.dataset.clicked = event.currentTarget.id;
 }};
 </script>""".encode()
+        if self.path.startswith('/new-controls'):
+            body = b"""<!doctype html><title>Site controls</title>
+<button aria-controls="options" id="open-panel" style="background:rgb(17,203,101);margin:42px">
+Open options</button>
+<div id="options" role="menu" hidden>Site options</div>
+<a id="page-link" href="/page-do-not-persist-route">Open page</a>
+<a id="spa-link" href="/spa">Open settings</a>
+<a id="cancel-link" href="/canceled">Canceled link</a>
+<script>
+document.querySelector('#open-panel').onclick = () => {
+    document.querySelector('#options').hidden = false;
+};
+document.querySelector('#spa-link').onclick = event => {
+    event.preventDefault();
+    history.pushState({}, '', '/spa');
+};
+document.querySelector('#cancel-link').onclick = event => event.preventDefault();
+</script>"""
         self.send_response(200)
         self.send_header('Content-Type', 'text/html')
         self.end_headers()
@@ -75,14 +93,63 @@ click_at_xy(x, y)
 """)
 
 
-def exercise(*, visual=False):
+def exercise_extended(stage, extension, script, learned, url, replay):
+    if extension == 'panel':
+        script(f'goto_url({url!r}); wait_for_element("#open-panel", timeout=8)')
+        if stage == 'learn':
+            click_from_screenshot(script, zoom=1.2)
+        else:
+            result = learned('click_learned_control', control=replay['Open options'])
+            assert result.get('success'), result
+        script('assert js("!document.querySelector(\'#options\').hidden")')
+        if stage == 'learn':
+            result = learned('list_learned_controls', label='Open options')
+            assert len(result['controls']) == 1, result
+            replay['Open options'] = result['controls'][0]['id']
+    else:
+        for selector, label, pathname in (
+            ('#page-link', 'Open page', '/page-do-not-persist-route'),
+            ('#spa-link', 'Open settings', '/spa'),
+        ):
+            script(f'goto_url({url!r}); wait_for_element({selector!r}, timeout=8)')
+            if stage == 'learn':
+                script(f"""js("document.querySelector({selector!r}).click()")
+for _ in range(30):
+    if js("location.pathname") == {pathname!r}:
+        break
+    wait(.1)
+assert js("location.pathname") == {pathname!r}
+""")
+                script(f'goto_url({url!r}); wait_for_element({selector!r}, timeout=8)')
+                result = learned('list_learned_controls', label=label)
+                assert len(result['controls']) == 1, result
+                replay[label] = result['controls'][0]['id']
+            else:
+                result = learned('click_learned_control', control=replay[label])
+                assert result.get('success'), result
+                script(f'assert js("location.pathname") == {pathname!r}')
+        script(f'goto_url({url!r}); wait_for_element("#cancel-link", timeout=8)')
+        script('js("document.querySelector(\'#cancel-link\').click()")')
+        destination = url.rsplit('/', 1)[0] + '/canceled'
+        script(f'goto_url({destination!r}); wait_for_element("body", timeout=8)')
+        script(f'goto_url({url!r}); wait_for_element("#cancel-link", timeout=8)')
+        assert not learned('list_learned_controls', label='Canceled link')['controls']
+        if stage == 'reuse':
+            script('js("document.querySelector(\'#page-link\').href = \'/wrong-destination\'")')
+            result = learned('click_learned_control', control=replay['Open page'])
+            assert result['status'] == 'needs_inspection' and not result['dispatched'], result
+            script('assert js("location.pathname") == "/new-controls"')
+    print('NATIVE_EXTENDED_CONTROLS_PASS', extension, stage, flush=True)
+
+
+def exercise(*, visual=False, extension=None):
     Fixture.version = 1
     source = Path(__file__).resolve().parents[1]
     before = window_keys()
     with ThreadingHTTPServer(('127.0.0.1', 0), Fixture) as server, tempfile.TemporaryDirectory() as temp:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         origin = f'http://127.0.0.1:{server.server_port}'
-        url = origin + '/settings?private=must-not-be-persisted'
+        url = origin + ('/new-controls' if extension else '/settings?private=must-not-be-persisted')
         home = Path(temp).resolve()
         (home / 'config.yaml').write_text('''browser:
   cloud_provider: original-chrome-default
@@ -102,7 +169,9 @@ plugins:
                 manager._load_plugin(parse_manifest_file(source / 'plugin.yaml', source, 'user', ''))
                 provider = get_provider('original-chrome-default')
                 control = None
-                for stage in ('learn', 'reuse', 'refresh', 'reuse-after-refresh'):
+                replay = {}
+                stages = ('learn', 'reuse') if extension else ('learn', 'reuse', 'refresh', 'reuse-after-refresh')
+                for stage in stages:
                     owner = uuid.uuid4().hex
                     turn = uuid.uuid4().hex
                     tokens = set_session_vars(platform='cli', session_key=owner, session_id=owner)
@@ -123,6 +192,9 @@ plugins:
                         return call(site_control=json.dumps({'action': action, 'params': params}))
 
                     try:
+                        if extension:
+                            exercise_extended(stage, extension, script, learned, url, replay)
+                            continue
                         script(f'goto_url({url!r}); wait_for_element("button", timeout=8)')
                         if stage == 'learn':
                             first = learned('list_learned_controls')
@@ -183,6 +255,7 @@ plugins:
                         Fixture.version = 2
                 path, = list(home.rglob('learned-controls.sqlite3'))
                 assert b'must-not-be-persisted' not in path.read_bytes()
+                assert b'page-do-not-persist-route' not in path.read_bytes()
                 with sqlite3.connect(path) as db:
                     assert db.execute('SELECT origin, name FROM sites').fetchall() == [(origin, '127.0.0.1')]
         finally:
@@ -202,6 +275,12 @@ if __name__ == '__main__':
 
 
 class NativeLearnedControls(unittest.TestCase):
+    def test_browser_learns_extended_navigation(self):
+        exercise(extension='navigation')
+
+    def test_browser_learns_extended_panel(self):
+        exercise(extension='panel')
+
     def test_browser_learns_reuses_and_refreshes_site_control(self):
         exercise()
 

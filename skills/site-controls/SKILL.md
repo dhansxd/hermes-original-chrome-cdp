@@ -17,7 +17,7 @@ with `site_control` omitted or null for an ordinary DOM or screenshot call. For 
 {"app":"gemini","operation":"click","params":{"control":"deep_research"}}
 ```
 
-On an open page in local Chrome, use the automatically learned buttons via
+On an open page in local Chrome, use the automatically learned controls via
 `site_control` action `list_learned_controls`. To find an exact label, pass
 `params.label`. Use `click_learned_control` with the listed ID in
 `params.control`. If the control needs inspection or is absent, continue

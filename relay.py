@@ -553,6 +553,8 @@ class ChromeSession:
             return {}
         # The native client owns the operation deadline. A resource download or
         # awaited script may legitimately exceed the transport's setup budget.
+        if self.learning and method in {'Page.navigate', 'Page.navigateToHistoryEntry', 'Page.reload'}:
+            self.learning.discard_navigation(sid)
         if self.learning and method == 'Runtime.evaluate':
             return self.learning.evaluate(self.wire, method, params, sid)
         if self.learning and method == 'Input.dispatchMouseEvent':

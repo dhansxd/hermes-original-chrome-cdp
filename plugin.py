@@ -760,7 +760,7 @@ SITE_HELP = ('Use browser_exec for website tasks in Original Chrome. The site-co
              'Use code with site_control omitted or null for DOM inspection, screenshots and ordinary '
              'browsing in the same session. For a confirmed unmapped UI control, include site_control action '
              'record_missing_control with the native code to log the finding and act in one call. '
-             'On an open page, use list_learned_controls to find automatically learned buttons and '
+             'On an open page, use list_learned_controls to find automatically learned controls and '
              'click_learned_control with a listed control ID to use one. On needs_inspection, continue '
              'with the native DOM or screenshot in the same session. Check the page before replaying '
              'a click whose result was not confirmed. '
