@@ -555,6 +555,8 @@ class ChromeSession:
         # awaited script may legitimately exceed the transport's setup budget.
         if self.learning and method == 'Runtime.evaluate':
             return self.learning.evaluate(self.wire, method, params, sid)
+        if self.learning and method == 'Input.dispatchMouseEvent':
+            return self.learning.pointer(self.wire, method, params, sid)
         return self.wire.call(method, params, sid, timeout=None)
 
     def _client(self, ws):

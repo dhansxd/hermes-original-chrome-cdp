@@ -112,9 +112,20 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   lanjut dengan DOM dan screenshot di jendela yang sama. Perbarui pemetaan
   otomatis setelah klik pengganti terkonfirmasi. Periksa keadaan halaman
   sebelum mengulang aksi yang mungkin sudah dikirim.
-- Tahap pertama menguji klik DOM pada Chrome Mac mini. Perekaman klik dari
-  screenshot dan zoom menyusul. Pengujian Windows ditunda. Evaluasi merge
-  ke main setelah fitur stabil dan regresi lulus.
+- Pada host 0.15.1, katalog Mac juga mempelajari klik kiri tunggal dari
+  screenshot atau zoom. Plugin mencocokkan event klik dengan pasangan input
+  CDP pada tab yang sama, lalu memeriksa efek setelah handler halaman berjalan.
+  Saat tombol tertutup atau hasil belum terkonfirmasi, jalur inspeksi DOM dan
+  screenshot tersedia di jendela yang sama. Pengujian Windows ditunda.
+  Evaluasi merge ke main setelah fitur stabil dan regresi lulus.
+- Pada `08dfc76` (0.15.0), klik dari screenshot saat zoom aktif berhasil di
+  halaman uji, tetapi katalog tetap kosong. Di 0.15.1, Hermes CLI pada macOS
+  27.2.1 dan Chrome 158.0.8127.38 membuktikan pembelajaran lewat screenshot,
+  penolakan tombol yang tertutup banner, dan pemakaian ulang setelah ID
+  tombol berubah. Uji mencakup zoom 1,1 hingga 1,4 serta regresi pembelajaran
+  lewat DOM. Seluruh 466 tes unit lulus. Kedua versi lulus uji enam agen
+  pada satu dan dua profil, dengan Stop dan cleanup yang menjaga jendela
+  milik agen lain. Jumlah jendela kembali ke kondisi awal.
 - Pembanding `1e73be4` belum dapat membuka katalog. Pada kandidat, uji Hermes
   CLI di macOS 27.2.1 dan Chrome 158.0.8127.38 membuktikan empat sesi baru
   untuk belajar, pakai ulang, fallback DOM ketika ID tombol berubah, dan

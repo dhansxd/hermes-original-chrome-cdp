@@ -1,4 +1,4 @@
-"""Local, declarative controls learned from DOM clicks in owned Chrome pages."""
+"""Local, declarative controls learned from clicks in owned Chrome pages."""
 from collections import deque
 from contextlib import closing, contextmanager
 import hashlib
@@ -34,12 +34,30 @@ _OBSERVER = r"""
         typeof globalThis[BINDING] !== 'function') return;
     globalThis.hermesLearningStarted = true;
     const states = STATES;
+    const documentId = crypto.getRandomValues(new Uint32Array(2)).join('-');
+    let sequence = 0;
+    let pending = null;
+    globalThis[BINDING + 'Effect'] = id => {
+        if (pending?.id !== id) return null;
+        const {inspect} = pending;
+        pending = null;
+        return inspect();
+    };
     const locationKey = () => [location.origin, location.pathname];
     const send = result => globalThis[BINDING](JSON.stringify(result));
     send({url:locationKey()});
     window.addEventListener('click', event => {
-        // This stage learns DOM click() calls. User clicks and coordinate input are distinct.
-        if (event.isTrusted) return;
+        // A pointer click is learned only when the relay matches it to native CDP input.
+        if (event.isTrusted && (event.button !== 0 || event.detail !== 1)) return;
+        const pointer = {};
+        if (event.isTrusted) {
+            pointer.points = [[event.clientX, event.clientY]];
+            const viewport = window.visualViewport;
+            if (viewport && (viewport.offsetLeft || viewport.offsetTop)) {
+                pointer.points.push([event.clientX - viewport.offsetLeft,
+                                     event.clientY - viewport.offsetTop]);
+            }
+        }
         const button = event.target instanceof Element && event.target.closest(selector);
         if (!button || !usable(button)) return;
         const text = label(button);
@@ -48,19 +66,32 @@ _OBSERVER = r"""
             .filter(item => label(item) === text && usable(item));
         if (matches.length !== 1 || matches[0] !== button) return;
         const url = locationKey();
+        const element = button.id;
         const before = states.map(name => button.getAttribute(name));
-        queueMicrotask(() => {
-            if (!button.isConnected || url[0] !== location.origin || url[1] !== location.pathname) return;
+        const observation = event.isTrusted ? documentId + '-' + (++sequence) : null;
+        const inspect = () => {
+            if (!button.isConnected || url[0] !== location.origin || url[1] !== location.pathname) return null;
             for (const [index, name] of states.entries()) {
                 const after = button.getAttribute(name);
                 if (['true', 'false'].includes(before[index]) &&
                     ['true', 'false'].includes(after) && before[index] !== after) {
-                    send({url, label:text, element:button.id, state:name, value:after});
-                    return;
+                    return {state:name, value:after};
                 }
             }
-            send({url, label:text, element:button.id, state:'', value:''});
-        });
+            return null;
+        };
+        if (observation) {
+            // Match the target during the click. The relay checks its effect after the release.
+            pending = {id:observation, inspect};
+            send({url, label:text, element, state:'', value:'', observation, ...pointer});
+        } else {
+            queueMicrotask(() => {
+                const proof = inspect() || {state:'', value:''};
+                if (button.isConnected && url[0] === location.origin && url[1] === location.pathname) {
+                    send({url, label:text, element, ...proof});
+                }
+            });
+        }
     }, {capture:true, passive:true});
 })()
 """
@@ -148,8 +179,13 @@ class ClickCatalog:
                        (entry['id'], entry['revision']))
 
 
+def valid_point(point):
+    return (isinstance(point, (list, tuple)) and len(point) == 2
+            and all(type(value) in (int, float) and -1_000_000 < value < 1_000_000 for value in point))
+
+
 class PageLearning:
-    """Observe only script-driven clicks while a native evaluation owns this attachment."""
+    """Correlate page events with native commands on the exact owned attachment."""
     def __init__(self, catalog):
         self.catalog = catalog
         self.binding = 'hermesObserve_' + secrets.token_hex(8)
@@ -157,6 +193,9 @@ class PageLearning:
         self.lock = threading.Lock()
         self.attached = {}
         self.evaluating = set()
+        self.pressed = {}
+        self.releasing = {}
+        self.awaiting_confirmation = {}
         self.observations = deque(maxlen=128)
 
     def attach(self, wire, sid):
@@ -182,6 +221,9 @@ class PageLearning:
                 return
             script = self.attached.pop(sid)
             self.evaluating.discard(sid)
+            self.pressed.pop(sid, None)
+            self.releasing.pop(sid, None)
+            self.awaiting_confirmation.pop(sid, None)
         try:
             if script is not None:
                 wire.call('Page.removeScriptToEvaluateOnNewDocument', {'identifier': script}, sid, timeout=.5)
@@ -198,6 +240,65 @@ class PageLearning:
         finally:
             with self.lock:
                 self.evaluating.discard(sid)
+
+    def pointer(self, wire, method, params, sid):
+        phase = params.get('type')
+        point = (params.get('x'), params.get('y'))
+        single = params.get('button') == 'left' and params.get('clickCount') == 1 and valid_point(point)
+        with self.lock:
+            pressed = self.pressed.pop(sid, None)
+            tracking = single and sid in self.attached
+            if tracking and phase == 'mouseReleased' and pressed == point:
+                self.releasing[sid] = point
+        try:
+            result = wire.call(method, params, sid, timeout=None)
+            if tracking and phase == 'mousePressed':
+                with self.lock:
+                    if sid in self.attached:
+                        self.pressed[sid] = point
+            elif tracking and phase == 'mouseReleased':
+                self._confirm(wire, sid)
+            return result
+        finally:
+            with self.lock:
+                self.releasing.pop(sid, None)
+                self.awaiting_confirmation.pop(sid, None)
+
+    def _matches_click(self, sid, data):
+        fields = {'url', 'label', 'element', 'state', 'value'}
+        if set(data) == fields:
+            return sid in self.evaluating
+        if (set(data) != fields | {'points', 'observation'} or data['state'] != '' or data['value'] != ''
+                or not isinstance(data['observation'], str)
+                or not re.fullmatch(r'[0-9-]{1,40}', data['observation'])):
+            return False
+        point = self.releasing.get(sid)
+        reported = data['points']
+        if (point is None or not isinstance(reported, list) or not 1 <= len(reported) <= 2
+                or not any(valid_point(item) and all(abs(a - b) <= 1 for a, b in zip(point, item))
+                           for item in reported)):
+            return False
+        self.releasing.pop(sid, None)
+        return True
+
+    def _confirm(self, wire, sid):
+        with self.lock:
+            observed = self.awaiting_confirmation.pop(sid, None)
+        if observed is None:
+            return
+        origin, page, label, element, observation, context = observed
+        expression = 'globalThis[' + json.dumps(self.binding + 'Effect') + '](' + json.dumps(observation) + ')'
+        try:
+            result = wire.call('Runtime.evaluate', {'expression': expression, 'contextId': context,
+                                                     'returnByValue': True}, sid, timeout=.4)
+            value = result.get('result') if isinstance(result, dict) else None
+            proof = value.get('value') if isinstance(value, dict) else None
+        except (ConnectionError, OSError, RuntimeError, TimeoutError):
+            return  # The original click has already been sent. Let native browsing continue.
+        if (isinstance(proof, dict) and proof.get('state') in STATES
+                and proof.get('value') in ('true', 'false')):
+            with self.lock:
+                self.observations.append((origin, page, (label, element, proof['state'], proof['value'])))
 
     def event(self, sid, params):
         if params.get('name') != self.binding:
@@ -217,13 +318,16 @@ class PageLearning:
                 return True
             if set(data) == {'url'}:
                 self.observations.append((origin, page, None))
-            elif sid in self.evaluating and set(data) == {'url', 'label', 'element', 'state', 'value'}:
+            elif self._matches_click(sid, data):
                 label, element = data['label'], data['element']
                 state, value = data['state'], data['value']
                 if (isinstance(label, str) and 0 < len(label) <= 100 and label.isprintable()
                         and isinstance(element, str) and len(element) <= 128 and (not element or element.isprintable())
                         and ((state in STATES and value in ('true', 'false')) or (state == value == ''))):
                     self.observations.append((origin, page, (label, element, state, value)))
+                    context = params.get('executionContextId')
+                    if 'observation' in data and type(context) is int and context > 0:
+                        self.awaiting_confirmation[sid] = (origin, page, label, element, data['observation'], context)
         return True
 
     def flush(self):

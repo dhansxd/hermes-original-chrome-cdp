@@ -1,3 +1,4 @@
+import json
 import sys
 import tempfile
 import unittest
@@ -49,8 +50,6 @@ class SiteLearningTests(unittest.TestCase):
         self.assertEqual(self.catalog.list(self.origin, self.page), [])
 
     def test_recorder_ignores_clicks_outside_native_evaluation(self):
-        import json
-
         learner = PageLearning(self.catalog)
         wire = Mock()
         wire.call.return_value = {'identifier': 'fixture-observer'}
@@ -60,3 +59,62 @@ class SiteLearningTests(unittest.TestCase):
         self.assertTrue(learner.event('tab', {'name': learner.binding, 'payload': payload}))
         self.assertFalse(learner.event('tab', {'name': 'other_binding', 'payload': payload}))
         self.assertFalse(learner.observations)
+
+
+    def test_pointer_learning_matches_the_actual_event_once_in_the_same_attachment(self):
+        learner = PageLearning(self.catalog)
+        wire = Mock()
+        wire.call.return_value = {'identifier': 'fixture-observer'}
+        learner.attach(wire, 'tab')
+        learner.attach(wire, 'peer')
+        method = 'Input.dispatchMouseEvent'
+        options = {'x': 40.4, 'y': 20, 'button': 'left', 'clickCount': 1}
+        pressed = dict(options, type='mousePressed')
+        released = dict(options, type='mouseReleased')
+        control = {'url': self.url, 'label': 'Show details', 'element': 'button-a',
+                   'state': '', 'value': '', 'observation': '12-3-1'}
+
+        def emit(sid, points):
+            payload = json.dumps({**control, 'points': points})
+            self.assertTrue(learner.event(sid, {'name': learner.binding, 'payload': payload,
+                                                 'executionContextId': 12}))
+
+        emit('tab', [[40, 20]])
+        learner.pointer(wire, method, pressed, 'tab')
+
+        def release(command, params, sid, **kwargs):
+            if command == 'Runtime.evaluate':
+                self.assertEqual(sid, 'tab')
+                self.assertEqual(params['contextId'], 12)
+                self.assertEqual(len(learner.observations), 1)
+                return {'result': {'value': {'state': 'aria-expanded', 'value': 'true'}}}
+            emit('peer', [[40, 20]])
+            emit('tab', [[90, 20]])
+            self.assertFalse(learner.observations)
+            emit('tab', [[60, 30], [40, 20]])
+            emit('tab', [[40, 20]])
+            return {}
+
+        wire.call.side_effect = release
+        result = learner.pointer(wire, method, released, 'tab')
+        self.assertEqual(result, {})
+        self.assertEqual(len(learner.observations), 2)
+        emit('tab', [[40, 20]])
+        self.assertEqual(len(learner.observations), 2)
+        learner.flush()
+        control, = self.catalog.list(self.origin, self.page)
+        self.assertEqual(control['label'], 'Show details')
+
+    def test_pointer_dispatch_failure_releases_observation_state(self):
+        learner = PageLearning(self.catalog)
+        wire = Mock()
+        wire.call.return_value = {'identifier': 'fixture-observer'}
+        learner.attach(wire, 'tab')
+        method = 'Input.dispatchMouseEvent'
+        options = {'x': 40, 'y': 20, 'button': 'left', 'clickCount': 1}
+        learner.pointer(wire, method, dict(options, type='mousePressed'), 'tab')
+        wire.call.side_effect = TimeoutError('fixture timed out')
+        with self.assertRaises(TimeoutError):
+            learner.pointer(wire, method, dict(options, type='mouseReleased'), 'tab')
+        self.assertFalse(learner.releasing)
+        self.assertFalse(learner.pressed)

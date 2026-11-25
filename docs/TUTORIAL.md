@@ -393,10 +393,12 @@ removal for future template installation.
 
 ## Automatically learned buttons on Mac
 
-Once a page is open, an ordinary DOM click in `browser_exec` can teach the
-plugin a button. The catalog keeps the site origin and a page-specific match.
-It makes a button available after observing a unique label and a confirmed
-change in an accessible button state, such as opening a collapsed section.
+Once a page is open, DOM clicks and single left clicks through
+`browser_exec` can teach the plugin a button in Chrome on Mac. A click based
+on a screenshot or zoom is matched to the element that received it. The
+catalog stores the site origin and a page-specific match for that element.
+A unique label and a confirmed change in an accessible button state, such as
+opening a collapsed section, make the control available for reuse.
 
 Use these requests in the same `browser_exec` session.
 
@@ -409,9 +411,10 @@ Use these requests in the same `browser_exec` session.
 If a learned click returns `needs_inspection`, inspect the current page with
 native DOM and use a screenshot as needed. If the tool reports `dispatched`,
 check the visible result before trying the click again. A confirmed native
-DOM click can update the entry for later visits. The first stage records DOM
-clicks in Chrome on Mac. Screenshot and zoom can still be used to inspect
-the current page.
+DOM or pointer click can update the entry for later visits. Inspect the
+current page after an unexpected click. The catalog learns the element
+reached by the click and recalls it by its page context and identity, so
+the same control can be used across changes in zoom.
 
 ## Keep a window across turns
 

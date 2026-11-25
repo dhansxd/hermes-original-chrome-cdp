@@ -1,9 +1,10 @@
-"""Original Chrome learns DOM clicks from native Hermes browser_exec."""
+"""Original Chrome learns DOM and screenshot clicks through native Hermes browser_exec."""
 import json
 import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import uuid
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,8 +28,17 @@ class Fixture(BaseHTTPRequestHandler):
 
     def do_GET(self):
         body = f"""<!doctype html><title>Learned controls fixture</title>
+<style>
+body {{ margin: 0; }}
+button {{ margin: 42px 0 0 85px; padding: 10px 18px; background: rgb(17,203,101); border: 0; }}
+#banner {{ position: fixed; inset: 0; z-index: 100; background: #ddd; }}
+</style>
 <button id="details-{self.version}" aria-expanded="false" type="button">Show details</button>
+<div id="banner" hidden>Fixture banner</div>
 <script>
+window.addEventListener('click', event => {{
+  document.body.dataset.event = JSON.stringify([event.target.id, event.clientX, event.clientY]);
+}});
 document.querySelector('button').onclick = event => {{
   event.currentTarget.setAttribute('aria-expanded', 'true');
   document.body.dataset.clicked = event.currentTarget.id;
@@ -40,7 +50,33 @@ document.querySelector('button').onclick = event => {{
         self.wfile.write(body)
 
 
-def exercise():
+def click_from_screenshot(script, *, zoom, banner=False):
+    script(f"""
+from PIL import Image
+cdp('Emulation.setPageScaleFactor', pageScaleFactor={zoom})
+for _ in range(4):
+    frame = capture_screenshot(max_dim=900)
+    with Image.open(frame) as screenshot:
+        width, height = screenshot.size
+        pixels = screenshot.convert('RGB').get_flattened_data()
+        colored = [(i % width, i // width) for i, (r, g, b) in enumerate(pixels)
+                   if r < 80 and g > 155 and 65 < b < 155 and g - b > 50]
+    if colored:
+        break
+    wait(.2)
+assert colored, 'The fixture button was not visible in the screenshot.'
+xs, ys = zip(*colored)
+viewport = cdp('Page.getLayoutMetrics')['cssVisualViewport']
+x = (min(xs) + max(xs)) / 2 * viewport['clientWidth'] / width
+y = (min(ys) + max(ys)) / 2 * viewport['clientHeight'] / height
+if {banner!r}:
+    js("document.getElementById('banner').hidden=false")
+click_at_xy(x, y)
+""")
+
+
+def exercise(*, visual=False):
+    Fixture.version = 1
     source = Path(__file__).resolve().parents[1]
     before = window_keys()
     with ThreadingHTTPServer(('127.0.0.1', 0), Fixture) as server, tempfile.TemporaryDirectory() as temp:
@@ -91,6 +127,11 @@ plugins:
                         if stage == 'learn':
                             first = learned('list_learned_controls')
                             assert first.get('success') and not first['controls'], first
+                            if visual:
+                                click_from_screenshot(script, zoom=1.25, banner=True)
+                                script('assert not js("document.body.dataset.clicked")')
+                                assert not learned('list_learned_controls')['controls']
+                                script('js("document.getElementById(\'banner\').hidden=true")')
                         if stage in ('reuse', 'reuse-after-refresh'):
                             if stage == 'reuse':
                                 script(f'goto_url({(origin + "/other")!r}); wait_for_element("button", timeout=8)')
@@ -98,6 +139,13 @@ plugins:
                                 assert other['status'] == 'needs_inspection' and not other['dispatched'], other
                                 script('assert not js("document.body.dataset.clicked")')
                                 script(f'goto_url({url!r}); wait_for_element("button", timeout=8)')
+                            if visual:
+                                script("cdp('Emulation.setPageScaleFactor', pageScaleFactor=1.1)")
+                                script('js("document.getElementById(\'banner\').hidden=false")')
+                                obscured = learned('click_learned_control', control=control)
+                                assert obscured.get('reason') == 'obscured' and not obscured['dispatched'], obscured
+                                script('assert not js("document.body.dataset.clicked")')
+                                script('js("document.getElementById(\'banner\').hidden=true")')
                             result = learned('click_learned_control', control=control)
                             assert result.get('success') and result['status'] == 'ok', result
                         else:
@@ -106,8 +154,17 @@ plugins:
                                 assert missed['status'] == 'needs_inspection' and not missed['dispatched'], missed
                                 assert not learned('list_learned_controls')['controls']
                                 script('assert not js("document.body.dataset.clicked")')
-                            script('js("document.querySelector(\'button\').click()")')
+                            if visual:
+                                click_from_screenshot(script, zoom=1.4 if stage == 'learn' else 1.2)
+                                script(f'assert js("document.body.dataset.clicked")=={("details-" + str(Fixture.version))!r}, js("document.body.dataset.event")')
+                            else:
+                                script('js("document.querySelector(\'button\').click()")')
                             listing = learned('list_learned_controls')
+                            if visual:
+                                deadline = time.monotonic() + 5
+                                while listing.get('success') and not listing['controls'] and time.monotonic() < deadline:
+                                    time.sleep(.1)
+                                    listing = learned('list_learned_controls')
                             assert listing.get('success'), listing
                             assert listing['site'] == origin and listing['site_name'] == '127.0.0.1', listing
                             assert len(listing['controls']) == 1, listing
@@ -116,7 +173,7 @@ plugins:
                             assert control is None or row['id'] == control
                             control = row['id']
                         script(f'assert js("document.body.dataset.clicked")=={("details-" + str(Fixture.version))!r}')
-                        print('NATIVE_LEARNED_CONTROL_PASS', stage, flush=True)
+                        print('NATIVE_LEARNED_CONTROL_PASS', 'visual' if visual else 'dom', stage, flush=True)
                     finally:
                         invoke_hook('on_session_end', task_id=owner, session_id=owner, turn_id=turn,
                                     completed=True, failed=False, interrupted=False)
@@ -147,3 +204,6 @@ if __name__ == '__main__':
 class NativeLearnedControls(unittest.TestCase):
     def test_browser_learns_reuses_and_refreshes_site_control(self):
         exercise()
+
+    def test_browser_learns_from_screenshot_click_at_zoom(self):
+        exercise(visual=True)
