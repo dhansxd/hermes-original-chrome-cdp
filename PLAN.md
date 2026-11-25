@@ -126,6 +126,17 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   lewat DOM. Seluruh 466 tes unit lulus. Kedua versi lulus uji enam agen
   pada satu dan dua profil, dengan Stop dan cleanup yang menjaga jendela
   milik agen lain. Jumlah jendela kembali ke kondisi awal.
+- Uji setelah pemasangan `0453456` (0.15.1) pada Hermes `ae2a81ccc0`,
+  macOS 27.2.1 dan Chrome 158.0.8127.38 menemukan tombol pengganti kadang
+  gagal disimpan setelah klik dari screenshot. Jejak CDP pada skenario
+  yang sama menunjukkan event observasi tiba setelah balasan pelepasan
+  mouse, ketika sesi sudah berhenti menunggunya. Di 0.15.2, relay menunggu
+  event tersebut hingga 150 ms pada lampiran dan koordinat yang sama,
+  lalu tetap memeriksa efek klik sebelum menyimpan kontrol. Regresi event
+  terlambat gagal pada 0.15.1 dan lulus pada kandidat. Uji native DOM lulus
+  pada kedua versi. Kandidat lulus uji lengkap screenshot, 467 tes unit,
+  serta uji ulang enam agen pada satu dan dua profil dengan cleanup ke
+  jumlah jendela awal.
 - Pembanding `1e73be4` belum dapat membuka katalog. Pada kandidat, uji Hermes
   CLI di macOS 27.2.1 dan Chrome 158.0.8127.38 membuktikan empat sesi baru
   untuk belajar, pakai ulang, fallback DOM ketika ID tombol berubah, dan

@@ -1,6 +1,7 @@
 import json
 import sys
 import tempfile
+from threading import Timer
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
@@ -104,6 +105,31 @@ class SiteLearningTests(unittest.TestCase):
         learner.flush()
         control, = self.catalog.list(self.origin, self.page)
         self.assertEqual(control['label'], 'Show details')
+
+    def test_pointer_learns_when_observation_arrives_after_cdp_release_reply(self):
+        learner = PageLearning(self.catalog)
+        wire = Mock()
+        wire.call.return_value = {'identifier': 'fixture-observer'}
+        learner.attach(wire, 'tab')
+        method = 'Input.dispatchMouseEvent'
+        options = {'x': 40, 'y': 20, 'button': 'left', 'clickCount': 1}
+        learner.pointer(wire, method, dict(options, type='mousePressed'), 'tab')
+        payload = json.dumps({'url': self.url, 'label': 'Show details', 'element': 'button-a',
+                              'state': '', 'value': '', 'observation': '12-3-1', 'points': [[40, 20]]})
+        event = {'name': learner.binding, 'payload': payload, 'executionContextId': 12}
+        delayed = Timer(.03, learner.event, args=('tab', event))
+
+        def release(command, params, sid, **kwargs):
+            if command == 'Runtime.evaluate':
+                return {'result': {'value': {'state': 'aria-expanded', 'value': 'true'}}}
+            delayed.start()
+            return {}
+
+        wire.call.side_effect = release
+        self.assertEqual(learner.pointer(wire, method, dict(options, type='mouseReleased'), 'tab'), {})
+        delayed.join(1)
+        learner.flush()
+        self.assertEqual([item['label'] for item in self.catalog.list(self.origin, self.page)], ['Show details'])
 
     def test_pointer_dispatch_failure_releases_observation_state(self):
         learner = PageLearning(self.catalog)

@@ -191,6 +191,7 @@ class PageLearning:
         self.binding = 'hermesObserve_' + secrets.token_hex(8)
         self.world = self.binding
         self.lock = threading.Lock()
+        self.confirmation_ready = threading.Condition(self.lock)
         self.attached = {}
         self.evaluating = set()
         self.pressed = {}
@@ -224,6 +225,7 @@ class PageLearning:
             self.pressed.pop(sid, None)
             self.releasing.pop(sid, None)
             self.awaiting_confirmation.pop(sid, None)
+            self.confirmation_ready.notify_all()
         try:
             if script is not None:
                 wire.call('Page.removeScriptToEvaluateOnNewDocument', {'identifier': script}, sid, timeout=.5)
@@ -248,7 +250,8 @@ class PageLearning:
         with self.lock:
             pressed = self.pressed.pop(sid, None)
             tracking = single and sid in self.attached
-            if tracking and phase == 'mouseReleased' and pressed == point:
+            matched_release = tracking and phase == 'mouseReleased' and pressed == point
+            if matched_release:
                 self.releasing[sid] = point
         try:
             result = wire.call(method, params, sid, timeout=None)
@@ -256,7 +259,7 @@ class PageLearning:
                 with self.lock:
                     if sid in self.attached:
                         self.pressed[sid] = point
-            elif tracking and phase == 'mouseReleased':
+            elif matched_release:
                 self._confirm(wire, sid)
             return result
         finally:
@@ -282,7 +285,11 @@ class PageLearning:
         return True
 
     def _confirm(self, wire, sid):
-        with self.lock:
+        with self.confirmation_ready:
+            # Chrome can acknowledge the release before delivering its binding event.
+            self.confirmation_ready.wait_for(
+                lambda: sid in self.awaiting_confirmation or sid not in self.attached, timeout=.15,
+            )
             observed = self.awaiting_confirmation.pop(sid, None)
         if observed is None:
             return
@@ -328,6 +335,7 @@ class PageLearning:
                     context = params.get('executionContextId')
                     if 'observation' in data and type(context) is int and context > 0:
                         self.awaiting_confirmation[sid] = (origin, page, label, element, data['observation'], context)
+                        self.confirmation_ready.notify_all()
         return True
 
     def flush(self):
