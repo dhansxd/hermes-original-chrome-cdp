@@ -391,6 +391,28 @@ retaining plugin-data artifacts, checkpoints and receipts. Linked packages are
 removed by unlinking the directory entry. A saved disabled flag also records
 removal for future template installation.
 
+## Automatically learned buttons on Mac
+
+Once a page is open, an ordinary DOM click in `browser_exec` can teach the
+plugin a button. The catalog keeps the site origin and a page-specific match.
+It makes a button available after observing a unique label and a confirmed
+change in an accessible button state, such as opening a collapsed section.
+
+Use these requests in the same `browser_exec` session.
+
+```json
+{"action":"list_learned_controls"}
+{"action":"list_learned_controls","params":{"label":"Show details"}}
+{"action":"click_learned_control","params":{"control":"<ID returned by the catalog>"}}
+```
+
+If a learned click returns `needs_inspection`, inspect the current page with
+native DOM and use a screenshot as needed. If the tool reports `dispatched`,
+check the visible result before trying the click again. A confirmed native
+DOM click can update the entry for later visits. The first stage records DOM
+clicks in Chrome on Mac. Screenshot and zoom can still be used to inspect
+the current page.
+
 ## Keep a window across turns
 
 Ask Hermes to leave the Chrome window open when you want to return to the page.

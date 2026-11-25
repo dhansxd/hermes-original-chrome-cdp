@@ -22,6 +22,7 @@ if __package__:
     from .profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
     from .browser_apps import AppHost, CONTROL_SCHEMA, app_identifier
     from .profile_rules import ProfileRules
+    from .site_learning import ClickCatalog
     from .windows_chrome import WindowsChrome
 else:
     from input_guard import prepare_code
@@ -30,6 +31,7 @@ else:
     from profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
     from browser_apps import AppHost, CONTROL_SCHEMA, app_identifier
     from profile_rules import ProfileRules
+    from site_learning import ClickCatalog
     from windows_chrome import WindowsChrome
 
 NAME = 'original-chrome-default'
@@ -68,6 +70,7 @@ class ChromeProvider(BrowserProvider):
         self.get_setting, self.data = get_setting, data
         self.set_setting = set_setting
         self.cleanup_directory = cleanup_directory
+        self.learning_directory = None
         self.instance_id = uuid.uuid4().hex
         self.sessions = {}
         self.owners = {}
@@ -154,6 +157,14 @@ class ChromeProvider(BrowserProvider):
         return [(ident, session) for ident, session in self.sessions.items()
                 if session.cache_key.split('@', 1)[0] == key]
 
+    def learning_catalog(self):
+        if self.learning_directory is None or self.default_device() != 'local':
+            return None
+        directory = self.learning_directory()
+        if not isinstance(directory, (str, os.PathLike)):
+            return None
+        return ClickCatalog(Path(directory) / 'learned-controls.sqlite3')
+
     @staticmethod
     def _session_info(identifier, session):
         return {'session_name': 'original-chrome-' + identifier, 'bb_session_id': identifier,
@@ -204,6 +215,8 @@ class ChromeProvider(BrowserProvider):
                 return self._unavailable_session()
             session.cache_key = task_id
             session.cleanup_file = cleanup_file
+            if device == 'local' and self.learning_directory is not None:
+                session.set_learning(self.learning_catalog())
             self.sessions[identifier] = session
         if desktop:
             # SSH and Windows desktop startup can exceed the native driver's
@@ -313,7 +326,8 @@ class ChromeProvider(BrowserProvider):
                     return {'action': 'block', 'message': 'The kept Chrome window belongs to an active turn.'}
                 if tool_name == PROFILE_TOOL and app_id and existing and existing.app_id != app_id:
                     reuse = False  # Independent profile rules apply when starting a new task window.
-                if kwargs.get('require_existing') and (not reuse or existing.app_id not in ('', app_id)):
+                if kwargs.get('require_existing') and (
+                        not reuse or (existing.app_id not in ('', app_id) and not kwargs.get('allow_current_app'))):
                     return {'action': 'block', 'message': 'Use the current owned site window for this action.'}
                 if reuse:
                     if app_id and existing.app_id and app_id != existing.app_id and (existing.pending or existing.active):
@@ -746,6 +760,10 @@ SITE_HELP = ('Use browser_exec for website tasks in Original Chrome. The site-co
              'Use code with site_control omitted or null for DOM inspection, screenshots and ordinary '
              'browsing in the same session. For a confirmed unmapped UI control, include site_control action '
              'record_missing_control with the native code to log the finding and act in one call. '
+             'On an open page, use list_learned_controls to find automatically learned buttons and '
+             'click_learned_control with a listed control ID to use one. On needs_inspection, continue '
+             'with the native DOM or screenshot in the same session. Check the page before replaying '
+             'a click whose result was not confirmed. '
              'Use keep_window when the user wants the page to remain available after the turn. '
              'Use list_windows and close_window to find or close a kept session in this conversation.')
 
@@ -803,6 +821,7 @@ def register(ctx):
                    lambda: ctx.state.data_dir, bundled_source=root / 'site_apps')
     apps.controls_enabled = bool(ctx.has_capability('tools.override'))
     if apps.controls_enabled:
+        provider.learning_directory = lambda: ctx.state.data_dir
         register_site_controls(ctx, apps)
     if hasattr(ctx, 'register_skill'):
         ctx.register_skill('site-controls', root / 'skills' / 'site-controls' / 'SKILL.md',

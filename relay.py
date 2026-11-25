@@ -152,6 +152,7 @@ class ChromeSession:
         self.cleanup_complete = False
         self.cleanup_file = None
         self.clients = {}
+        self.learning = None
         self.uploads = {}
         self.path = '/devtools/browser/' + secrets.token_urlsafe(32)
         # No page data in websocket debug logs.
@@ -162,6 +163,14 @@ class ChromeSession:
                                        name='chrome-session-endpoint')
         self.thread.start()
         self.url = f'ws://127.0.0.1:{self.server.socket.getsockname()[1]}{self.path}'
+
+    def set_learning(self, catalog):
+        if __package__:
+            from .site_learning import PageLearning
+        else:
+            from site_learning import PageLearning
+        if catalog is not None:
+            self.learning = PageLearning(catalog)
 
     @property
     def disconnected(self):
@@ -387,6 +396,8 @@ class ChromeSession:
         sid = message.get('sessionId')
         info = params.get('targetInfo', {})
         target = info.get('targetId') or params.get('targetId')
+        if self.learning and method == 'Runtime.bindingCalled' and self.learning.event(sid, params):
+            return
         with self.lock:
             if self.download_page and info:
                 owner, url = self.download_page
@@ -509,10 +520,14 @@ class ChromeSession:
                 self.wire.call('Target.setAutoAttach', {
                     'autoAttach': True, 'waitForDebuggerOnStart': False, 'flatten': True,
                     'filter': [{'type': 'iframe'}, {'exclude': True}]}, result['sessionId'])
+                if self.learning and target in self.owned:
+                    self.learning.attach(self.wire, result['sessionId'])
             return result
         if method == 'Target.detachFromTarget':
             if params.get('sessionId') not in sessions:
                 raise RuntimeError('CDP session does not belong to this connection.')
+            if self.learning:
+                self.learning.detach(self.wire, params['sessionId'])
             return self.wire.call(method, params)
         if method.startswith('Target.'):
             if method == 'Target.setAutoAttach' and sid:
@@ -538,6 +553,8 @@ class ChromeSession:
             return {}
         # The native client owns the operation deadline. A resource download or
         # awaited script may legitimately exceed the transport's setup budget.
+        if self.learning and method == 'Runtime.evaluate':
+            return self.learning.evaluate(self.wire, method, params, sid)
         return self.wire.call(method, params, sid, timeout=None)
 
     def _client(self, ws):
@@ -564,6 +581,8 @@ class ChromeSession:
                     reply['error'] = {'code': -32000, 'message': str(exc)}
                 if request.get('sessionId'):
                     reply['sessionId'] = request['sessionId']
+                if self.learning:
+                    self.learning.flush()
                 ws.send(json.dumps(reply))
         finally:
             with self.lock:
@@ -571,6 +590,8 @@ class ChromeSession:
             if self.wire and not self.wire.closed:
                 for sid in sessions:
                     try:
+                        if self.learning:
+                            self.learning.detach(self.wire, sid)
                         self.wire.call('Target.detachFromTarget', {'sessionId': sid}, timeout=2)
                     except Exception:
                         pass
@@ -712,5 +733,7 @@ class ChromeSession:
                     self.seed_dir.cleanup()
                 except Exception:
                     success = False
+            if self.learning:
+                self.learning.flush()
             self.cleanup_complete = success
             return success

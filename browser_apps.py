@@ -31,9 +31,15 @@ STATUSES = {'ok', 'running', 'quota_exhausted', 'needs_inspection', 'failed'}
 OBSERVATION_INTERVAL = 15
 
 
+if __package__:
+    from .site_learning import LEARNED_ACTIONS, cached_action, fallback
+else:
+    from site_learning import LEARNED_ACTIONS, cached_action, fallback
+
+
 WINDOW_ACTIONS = ('keep_window', 'list_windows', 'close_window')
 CONTROL_ACTIONS = ('list', 'describe', 'run', 'observe', 'record_missing_control', 'enable', 'disable', 'remove',
-                   *WINDOW_ACTIONS)
+                   *WINDOW_ACTIONS, *LEARNED_ACTIONS)
 CONTROL_FIELDS = {'action', 'app', 'operation', 'params', 'job', 'target_profile', 'session'}
 CONTROL_SCHEMA = {
     'type': ['string', 'null'],
@@ -74,6 +80,8 @@ def site_request(args):
         raise ValueError('Choose an action from the site_control schema.')
     if action in WINDOW_ACTIONS and set(command) - {'action', 'session'}:
         raise ValueError('Window actions accept only action and session.')
+    if action in LEARNED_ACTIONS and set(command) - {'action', 'session', 'params'}:
+        raise ValueError('Learned controls apply to the currently owned page.')
     return {**command, 'action': action}
 
 
@@ -429,6 +437,11 @@ class AppHost:
             if args.get('session') and args['session'] != command['session']:
                 return {'action': 'block', 'message': 'Use one browser session for this control.'}
             args = {**args, 'session': command['session']}
+        if command['action'] in LEARNED_ACTIONS:
+            if args.get('code'):
+                return {'action': 'block', 'message': 'Call a learned control or run native code separately.'}
+            return self.provider.prepare_call(tool_name, {'session': args.get('session')}, task_id,
+                                              require_existing=True, allow_current_app=True, **context)
         if command['action'] not in {'run', 'observe', 'record_missing_control'}:
             # Catalog and lifecycle commands do not acquire a browser or choose a profile.
             return {'action': 'modify', 'args': {'session': args.get('session') or 'default'}}
@@ -463,10 +476,35 @@ class AppHost:
             command = site_request(args)
         except ValueError as error:
             return json.dumps({'success': False, 'error': str(error)})
+        if command['action'] in LEARNED_ACTIONS:
+            return self.execute_learned(command, args, native, context)
         result = self.handle({**command, 'session': args.get('session')}, **context)
         if command['action'] == 'record_missing_control' and args.get('code') and json.loads(result).get('success'):
             return native({k: v for k, v in args.items() if k != 'site_control'}, **context)
         return result
+
+    def execute_learned(self, command, args, native, context):
+        import sqlite3
+        attempted = False
+
+        def run_expression(expression, *, click=False):
+            nonlocal attempted
+            attempted = click
+            code = 'import json\nprint(json.dumps(js(' + repr(expression) + ')))'
+            result = native({'session': args['session'], 'code': code}, **context)
+            data = json.loads(result) if isinstance(result, str) else result
+            if not isinstance(data, dict) or not data.get('success'):
+                raise RuntimeError('Could not verify the current page.')
+            return json.loads(data['output'].strip())
+
+        try:
+            catalog = self.provider.learning_catalog()
+            if catalog is None:
+                raise RuntimeError('Learned controls are available on local Chrome.')
+            result = cached_action(catalog, command, run_expression)
+        except (KeyError, TypeError, OSError, sqlite3.Error, ValueError, RuntimeError) as error:
+            result = fallback(str(error), dispatched=attempted)
+        return json.dumps(result, ensure_ascii=False)
 
     def manage(self, action, identifier):
         directory = self.root / identifier

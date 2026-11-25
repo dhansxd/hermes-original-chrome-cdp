@@ -1,0 +1,149 @@
+"""Original Chrome learns DOM clicks from native Hermes browser_exec."""
+import json
+import sqlite3
+import sys
+import tempfile
+import threading
+import uuid
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+from agent.browser_registry import get_provider
+from gateway.session_context import clear_session_vars, set_session_vars
+from hermes_cli.plugins import get_plugin_manager, invoke_hook
+from hermes_cli.plugins_manifest import parse_manifest_file
+from hermes_constants import set_hermes_home_override
+from model_tools import handle_function_call
+from native_windows import verify_cleanup, window_keys
+from tools.browser_session_lifecycle import cleanup_profile_browsers
+
+
+class Fixture(BaseHTTPRequestHandler):
+    version = 1
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        body = f"""<!doctype html><title>Learned controls fixture</title>
+<button id="details-{self.version}" aria-expanded="false" type="button">Show details</button>
+<script>
+document.querySelector('button').onclick = event => {{
+  event.currentTarget.setAttribute('aria-expanded', 'true');
+  document.body.dataset.clicked = event.currentTarget.id;
+}};
+</script>""".encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html')
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def exercise():
+    source = Path(__file__).resolve().parents[1]
+    before = window_keys()
+    with ThreadingHTTPServer(('127.0.0.1', 0), Fixture) as server, tempfile.TemporaryDirectory() as temp:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        origin = f'http://127.0.0.1:{server.server_port}'
+        url = origin + '/settings?private=must-not-be-persisted'
+        home = Path(temp).resolve()
+        (home / 'config.yaml').write_text('''browser:
+  cloud_provider: original-chrome-default
+  auto_local_for_private_urls: false
+  allow_private_urls: true
+  inactivity_timeout: 600
+plugins:
+  enabled: [original-chrome-default]
+  entries:
+    original-chrome-default:
+      granted_capabilities: [tools.override]
+''')
+        provider = None
+        try:
+            with set_hermes_home_override(home):
+                manager = get_plugin_manager()
+                manager._load_plugin(parse_manifest_file(source / 'plugin.yaml', source, 'user', ''))
+                provider = get_provider('original-chrome-default')
+                control = None
+                for stage in ('learn', 'reuse', 'refresh', 'reuse-after-refresh'):
+                    owner = uuid.uuid4().hex
+                    turn = uuid.uuid4().hex
+                    tokens = set_session_vars(platform='cli', session_key=owner, session_id=owner)
+
+                    def call(**args):
+                        result = handle_function_call(
+                            'browser_exec', {'session': 'settings', **args}, task_id=owner,
+                            session_id=owner, turn_id=turn, tool_call_id=uuid.uuid4().hex,
+                        )
+                        return json.loads(result) if isinstance(result, str) else result
+
+                    def script(code):
+                        result = call(code=code)
+                        assert result.get('success'), result
+                        return result
+
+                    def learned(action, **params):
+                        return call(site_control=json.dumps({'action': action, 'params': params}))
+
+                    try:
+                        script(f'goto_url({url!r}); wait_for_element("button", timeout=8)')
+                        if stage == 'learn':
+                            first = learned('list_learned_controls')
+                            assert first.get('success') and not first['controls'], first
+                        if stage in ('reuse', 'reuse-after-refresh'):
+                            if stage == 'reuse':
+                                script(f'goto_url({(origin + "/other")!r}); wait_for_element("button", timeout=8)')
+                                other = learned('click_learned_control', control=control)
+                                assert other['status'] == 'needs_inspection' and not other['dispatched'], other
+                                script('assert not js("document.body.dataset.clicked")')
+                                script(f'goto_url({url!r}); wait_for_element("button", timeout=8)')
+                            result = learned('click_learned_control', control=control)
+                            assert result.get('success') and result['status'] == 'ok', result
+                        else:
+                            if stage == 'refresh':
+                                missed = learned('click_learned_control', control=control)
+                                assert missed['status'] == 'needs_inspection' and not missed['dispatched'], missed
+                                assert not learned('list_learned_controls')['controls']
+                                script('assert not js("document.body.dataset.clicked")')
+                            script('js("document.querySelector(\'button\').click()")')
+                            listing = learned('list_learned_controls')
+                            assert listing.get('success'), listing
+                            assert listing['site'] == origin and listing['site_name'] == '127.0.0.1', listing
+                            assert len(listing['controls']) == 1, listing
+                            row, = listing['controls']
+                            assert row['label'] == 'Show details', listing
+                            assert control is None or row['id'] == control
+                            control = row['id']
+                        script(f'assert js("document.body.dataset.clicked")=={("details-" + str(Fixture.version))!r}')
+                        print('NATIVE_LEARNED_CONTROL_PASS', stage, flush=True)
+                    finally:
+                        invoke_hook('on_session_end', task_id=owner, session_id=owner, turn_id=turn,
+                                    completed=True, failed=False, interrupted=False)
+                        clear_session_vars(tokens)
+                    assert not provider.sessions
+                    if stage == 'reuse':
+                        Fixture.version = 2
+                path, = list(home.rglob('learned-controls.sqlite3'))
+                assert b'must-not-be-persisted' not in path.read_bytes()
+                with sqlite3.connect(path) as db:
+                    assert db.execute('SELECT origin, name FROM sites').fetchall() == [(origin, '127.0.0.1')]
+        finally:
+            try:
+                if provider is not None:
+                    with set_hermes_home_override(home):
+                        assert provider.unload()
+                        cleanup_profile_browsers(str(home))
+                        manager.unload('original-chrome-default')
+            finally:
+                server.shutdown()
+        verify_cleanup(before)
+
+
+if __name__ == '__main__':
+    exercise()
+
+
+class NativeLearnedControls(unittest.TestCase):
+    def test_browser_learns_reuses_and_refreshes_site_control(self):
+        exercise()

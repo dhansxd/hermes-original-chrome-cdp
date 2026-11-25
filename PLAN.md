@@ -100,6 +100,28 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   jendela. Stop dan giliran selesai menutup jendela milik agen tersebut serta
   mempertahankan jendela pembanding. Jumlah jendela kembali ke kondisi awal.
 
+### Katalog klik otomatis di Mac
+
+- Pada branch `feature/windows-chrome`, 0.15.0 tahap pertama mendaftarkan
+  situs dari halaman milik agen. Pengamatan sepanjang panggilan DOM
+  menghasilkan kandidat tombol dan menyimpan kontrol siap pakai ketika label
+  unik dan perubahan keadaan tombol terkonfirmasi. Katalog tersimpan di data
+  plugin. Pengamatan tidak mengganti skrip, pesan, atau alur browsing native.
+- Pada kunjungan baru, pakai kontrol dari katalog lewat `browser_exec`
+  di halaman yang sudah terbuka. Jika lokasi atau tombol gagal dicocokkan,
+  lanjut dengan DOM dan screenshot di jendela yang sama. Perbarui pemetaan
+  otomatis setelah klik pengganti terkonfirmasi. Periksa keadaan halaman
+  sebelum mengulang aksi yang mungkin sudah dikirim.
+- Tahap pertama menguji klik DOM pada Chrome Mac mini. Perekaman klik dari
+  screenshot dan zoom menyusul. Pengujian Windows ditunda. Evaluasi merge
+  ke main setelah fitur stabil dan regresi lulus.
+- Pembanding `1e73be4` belum dapat membuka katalog. Pada kandidat, uji Hermes
+  CLI di macOS 27.2.1 dan Chrome 158.0.8127.38 membuktikan empat sesi baru
+  untuk belajar, pakai ulang, fallback DOM ketika ID tombol berubah, dan
+  pakai ulang hasil pembaruan. Pada jalur halaman lain, target lama ditolak
+  sebelum diklik. Kedua versi lulus uji enam agen pada satu dan dua profil,
+  Stop, dan cleanup. Jumlah jendela kembali ke kondisi awal.
+
 ### Tujuan produk
 
 Hermes memakai Google Chrome asli lewat CDP untuk membuka situs apa pun yang
