@@ -198,6 +198,7 @@ def run(context, operation, params):
         for action, params, helper in (
             ('navigate', {'url': 'https://example.com/?a=1&b=2'}, 'goto_url'),
             ('type', {'selector': '#field', 'text': 'Hello'}, 'fill_input'),
+            ('read', {'selector': '#summary'}, 'js'),
         ):
             with self.subTest(action=action):
                 request = json.dumps({'action': action, 'params': params})
@@ -209,7 +210,7 @@ def run(context, operation, params):
                 self.assertEqual(routed['timeout_s'], 27)
                 self.assertNotIn('site_control', routed)
                 self.assertIn(helper + '(', routed['code'])
-        self.assertEqual(native.call_count, 2)
+        self.assertEqual(native.call_count, 3)
 
     def test_visual_click_id_cannot_be_used_by_another_task_or_turn(self):
         self.package()
@@ -238,6 +239,9 @@ def run(context, operation, params):
             ({'action': 'type', 'params': {'selector': '#field', 'text': 18}}, {}),
             ({'action': 'type', 'params': {'selector': '#field', 'text': 'test', 'clear_first': 'false'}}, {}),
             ({'action': 'type', 'params': {'selector': '#field', 'text': 'test'}}, {'local': True}),
+            ({'action': 'read'}, {}),
+            ({'action': 'read', 'params': {'selector': ['#field']}}, {}),
+            ({'action': 'read', 'params': {'javascript': 'scrollTo(0, 10)'}}, {}),
         ]
         with patch('hermes_cli.config.load_config_readonly', return_value=self.config):
             for command, extra in invalid:

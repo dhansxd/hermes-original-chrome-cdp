@@ -64,7 +64,13 @@ document.querySelector('#spa-link').onclick = event => {
 document.querySelector('#cancel-link').onclick = event => event.preventDefault();
 </script>"""
         elif self.path == '/basic-actions':
-            body = b'''<!doctype html><title>Basic browser actions</title>
+            body = '''<!doctype html><meta charset=utf-8><title>Basic browser actions</title>
+<section id="summary">
+  <h1>Browser fixture</h1>
+  <p class="detail">Halo dari Chrome.</p>
+  <p class="detail">مرحبا</p>
+  <p class="detail" hidden>Hidden fixture text</p>
+</section>
 <textarea id="note">start: </textarea>
 <div id="inputs">
   <input class="ambiguous" value="first">
@@ -73,7 +79,7 @@ document.querySelector('#cancel-link').onclick = event => event.preventDefault()
 <script>
 const note = document.getElementById('note');
 note.addEventListener('change', () => document.body.dataset.changed = 'yes');
-</script>'''
+</script>'''.encode()
         elif self.path == '/basic-next':
             body = b'<!doctype html><title>Next browser page</title><main id="next"></main>'
         elif self.path.startswith('/mapped-controls'):
@@ -278,6 +284,31 @@ def exercise_basic_actions(mode, script, learned, origin, provider):
     navigate(url)
     script('assert wait_for_element("#note", timeout=8); assert js("document.title").endswith("Basic browser actions")')
     owned, = provider.sessions.values()
+
+    def read_page(**params):
+        result = learned('read', **params)
+        assert result.get('success'), result
+        return json.loads(result['output'])
+
+    full = json.loads(script('import json; print(json.dumps(js("document.body.innerText").strip()))')['output'])
+    assert 'Halo dari Chrome.' in full and 'Hidden fixture text' not in full
+    if mode == 'structured':
+        result = read_page()
+        assert result['title'].endswith('Basic browser actions') and result['text'] == full, result
+        assert result['found'] and not result['truncated'], result
+
+    details_expression = "Array.from(document.querySelectorAll('.detail:not([hidden])'), e => e.innerText)"
+    details = json.loads(script(f'import json; print(json.dumps(js({details_expression!r})))')['output'])
+    assert details == ['Halo dari Chrome.', 'مرحبا']
+    if mode == 'structured':
+        scoped = read_page(selector='.detail')
+        assert scoped['text'] == '\n'.join(details) and scoped['found'], scoped
+        hidden = read_page(selector='p[hidden]')
+        assert hidden['text'] == '' and not hidden['found'], hidden
+        script("""js("document.querySelector('#summary').textContent = 'abc'.repeat(1700)")""")
+        long_page = read_page(selector='#summary')
+        assert len(long_page['text']) == 4000 and long_page['truncated'], long_page['truncated']
+
     value = "document.getElementById('note').value"
     type_note(first)
     script(f'assert js({value!r}) == {first!r}')
@@ -506,10 +537,10 @@ class NativeLearnedControls(unittest.TestCase):
     def test_named_click_continues_from_a_fresh_screenshot(self):
         exercise(visual_continuation=True)
 
-    def test_native_navigation_and_typing(self):
+    def test_native_navigation_reading_and_typing(self):
         exercise(basic='legacy')
 
-    def test_browser_navigates_and_types_through_structured_actions(self):
+    def test_browser_navigates_reads_and_types_through_structured_actions(self):
         exercise(basic='structured')
 
     def test_browser_picks_repairs_and_reuses_a_control_in_one_action(self):

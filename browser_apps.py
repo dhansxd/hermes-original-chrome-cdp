@@ -40,7 +40,7 @@ else:
                                visual_capture_code, visual_dispatch_code)
 
 
-BROWSER_ACTIONS = ('navigate', 'type')
+BROWSER_ACTIONS = ('navigate', 'type', 'read')
 WINDOW_ACTIONS = ('keep_window', 'list_windows', 'close_window')
 CONTROL_ACTIONS = ('list', 'describe', 'run', 'observe', 'record_missing_control', 'enable', 'disable', 'remove',
                    *BROWSER_ACTIONS, *WINDOW_ACTIONS, *LEARNED_ACTIONS)
@@ -51,6 +51,8 @@ CONTROL_SCHEMA = {
                    'Use {"action":"navigate","params":{"url":"https://example.com"}} to open a URL and '
                    '{"action":"type","params":{"selector":"#field","text":"Hello"}} to fill one editable field. '
                    'Set clear_first to false in type params to insert without clearing. '
+                   'Use {"action":"read"} to read visible text on the open page. '
+                   'An optional selector in read params limits it to visible matching elements. '
                    'With a page open, use {"action":"click","params":{"target":"Model picker"}} for a named control. '
                    'When the click returns a screenshot_id, repeat the same target in the same session '
                    'with that ID and point [x,y], each a fraction of the displayed image from 0 to less than 1. '
@@ -98,11 +100,41 @@ def site_request(args):
     return {**command, 'action': action}
 
 
+READ_PAGE = r"""
+(selection => {
+    const limit = 4000;
+    const elements = selection === null ? [document.body] : document.querySelectorAll(selection);
+    let found = false;
+    let text = '';
+    for (const element of elements) {
+        if (!element?.checkVisibility({visibilityProperty: true, opacityProperty: true})) continue;
+        found = true;
+        const visible = element.innerText?.trim();
+        if (!visible) continue;
+        text += (text ? '\n' : '') + visible;
+        if (text.length > limit) break;
+    }
+    const truncated = text.length > limit;
+    if (truncated) text = text.slice(0, limit).replace(/[\uD800-\uDBFF]$/, '');
+    return {title: document.title, text, found, truncated};
+})(SELECTION)
+"""
+
+
 def browser_action_code(command):
-    params = command.get('params')
+    action = command['action']
+    params = command.get('params', {} if action == 'read' else None)
     if not isinstance(params, dict):
         raise ValueError('Browser action params must be an object.')
-    if command['action'] == 'navigate':
+    if action == 'read':
+        selection = params.get('selector')
+        if (set(params) - {'selector'} or ('selector' in params and
+                (not isinstance(selection, str) or not selection.strip()))):
+            raise ValueError('Pass an optional CSS selector to read visible page text.')
+        expression = READ_PAGE.replace('SELECTION', json.dumps(selection))
+        return 'import json\n' + f'print(json.dumps(js({expression!r})))'
+
+    if action == 'navigate':
         url = params.get('url')
         if (set(params) != {'url'} or not isinstance(url, str) or not url.isprintable()
                 or any(char.isspace() for char in url) or '\\' in url):
@@ -489,6 +521,8 @@ class AppHost:
             args = {**args, 'session': command['session']}
         if command['action'] in BROWSER_ACTIONS:
             route = {'session': args.get('session'), 'local': args.get('local')}
+            if command['action'] == 'read':
+                context.update(require_existing=True, allow_current_app=True)
             return self.provider.prepare_call(tool_name, route, task_id, **context)
         if command['action'] in LEARNED_ACTIONS:
             if args.get('code'):

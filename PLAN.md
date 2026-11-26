@@ -167,6 +167,17 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   Regresi juga menolak ID dari tugas atau giliran lain. Sebanyak 471 tes
   unit dan delapan uji Chrome pada fixture lulus. Jumlah jendela kembali
   ke kondisi awal.
+- Aksi `read` membaca judul dan teks DOM yang terlihat dari halaman dalam
+  sesi yang sedang dipakai. Selector CSS opsional membatasi hasil ke bagian
+  yang cocok. Hasil menyertakan penanda ketika teks mencapai batas 4.000
+  karakter atau selector tidak menemukan elemen terlihat.
+- Pada pembanding `c7775ad`, pembacaan DOM dengan helper native di situs uji
+  tanpa paket lulus, sedangkan aksi `read` belum dikenal. Kandidat lulus
+  perbandingan teks utuh dan teks terarah, termasuk Unicode, elemen
+  tersembunyi dan penanda pemotongan. Navigasi, pembacaan DOM, dan pengetikan
+  memakai jendela yang sama. Pada Hermes `ae2a81ccc0`, macOS 27.2.1 dan
+  Chrome 158.0.8127.38, 471 tes unit dan delapan uji Chrome pada fixture
+  lulus. Jumlah jendela kembali ke kondisi awal.
 - Sebelum instalasi kandidat, selesaikan migrasi kontrol paket yang lain
   dan aksi dasar browser yang masih memakai jalur lama. Setelah ada
   pengganti teruji, tutup opsi yang memberi model akses memilih eksekutor

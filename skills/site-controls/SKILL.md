@@ -32,6 +32,11 @@ Keep the same `browser_exec.session` across calls. Typing replaces the existing
 text by default. Pass `"clear_first":false` in `params` to type at the current
 insertion point.
 
+Read visible text from the open page with `{"action":"read"}`. To read a
+specific part of the page, pass a CSS selector in `params`. The result
+contains the page title, text, and a `truncated` flag. If the text was
+truncated, read a smaller section in the same browser session.
+
 To activate a named control in the current page, use
 `{"action":"click","params":{"target":"Show details"}}`. If it returns a
 `screenshot_id`, use the screenshot to locate that same control. Repeat the
