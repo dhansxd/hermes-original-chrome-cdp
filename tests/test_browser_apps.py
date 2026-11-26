@@ -190,6 +190,44 @@ def run(context, operation, params):
                 self.assertEqual(native.call_args.args[0]['session'], started['session'])
         self.dispatch.assert_not_called()
 
+    def test_basic_browser_action_reuses_site_window_and_native_timeout(self):
+        self.package()
+        opened = self.invoke()
+        owner = dict(task_id='A', session_id='chat-A', turn_id='turn')
+        native = Mock(return_value=json.dumps({'success': True, 'output': ''}))
+        for action, params, helper in (
+            ('navigate', {'url': 'https://example.com/?a=1&b=2'}, 'goto_url'),
+            ('type', {'selector': '#field', 'text': 'Hello'}, 'fill_input'),
+        ):
+            with self.subTest(action=action):
+                request = json.dumps({'action': action, 'params': params})
+                result = self.dispatch_native({'session': opened['session'], 'site_control': request,
+                                               'timeout_s': 27}, native, **owner)
+                self.assertEqual(result, native.return_value)
+                routed = native.call_args.args[0]
+                self.assertEqual(routed['session'], opened['session'])
+                self.assertEqual(routed['timeout_s'], 27)
+                self.assertNotIn('site_control', routed)
+                self.assertIn(helper + '(', routed['code'])
+        self.assertEqual(native.call_count, 2)
+
+    def test_invalid_basic_browser_actions_do_not_allocate_a_window(self):
+        invalid = [
+            ({'action': 'navigate', 'params': {'url': '/relative'}}, {}),
+            ({'action': 'navigate', 'params': {'url': 'https://example.com'}}, {'code': 'print(1)'}),
+            ({'action': 'type', 'params': {'selector': '#field', 'text': 18}}, {}),
+            ({'action': 'type', 'params': {'selector': '#field', 'text': 'test', 'clear_first': 'false'}}, {}),
+            ({'action': 'type', 'params': {'selector': '#field', 'text': 'test'}}, {'local': True}),
+        ]
+        with patch('hermes_cli.config.load_config_readonly', return_value=self.config):
+            for command, extra in invalid:
+                args = {'site_control': json.dumps(command), **extra}
+                with self.subTest(command=command, extra=extra):
+                    result = self.host.prepare_call('browser_exec', args, 'A',
+                                                    session_id='chat-A', turn_id='turn')
+                    self.assertEqual(result['action'], 'block')
+                    self.assertFalse(self.provider.owners)
+
     def test_unconfirmed_mapped_result_keeps_the_request_pending_for_dom(self):
         self.package(operations={'click': {}, 'read_result': {}})
         with patch('browser_apps.OBSERVATION_INTERVAL', 0):

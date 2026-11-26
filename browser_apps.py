@@ -14,6 +14,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from time import monotonic, sleep
+from urllib.parse import urlsplit
 
 from hermes_constants import get_hermes_home
 
@@ -37,13 +38,17 @@ else:
     from site_learning import LEARNED_ACTIONS, cached_action, fallback
 
 
+BROWSER_ACTIONS = ('navigate', 'type')
 WINDOW_ACTIONS = ('keep_window', 'list_windows', 'close_window')
 CONTROL_ACTIONS = ('list', 'describe', 'run', 'observe', 'record_missing_control', 'enable', 'disable', 'remove',
-                   *WINDOW_ACTIONS, *LEARNED_ACTIONS)
+                   *BROWSER_ACTIONS, *WINDOW_ACTIONS, *LEARNED_ACTIONS)
 CONTROL_FIELDS = {'action', 'app', 'operation', 'params', 'job', 'target_profile', 'session'}
 CONTROL_SCHEMA = {
     'type': ['string', 'null'],
-    'description': 'A JSON request for an installed site or a kept Chrome window; leave empty for ordinary Python. '
+    'description': 'A JSON request for a browser action, installed site or kept Chrome window. '
+                   'Use {"action":"navigate","params":{"url":"https://example.com"}} to open a URL and '
+                   '{"action":"type","params":{"selector":"#field","text":"Hello"}} to fill one editable field. '
+                   'Set clear_first to false in type params to insert without clearing. '
                    'Examples: {"action":"list"}, {"action":"describe","app":"gemini"}, '
                    '{"app":"gemini","operation":"click","params":{"control":"tools_menu"}}. '
                    'Each installed site defines its own params. Window actions are keep_window, list_windows and close_window. '
@@ -80,9 +85,47 @@ def site_request(args):
         raise ValueError('Choose an action from the site_control schema.')
     if action in WINDOW_ACTIONS and set(command) - {'action', 'session'}:
         raise ValueError('Window actions accept only action and session.')
+    if action in BROWSER_ACTIONS:
+        if args.get('code') or set(command) - {'action', 'session', 'params'}:
+            raise ValueError('Browser actions accept action, session and params without separate code.')
     if action in LEARNED_ACTIONS and set(command) - {'action', 'session', 'params'}:
         raise ValueError('Learned controls apply to the currently owned page.')
     return {**command, 'action': action}
+
+
+def browser_action_code(command):
+    params = command.get('params')
+    if not isinstance(params, dict):
+        raise ValueError('Browser action params must be an object.')
+    if command['action'] == 'navigate':
+        url = params.get('url')
+        if (set(params) != {'url'} or not isinstance(url, str) or not url.isprintable()
+                or any(char.isspace() for char in url) or '\\' in url):
+            raise ValueError('Pass an absolute HTTP or HTTPS URL to navigate.')
+        parsed = urlsplit(url)
+        if parsed.scheme not in {'http', 'https'} or not parsed.hostname:
+            raise ValueError('Pass an absolute HTTP or HTTPS URL to navigate.')
+        # Keep the literal URL visible to Hermes's native URL policy.
+        return (f'navigation = goto_url({url!r})\n'
+                "if navigation.get('errorText'):\n"
+                "    raise RuntimeError(navigation['errorText'])")
+
+    selector, text = params.get('selector'), params.get('text')
+    clear_first = params.get('clear_first', True)
+    if (set(params) - {'selector', 'text', 'clear_first'}
+            or not isinstance(selector, str) or not selector.strip()
+            or not isinstance(text, str) or not isinstance(clear_first, bool)):
+        raise ValueError('Pass a CSS selector, text and optional boolean clear_first to type.')
+    editable = (
+        f'(() => {{const fields = document.querySelectorAll({json.dumps(selector)});'
+        "const field = fields[0];"
+        "return fields.length === 1 && (field.isContentEditable || field.tagName === 'TEXTAREA' || "
+        "(field.tagName === 'INPUT' && ['text','search','email','tel','url','password','number']"
+        ".includes(field.type)));})()"
+    )
+    return (f'if js({editable!r}) is not True:\n'
+            "    raise RuntimeError('Select one editable field before typing.')\n"
+            f'fill_input({selector!r}, {text!r}, clear_first={clear_first!r})')
 
 
 def app_identifier(value):
@@ -431,12 +474,17 @@ class AppHost:
             return {'action': 'block', 'message': 'Enable the plugin’s tools.override capability in Hermes to use site controls.'}
         try:
             command = site_request(args)
+            if command['action'] in BROWSER_ACTIONS:
+                browser_action_code(command)
         except ValueError as error:
             return {'action': 'block', 'message': str(error)}
         if 'session' in command:
             if args.get('session') and args['session'] != command['session']:
                 return {'action': 'block', 'message': 'Use one browser session for this control.'}
             args = {**args, 'session': command['session']}
+        if command['action'] in BROWSER_ACTIONS:
+            route = {'session': args.get('session'), 'local': args.get('local')}
+            return self.provider.prepare_call(tool_name, route, task_id, **context)
         if command['action'] in LEARNED_ACTIONS:
             if args.get('code'):
                 return {'action': 'block', 'message': 'Call a learned control or run native code separately.'}
@@ -474,8 +522,13 @@ class AppHost:
             return json.dumps({'success': False, 'error': 'Site controls use the selected Original Chrome provider.'})
         try:
             command = site_request(args)
+            if command['action'] in BROWSER_ACTIONS:
+                code = browser_action_code(command)
         except ValueError as error:
             return json.dumps({'success': False, 'error': str(error)})
+        if command['action'] in BROWSER_ACTIONS:
+            route = {key: value for key, value in args.items() if key != 'site_control'}
+            return native({**route, 'code': self.prepare_code(code)}, **context)
         if command['action'] in LEARNED_ACTIONS:
             return self.execute_learned(command, args, native, context)
         result = self.handle({**command, 'session': args.get('session')}, **context)

@@ -17,6 +17,21 @@ with `site_control` omitted or null for an ordinary DOM or screenshot call. For 
 {"app":"gemini","operation":"click","params":{"control":"deep_research"}}
 ```
 
+Use these actions in `site_control` to open a known address and fill a field
+that can be identified by one CSS selector on the current page:
+
+```json
+{"action":"navigate","params":{"url":"https://example.com"}}
+```
+
+```json
+{"action":"type","params":{"selector":"#search","text":"Search terms"}}
+```
+
+Keep the same `browser_exec.session` across calls. Typing replaces the existing
+text by default. Pass `"clear_first":false` in `params` to type at the current
+insertion point.
+
 For a request that names a section of a website without giving its URL,
 start on that site's home page when you need to open it. Check
 `list_learned_controls` there before navigating to the named section.

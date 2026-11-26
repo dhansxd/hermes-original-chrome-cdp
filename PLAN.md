@@ -127,8 +127,21 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   belum terkonfirmasi. Pemetaan Tools dan Settings diuji pada fixture yang
   memakai selector paket. Lima uji Chrome dan 468 tes unit lulus. Jumlah
   jendela Chrome kembali ke kondisi awal.
+- Tahap berikutnya menyediakan `navigate` dan `type` sebagai aksi di
+  `browser_exec.site_control`. Navigasi memakai URL HTTP(S) eksplisit dan
+  kebijakan URL bawaan Hermes. Pengetikan memakai helper input bawaan pada
+  satu elemen yang teridentifikasi di halaman aktif. Aksi dapat membuka
+  jendela tugas pertama dan memakai kembali jendela yang sama.
+- Pada pembanding `1f978e2`, Chrome membuka dua halaman fixture dan
+  mengetik teks lewat helper native di satu jendela, tetapi Hermes menolak
+  aksi terstruktur. Kandidat lulus skenario native yang sama dan skenario
+  terstruktur melalui registry Hermes `ae2a81ccc0` di macOS 27.2.1 dengan
+  Chrome 158.0.8127.38. Uji memeriksa penggantian dan penyisipan teks Unicode,
+  sinyal `change`, penolakan selector ambigu, navigasi ke halaman kedua,
+  dan cleanup ke jumlah jendela awal. Sebanyak 470 tes unit dan tujuh uji
+  Chrome pada fixture lulus, termasuk regresi katalog, DOM dan screenshot.
 - Sebelum instalasi kandidat, selesaikan migrasi kontrol paket yang lain,
-  kelanjutan visual, dan aksi dasar browser ke pintu masuk yang sama.
+  kelanjutan visual, dan aksi dasar browser yang masih memakai jalur lama.
   Setelah ada pengganti teruji, tutup opsi yang memberi model akses memilih
   eksekutor klik sendiri. Uji Gemini, Flow, dan satu situs hasil belajar
   pada sesi Hermes baru sebelum mengganti versi produksi.

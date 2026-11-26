@@ -63,6 +63,19 @@ document.querySelector('#spa-link').onclick = event => {
 };
 document.querySelector('#cancel-link').onclick = event => event.preventDefault();
 </script>"""
+        elif self.path == '/basic-actions':
+            body = b'''<!doctype html><title>Basic browser actions</title>
+<textarea id="note">start: </textarea>
+<div id="inputs">
+  <input class="ambiguous" value="first">
+  <input class="ambiguous" value="second">
+</div>
+<script>
+const note = document.getElementById('note');
+note.addEventListener('change', () => document.body.dataset.changed = 'yes');
+</script>'''
+        elif self.path == '/basic-next':
+            body = b'<!doctype html><title>Next browser page</title><main id="next"></main>'
         elif self.path.startswith('/mapped-controls'):
             body = b"""<!doctype html><title>Packaged controls</title>
 <button aria-label="Tools" onclick="document.querySelector('#tools').hidden=false">Tools</button>
@@ -194,7 +207,47 @@ def exercise_automatic_click(stage, script, learned, url, catalog):
     print('NATIVE_AUTOMATIC_CLICK_PASS', stage, expected, flush=True)
 
 
-def exercise(*, visual=False, extension=None, automatic=False):
+def exercise_basic_actions(mode, script, learned, origin, provider):
+    url = origin + '/basic-actions'
+    next_url = origin + '/basic-next'
+    first = 'Note: "halo"'
+    appended = " / صباح الخير"
+
+    def navigate(address):
+        if mode == 'structured':
+            result = learned('navigate', url=address)
+            assert result.get('success'), result
+        else:
+            script(f"navigation = goto_url({address!r}); assert not navigation.get('errorText')")
+
+    def type_note(text, clear_first=True):
+        if mode == 'structured':
+            result = learned('type', selector='#note', text=text, clear_first=clear_first)
+            assert result.get('success'), result
+        else:
+            script(f"fill_input('#note', {text!r}, clear_first={clear_first!r})")
+
+    navigate(url)
+    script('assert wait_for_element("#note", timeout=8); assert js("document.title").endswith("Basic browser actions")')
+    owned, = provider.sessions.values()
+    value = "document.getElementById('note').value"
+    type_note(first)
+    script(f'assert js({value!r}) == {first!r}')
+    type_note(appended, clear_first=False)
+    script('assert js("document.body.dataset.changed") == "yes"')
+    script(f'assert js({value!r}) == {(first + appended)!r}')
+    if mode == 'structured':
+        result = learned('type', selector='.ambiguous', text='wrong field')
+        assert not result.get('success'), result
+        values = "Array.from(document.querySelectorAll('.ambiguous'), e => e.value)"
+        script(f'assert js({values!r}) == ["first", "second"]')
+    navigate(next_url)
+    script('assert wait_for_element("#next", timeout=8); assert js("document.title").endswith("Next browser page")')
+    assert list(provider.sessions.values()) == [owned]
+    print('NATIVE_BASIC_ACTIONS_PASS', mode, flush=True)
+
+
+def exercise(*, visual=False, extension=None, automatic=False, basic=None):
     Fixture.version = 1
     source = Path(__file__).resolve().parents[1]
     before = window_keys()
@@ -238,7 +291,9 @@ plugins:
                 provider = get_provider('original-chrome-default')
                 control = None
                 replay = {}
-                stages = ('learn', 'reuse') if extension else ('learn', 'reuse', 'refresh', 'reuse-after-refresh')
+                stages = ('basic',) if basic else (
+                    ('learn', 'reuse') if extension else ('learn', 'reuse', 'refresh', 'reuse-after-refresh')
+                )
                 for stage in stages:
                     owner = uuid.uuid4().hex
                     turn = uuid.uuid4().hex
@@ -260,6 +315,9 @@ plugins:
                         return call(site_control=json.dumps({'action': action, 'params': params}))
 
                     try:
+                        if basic:
+                            exercise_basic_actions(basic, script, learned, origin, provider)
+                            continue
                         if automatic:
                             exercise_automatic_click(stage, script, learned, url, provider.learning_catalog())
                             continue
@@ -324,11 +382,12 @@ plugins:
                     assert not provider.sessions
                     if stage == 'reuse':
                         Fixture.version = 2
-                path, = list(home.rglob('learned-controls.sqlite3'))
-                assert b'must-not-be-persisted' not in path.read_bytes()
-                assert b'page-do-not-persist-route' not in path.read_bytes()
-                with sqlite3.connect(path) as db:
-                    assert db.execute('SELECT origin, name FROM sites').fetchall() == [(origin, '127.0.0.1')]
+                if not basic:
+                    path, = list(home.rglob('learned-controls.sqlite3'))
+                    assert b'must-not-be-persisted' not in path.read_bytes()
+                    assert b'page-do-not-persist-route' not in path.read_bytes()
+                    with sqlite3.connect(path) as db:
+                        assert db.execute('SELECT origin, name FROM sites').fetchall() == [(origin, '127.0.0.1')]
         finally:
             try:
                 if provider is not None:
@@ -346,6 +405,12 @@ if __name__ == '__main__':
 
 
 class NativeLearnedControls(unittest.TestCase):
+    def test_native_navigation_and_typing(self):
+        exercise(basic='legacy')
+
+    def test_browser_navigates_and_types_through_structured_actions(self):
+        exercise(basic='structured')
+
     def test_browser_picks_repairs_and_reuses_a_control_in_one_action(self):
         exercise(automatic=True)
 
