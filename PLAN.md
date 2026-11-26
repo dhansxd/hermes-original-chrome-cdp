@@ -121,6 +121,11 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   ganda dari judul SVG dan teks tersembunyi. 0.16.2 memakai nama SVG yang
   unik saat teks tampilan kosong. Fixture bentuk ini gagal sebelum patch
   dan lulus setelahnya bersama empat uji Chrome dan 468 tes unit.
+- Pada `ec4a91b` (0.16.2), sesi Hermes CLI baru di macOS 27.2.1 dan
+  Chrome 158.0.8127.38 menerima permintaan membuka Jelajahi Instagram
+  dengan profil Chrome Default. Katalog menampilkan `Cari` dan `/explore/`.
+  Log mengonfirmasi `click_learned_control` berhasil dan tab mencapai
+  `/explore/`.
 - Di 0.16.0, `browser_exec` belajar dari tautan satu origin yang membuka
   tujuan yang diharapkan pada tab yang sama. Katalog menyimpan hash path
   tujuan. Tombol dengan `aria-controls` atau `popovertarget` bisa dipakai
