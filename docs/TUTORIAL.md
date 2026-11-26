@@ -415,6 +415,12 @@ Use these requests in the same `browser_exec` session.
 {"action":"click_learned_control","params":{"control":"<ID returned by the catalog>"}}
 ```
 
+Learned links show their current UI label and a destination hint if the
+visible link still matches the verified route. An exact label lookup can
+return links in `suggestions` when the label differs from the request. Use the
+ID of a clear match. The hint is read from the current page and the catalog
+continues to store only the route hash.
+
 If a learned click returns `needs_inspection`, inspect the current page with
 native DOM and use a screenshot as needed. If the tool reports `dispatched`,
 check the visible result before trying the click again. A confirmed native

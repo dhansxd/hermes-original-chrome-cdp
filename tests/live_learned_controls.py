@@ -49,7 +49,7 @@ document.querySelector('button').onclick = event => {{
 <button aria-controls="options" id="open-panel" style="background:rgb(17,203,101);margin:42px">
 Open options</button>
 <div id="options" role="menu" hidden>Site options</div>
-<a id="page-link" href="/page-do-not-persist-route">Open page</a>
+<a id="page-link" href="/page-do-not-persist-route"><span hidden>Open page</span><span>Open page</span></a>
 <a id="spa-link" href="/spa">Open settings</a>
 <a id="cancel-link" href="/canceled">Canceled link</a>
 <script>
@@ -123,12 +123,18 @@ assert js("location.pathname") == {pathname!r}
                 script(f'goto_url({url!r}); wait_for_element({selector!r}, timeout=8)')
                 result = learned('list_learned_controls', label=label)
                 assert len(result['controls']) == 1, result
+                assert result['controls'][0]['label'] == label, result
+                assert result['controls'][0]['destination'] == pathname, result
                 replay[label] = result['controls'][0]['id']
             else:
                 result = learned('click_learned_control', control=replay[label])
                 assert result.get('success'), result
                 script(f'assert js("location.pathname") == {pathname!r}')
         script(f'goto_url({url!r}); wait_for_element("#cancel-link", timeout=8)')
+        result = learned('list_learned_controls', label='Destination page')
+        assert not result['controls'], result
+        assert any(x['id'] == replay['Open page'] and x['destination'] == '/page-do-not-persist-route'
+                   for x in result['suggestions']), result
         script('js("document.querySelector(\'#cancel-link\').click()")')
         destination = url.rsplit('/', 1)[0] + '/canceled'
         script(f'goto_url({destination!r}); wait_for_element("body", timeout=8)')
@@ -136,6 +142,8 @@ assert js("location.pathname") == {pathname!r}
         assert not learned('list_learned_controls', label='Canceled link')['controls']
         if stage == 'reuse':
             script('js("document.querySelector(\'#page-link\').href = \'/wrong-destination\'")')
+            result = learned('list_learned_controls', label='Destination page')
+            assert all(x['id'] != replay['Open page'] for x in result.get('suggestions', [])), result
             result = learned('click_learned_control', control=replay['Open page'])
             assert result['status'] == 'needs_inspection' and not result['dispatched'], result
             script('assert js("location.pathname") == "/new-controls"')

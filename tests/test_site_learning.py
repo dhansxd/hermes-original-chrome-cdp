@@ -50,6 +50,26 @@ class SiteLearningTests(unittest.TestCase):
         self.assertEqual(click.call_count, 2)
         self.assertEqual(self.catalog.list(self.origin, self.page), [])
 
+    def test_find_links_by_display_label_or_suggest_the_verified_destination(self):
+        target = '/explore/'
+        _, route_hash = page_key([self.origin, target])
+        self.record('example-link', state='navigation', value=route_hash)
+        self.catalog.record([(self.origin, self.page, ('SearchSearch', 'nav-icon', 'navigation', route_hash))])
+        original, = self.catalog.list(self.origin, self.page, 'SearchSearch')
+        details = {original['id']: {'label': 'Search', 'destination': target}}
+        command = {'action': 'list_learned_controls', 'params': {'label': 'Explore'}}
+        result = cached_action(self.catalog, command, Mock(side_effect=[self.url, details]))
+        self.assertEqual(result['controls'], [])
+        shown = {'id': original['id'], 'label': 'Search', 'destination': target}
+        self.assertEqual(result.get('suggestions'), [shown])
+        command['params']['label'] = 'Search'
+        result = cached_action(self.catalog, command, Mock(side_effect=[self.url, details]))
+        self.assertEqual(result['controls'], [shown])
+        details[original['id']]['destination'] = '/different/'
+        result = cached_action(self.catalog, command, Mock(side_effect=[self.url, details]))
+        self.assertFalse(result.get('suggestions'))
+        self.assertFalse(result['controls'])
+
     def test_recorder_ignores_clicks_outside_native_evaluation(self):
         learner = PageLearning(self.catalog)
         wire = Mock()

@@ -50,6 +50,10 @@ const panelVisible = id => {
 };
 const matchingControl = (kind, text) => [...document.querySelectorAll(kind)]
     .filter(item => label(item) === text && usable(item));
+const knownLink = entry => {
+    const candidates = matchingControl(linkSelector, entry.label);
+    return candidates.length === 1 && candidates[0].id === entry.element_id ? candidates[0] : null;
+};
 """
 
 _OBSERVER = r"""
@@ -138,9 +142,26 @@ _OBSERVER = r"""
 _FIND_LINK = r"""
 ((entry, origin, path) => {
     if (location.origin !== origin || location.pathname !== path) return null;
-    const candidates = matchingControl(linkSelector, entry.label);
-    if (candidates.length !== 1 || candidates[0].id !== entry.element_id) return null;
-    return linkPath(candidates[0]);
+    const element = knownLink(entry);
+    return element && linkPath(element);
+})(ENTRY, ORIGIN, ROUTE)
+"""
+
+_DESCRIBE_LINKS = r"""
+((entries, origin, path) => {
+    if (location.origin !== origin || location.pathname !== path) return {};
+    const clean = text => text.trim().replace(/\s+/g, ' ');
+    return Object.fromEntries(entries.flatMap(entry => {
+        const element = knownLink(entry);
+        const destination = element && linkPath(element);
+        if (!destination) return [];
+        const references = (element.getAttribute('aria-labelledby') || '').trim().split(/\s+/);
+        const referenced = clean(references.map(id => document.getElementById(id)?.textContent || '').join(' '));
+        const own = clean(element.getAttribute('aria-label') || '');
+        const lines = (element.innerText || '').split('\n').map(clean).filter(Boolean);
+        const visible = [...new Set(lines)].join(' ');
+        return [[entry.id, {label: (referenced || own || visible || entry.label).slice(0, 100), destination}]];
+    }));
 })(ENTRY, ORIGIN, ROUTE)
 """
 
@@ -222,7 +243,7 @@ class ClickCatalog:
     def list(self, origin, page, label=None):
         with self.open() as db:
             return [dict(row) for row in db.execute(
-                '''SELECT id, label FROM controls WHERE origin=? AND page=? AND active=1
+                '''SELECT id, label, element_id, state, value FROM controls WHERE origin=? AND page=? AND active=1
                 AND (? IS NULL OR label=?) ORDER BY label LIMIT 25''', (origin, page, label, label))]
 
     def get(self, control_id, origin, page):
@@ -438,6 +459,50 @@ class PageLearning:
             pass  # Catalog I/O cannot interrupt native browsing.
 
 
+def page_expression(template, value, url):
+    arguments = ', '.join(json.dumps(item, ensure_ascii=True) for item in (value, *url))
+    script = template.replace('(ENTRY, ORIGIN, ROUTE)', '(' + arguments + ')')
+    return '(() => {' + BUTTONS + ' return ' + script.strip() + '})()'
+
+
+def controls_on_page(catalog, url, page, label, run_expression):
+    origin = url[0]
+    entries = catalog.list(origin, page, label)
+    if label and not entries:
+        entries = catalog.list(origin, page)
+    links = [{key: entry[key] for key in ('id', 'label', 'element_id')}
+             for entry in entries if entry['state'] == 'navigation']
+    details = run_expression(page_expression(_DESCRIBE_LINKS, links, url)) if links else {}
+    details = details if isinstance(details, dict) else {}
+    controls = []
+    suggestions = []
+    for entry in entries:
+        item = {key: entry[key] for key in ('id', 'label')}
+        if entry['state'] == 'navigation':
+            link = details.get(entry['id'])
+            if not isinstance(link, dict):
+                continue
+            destination = link.get('destination')
+            try:
+                _, route_hash = page_key([origin, destination])
+            except (ValueError, UnicodeError):
+                continue
+            if route_hash != entry['value']:
+                continue
+            display = link.get('label')
+            if isinstance(display, str) and 0 < len(display) <= 100 and display.isprintable():
+                item['label'] = display
+            item['destination'] = destination if len(destination) <= 180 else destination[:179] + '…'
+            suggestions.append(item)
+        if label is None or label in (entry['label'], item['label']):
+            controls.append(item)
+    result = {'success': True, 'status': 'ok', 'site': origin, 'site_name': urlsplit(origin).hostname,
+              'controls': controls}
+    if label and not controls and suggestions:
+        result['suggestions'] = suggestions
+    return result
+
+
 def cached_action(catalog, command, run_expression):
     """Use the current native tab and dispatch at most one explicit DOM click."""
     params = command.get('params', {})
@@ -453,26 +518,20 @@ def cached_action(catalog, command, run_expression):
     url = run_expression('[location.origin, location.pathname]')
     origin, page = page_key(url)
     if action == 'list_learned_controls':
-        return {'success': True, 'status': 'ok', 'site': origin, 'site_name': urlsplit(origin).hostname,
-                'controls': catalog.list(origin, page, params.get('label'))}
+        return controls_on_page(catalog, url, page, params.get('label'), run_expression)
     entry = catalog.get(params['control'], origin, page)
     if entry is None:
         return fallback('unmatched', dispatched=False)
     data = {key: entry[key] for key in ('label', 'element_id', 'state', 'value')}
 
-    def expression(template):
-        arguments = ', '.join(json.dumps(item, ensure_ascii=True) for item in (data, origin, url[1]))
-        script = template.replace('(ENTRY, ORIGIN, ROUTE)', '(' + arguments + ')')
-        return '(() => {' + BUTTONS + ' return ' + script.strip() + '})()'
-
     if data['state'] == 'navigation':
-        destination = run_expression(expression(_FIND_LINK))
+        destination = run_expression(page_expression(_FIND_LINK, data, url))
         if (not isinstance(destination, str) or not destination.startswith('/')
                 or page_key([origin, destination])[1] != data['value']):
             catalog.stale(entry)
             return fallback('unmatched', dispatched=False)
         data['value'] = destination
-    status = run_expression(expression(_CLICK), click=True)
+    status = run_expression(page_expression(_CLICK, data, url), click=True)
     if status == 'navigation_dispatched':
         expected = [origin, data['value']]
         reached = run_expression('[location.origin, location.pathname]', until=expected)

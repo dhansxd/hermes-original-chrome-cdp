@@ -102,6 +102,17 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
 
 ### Katalog klik otomatis di Mac
 
+- Di 0.16.1, katalog membaca nama UI dan petunjuk tujuan dari tautan pada
+  halaman aktif. Petunjuk hanya tampil jika path masih cocok dengan hash
+  yang sudah diverifikasi. Pencarian label persis yang kosong dapat
+  menampilkan tautan di `suggestions`. ID dan validasi saat klik tetap
+  mengikuti entri semula.
+- Dengan Hermes `ae2a81ccc0`, macOS 27.2.1 dan Chrome 158.0.8127.38,
+  pembanding `64d2fe1` gagal menemukan label pada tautan yang mengandung
+  salinan teks tersembunyi. Kandidat menemukan label tampilan dan memberi
+  petunjuk tujuan saat istilah pencarian berbeda. Tujuan yang berubah
+  hilang dari saran sebelum klik. Keempat uji Chrome untuk tautan, panel,
+  klik ARIA dari DOM dan screenshot serta 468 tes unit lulus.
 - Di 0.16.0, `browser_exec` belajar dari tautan satu origin yang membuka
   tujuan yang diharapkan pada tab yang sama. Katalog menyimpan hash path
   tujuan. Tombol dengan `aria-controls` atau `popovertarget` bisa dipakai

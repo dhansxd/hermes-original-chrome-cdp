@@ -17,12 +17,14 @@ with `site_control` omitted or null for an ordinary DOM or screenshot call. For 
 {"app":"gemini","operation":"click","params":{"control":"deep_research"}}
 ```
 
-On an open page in local Chrome, use the automatically learned controls via
-`site_control` action `list_learned_controls`. To find an exact label, pass
-`params.label`. Use `click_learned_control` with the listed ID in
-`params.control`. If the control needs inspection or is absent, continue
-using native DOM and then screenshot as needed in the same session. Check the
-page before repeating a click reported as dispatched.
+On an open page in local Chrome, use `site_control` action
+`list_learned_controls` before inspecting the DOM for a requested UI action.
+Match the requested action against both `label` and the verified `destination`
+path for a link. An exact `params.label` lookup can return `suggestions` if
+the site names the link differently. Use `click_learned_control` with the ID
+of an unambiguous match in `params.control`. When there is no match or the
+control needs inspection, continue with native DOM and then screenshot as
+needed in the same session. Check the page before repeating a dispatched click.
 
 Use a known control directly. For the site's operations and guide, pass
 `{"action":"describe","app":"gemini"}` or `{"action":"describe","app":"flow"}`
