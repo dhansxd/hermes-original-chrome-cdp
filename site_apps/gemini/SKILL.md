@@ -8,11 +8,17 @@ task calls for a different profile.
 
 If Gemini is not open in this window, set `site_control` to
 `{"app":"gemini","operation":"open_chat"}`. To resume a
-specific conversation, pass its ID in `params.chat`. On the active page, call
-`click` directly with `params.control` set to the mapped button name.
-For example, `tools_menu` opens the tools menu and `model_picker` opens the
-model menu. Read any required labels from the open menu using the native DOM
-helpers in the same session.
+specific conversation, pass its ID in `params.chat`. On the active page,
+open a menu with a named click in that same session:
+
+```json
+{"action":"click","params":{"target":"Tools"}}
+{"action":"click","params":{"target":"Model picker"}}
+```
+
+Read any required labels from the open menu using the native DOM helpers.
+Use the package's mapped operations below for composing, selecting a tool or
+model, and following a submission.
 
 For an existing Deep Research report, open its conversation and call
 `read_result`. Follow the offered `open_research_report` control and read

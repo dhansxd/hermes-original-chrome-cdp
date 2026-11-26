@@ -140,6 +140,18 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   sinyal `change`, penolakan selector ambigu, navigasi ke halaman kedua,
   dan cleanup ke jumlah jendela awal. Sebanyak 470 tes unit dan tujuh uji
   Chrome pada fixture lulus, termasuk regresi katalog, DOM dan screenshot.
+- Pada commit pembanding `a1f6af6`, aksi `click` membuka Tools Gemini dan
+  Settings Klasik Flow pada fixture, tetapi pemilih model Gemini beralih ke
+  screenshot. Kandidat menambahkan Model picker Gemini serta Classic model
+  picker, Agent settings, Image defaults, dan Video defaults Flow ke
+  pemetaan aksi yang sama. Host memeriksa panel yang muncul setelah klik
+  pada halaman yang sama, termasuk menu dengan beberapa opsi dan hasil
+  render tertunda. Permintaan ulang tidak mengeklik ketika menu sudah terbuka.
+  Pada Hermes `ae2a81ccc0`, macOS 27.2.1 dan Chrome 158.0.8127.38, 470 tes
+  unit lulus. Enam skenario Chrome fixture lulus pada suite lengkap, dan
+  skenario pemetaan paket lulus saat diuji ulang setelah koreksi skrip
+  fixture. Jumlah jendela kembali ke kondisi awal. Bukti ini mencakup UI
+  fixture dengan selector paket. Uji situs langsung menunggu kandidat lengkap.
 - Sebelum instalasi kandidat, selesaikan migrasi kontrol paket yang lain,
   kelanjutan visual, dan aksi dasar browser yang masih memakai jalur lama.
   Setelah ada pengganti teruji, tutup opsi yang memberi model akses memilih

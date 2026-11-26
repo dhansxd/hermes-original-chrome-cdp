@@ -11,6 +11,22 @@
       "Settings": {
         "selector": "button.settings-trigger-button",
         "opens": "flow-prompt-box-settings"
+      },
+      "Classic model picker": {
+        "selector": "flow-prompt-box-settings button[aria-haspopup=menu]",
+        "opens": "[role=menuitem]"
+      },
+      "Agent settings": {
+        "selector": "flow-agent-panel button:is([aria-label=\"Setelan\" i],[aria-label=\"Setelan agen\" i],[aria-label=\"Settings\" i],[aria-label=\"Agent settings\" i])",
+        "opens": "flow-settings-view,flow-unified-settings-view"
+      },
+      "Image defaults": {
+        "selector": "flow-unified-settings-view button.image-defaults-row",
+        "opens": "flow-generation-defaults-view"
+      },
+      "Video defaults": {
+        "selector": "flow-unified-settings-view button.video-defaults-row",
+        "opens": "flow-generation-defaults-view"
       }
     }
   },

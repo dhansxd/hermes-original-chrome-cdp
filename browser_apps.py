@@ -49,8 +49,9 @@ CONTROL_SCHEMA = {
                    'Use {"action":"navigate","params":{"url":"https://example.com"}} to open a URL and '
                    '{"action":"type","params":{"selector":"#field","text":"Hello"}} to fill one editable field. '
                    'Set clear_first to false in type params to insert without clearing. '
+                   'With a page open, use {"action":"click","params":{"target":"Model picker"}} for a named control. '
                    'Examples: {"action":"list"}, {"action":"describe","app":"gemini"}, '
-                   '{"app":"gemini","operation":"click","params":{"control":"tools_menu"}}. '
+                   '{"app":"gemini","operation":"read_result"}. '
                    'Each installed site defines its own params. Window actions are keep_window, list_windows and close_window. '
                    'Use the current browser session for keep_window and the returned session ID for close_window.',
 }

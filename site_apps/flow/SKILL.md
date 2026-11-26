@@ -118,6 +118,15 @@ choices. Use the native controls after opening Agent settings. If duration, reso
 or another requested setting has no control there, include it as an instruction
 in the Agent prompt and verify the result against the request.
 
+### Open settings panels by name
+
+In an open project, use the same browser session and pass an action like
+`{"action":"click","params":{"target":"Settings"}}` in `site_control`.
+In Classic mode, use `Settings` and then `Classic model picker` when needed.
+In the Agent panel, use `Agent settings`, then `Image defaults` or
+`Video defaults` from the settings view. Each action opens the requested
+panel. Read or apply model values with `configure`.
+
 ## References
 
 Use `upload` with a local `path`, then `bind_reference` with the returned exact

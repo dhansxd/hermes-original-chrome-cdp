@@ -21,13 +21,13 @@ const selector = 'button,[role="button"]';
 const linkSelector = 'a[href]';
 const label = element => (element.getAttribute('aria-label') || element.textContent || '')
     .trim().replace(/\s+/g, ' ');
-const usable = element => {
+const visible = element => {
     if (!element.isConnected || !element.getClientRects().length ||
-        element.closest('[inert],[hidden],[aria-hidden="true"]') ||
-        element.matches(':disabled,[aria-disabled="true"]')) return false;
+        element.closest('[inert],[hidden],[aria-hidden="true"]')) return false;
     const style = getComputedStyle(element);
     return style.visibility === 'visible' && style.display !== 'none';
 };
+const usable = element => visible(element) && !element.matches(':disabled,[aria-disabled="true"]');
 const linkPath = element => {
     if (!element.matches(linkSelector) || element.hasAttribute('download')) return null;
     const target = element.target || document.querySelector('base[target]')?.target || '_self';
@@ -59,7 +59,7 @@ const unobscured = element => {
     const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
     return element.contains(top);
 };
-const oneVisible = selector => [...document.querySelectorAll(selector)].filter(usable).length === 1;
+const visibleMatching = selector => [...document.querySelectorAll(selector)].some(visible);
 """
 
 _OBSERVER = r"""
@@ -196,9 +196,9 @@ _CLICK = r"""
         return button.isConnected && panelVisible(entry.value) ? 'verified' : 'unconfirmed';
     }
     if (entry.state === 'selector-visible') {
-        if (oneVisible(entry.value)) return 'state_changed';
+        if (visibleMatching(entry.value)) return 'state_changed';
         button.click();
-        return button.isConnected && oneVisible(entry.value) ? 'verified' : 'unconfirmed';
+        return visibleMatching(entry.value) ? 'verified' : 'panel_open_dispatched';
     }
     if (entry.state === 'unverified') {
         button.click();
@@ -211,6 +211,12 @@ _CLICK = r"""
         ? 'verified' : 'unconfirmed';
 })(ENTRY, ORIGIN, ROUTE)
 """
+
+_CHECK_OPEN_EFFECT = r"""
+((target, origin, path) => location.origin === origin && location.pathname === path &&
+    visibleMatching(target))(ENTRY, ORIGIN, ROUTE)
+"""
+
 
 _FIND_DOM_CONTROL = r"""
 ((request, origin, path) => {
@@ -225,7 +231,7 @@ _FIND_DOM_CONTROL = r"""
     if (destination) return {...info, state:'navigation', value:destination};
     if (!button.matches(selector)) return {reason:'unmatched'};
     if (request.opens) {
-        if (oneVisible(request.opens)) return {reason:'state_changed'};
+        if (visibleMatching(request.opens)) return {reason:'state_changed'};
         return {...info, state:'selector-visible', value:request.opens};
     }
     for (const state of CLICK_STATES) {
@@ -568,6 +574,9 @@ def replay_control(entry, url, run_expression):
         expected = [origin, data['value']]
         reached = run_expression('[location.origin, location.pathname]', until=expected)
         status = 'verified' if reached == expected else 'unconfirmed'
+    if status == 'panel_open_dispatched':
+        opened = run_expression(page_expression(_CHECK_OPEN_EFFECT, data['value'], url), until=True)
+        status = 'verified' if opened is True else 'unconfirmed'
     return status if isinstance(status, str) else 'unconfirmed'
 
 

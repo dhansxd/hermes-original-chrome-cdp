@@ -12,6 +12,10 @@
       "Tools": {
         "selector": "button[aria-haspopup=menu]:has(mat-icon[fonticon=plus]),button[aria-label=Tools],button[aria-label=Alat],button[aria-label='Upload and tools'],button[aria-label='Upload & alat']",
         "opens": "gem-menu-item:has(mat-icon[fonticon=image_create]),[role=menu] [aria-label='Create image'],[role=menu] [aria-label='Buat gambar']"
+      },
+      "Model picker": {
+        "selector": "[data-test-id=bard-mode-menu-button],button[aria-label^=\"Select model\"],button[aria-label^=\"Pilih model\"]",
+        "opens": "gem-menu-item[data-mode-id],[role=menu] [role=menuitemradio],[role=listbox] [role=option]"
       }
     }
   },

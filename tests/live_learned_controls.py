@@ -82,7 +82,39 @@ note.addEventListener('change', () => document.body.dataset.changed = 'yes');
 <div id="tools" role="menu" hidden><span aria-label="Create image">Create image</span></div>
 <button class="settings-trigger-button"
         onclick="document.querySelector('flow-prompt-box-settings').hidden=false">Settings</button>
-<flow-prompt-box-settings hidden>Flow settings</flow-prompt-box-settings>
+<flow-prompt-box-settings hidden>
+  <button aria-haspopup="menu" onclick="document.querySelector('#flow-models').hidden=false">Veo</button>
+</flow-prompt-box-settings>
+<div id="flow-models" role="menu" hidden>
+  <button role="menuitem">Veo Fast</button><button role="menuitem">Veo Quality</button>
+</div>
+<button data-test-id="bard-mode-menu-button" aria-label="Pilih model Gemini"
+        onclick="openGeminiModels()">Pro</button>
+<div id="gemini-models" role="listbox" hidden>
+  <div role="option" style="min-height:18px">Fast</div><div role="option" style="min-height:18px">Pro</div>
+</div>
+<flow-agent-panel>
+  <button aria-label="Setelan agen" onclick="document.querySelector('flow-unified-settings-view').hidden=false">
+    Agent settings
+  </button>
+</flow-agent-panel>
+<flow-unified-settings-view hidden>
+  <button id="image-defaults" class="image-defaults-row" onclick="document.querySelector('flow-generation-defaults-view').hidden=false">
+    Image defaults
+  </button>
+  <button class="video-defaults-row" onclick="document.querySelector('flow-generation-defaults-view').hidden=false">
+    Video defaults
+  </button>
+</flow-unified-settings-view>
+<flow-generation-defaults-view hidden style="display:block">Agent defaults</flow-generation-defaults-view>
+<style>[hidden] { display:none !important }</style>
+<script>
+function openGeminiModels() {
+    const count = Number(document.body.dataset.modelClicks || 0);
+    document.body.dataset.modelClicks = String(count + 1);
+    setTimeout(() => document.querySelector('#gemini-models').hidden=false, 280);
+}
+</script>
 <button onclick="document.body.dataset.submits=String(Number(document.body.dataset.submits || 0) + 1)">Submit</button>
 """
         self.send_response(200)
@@ -200,6 +232,22 @@ def exercise_automatic_click(stage, script, learned, url, catalog):
             assert picked.get('success') and picked.get('dispatched') and picked.get('source') == 'package', picked
             script(f'assert js("!document.querySelector({panel!r}).hidden")')
             print('NATIVE_PACKAGE_ACTION_PASS', target, flush=True)
+        for target, panel in (
+            ('Model picker', '#gemini-models'), ('Classic model picker', '#flow-models'),
+            ('Agent settings', 'flow-unified-settings-view'),
+            ('Image defaults', 'flow-generation-defaults-view'),
+            ('Video defaults', 'flow-generation-defaults-view'),
+        ):
+            picked = learned('click', target=target)
+            assert picked.get('success') and picked.get('source') == 'package', picked
+            script(f'assert js("!document.querySelector({panel!r}).hidden")')
+            if target == 'Image defaults':
+                close_defaults = "document.querySelector('flow-generation-defaults-view').hidden=true"
+                script(f"js({close_defaults!r})")
+            print('NATIVE_PACKAGE_ACTION_PASS', target, flush=True)
+        repeat = learned('click', target='Model picker')
+        assert not repeat.get('dispatched'), repeat
+        script('assert js("document.body.dataset.modelClicks") == "1"')
         acted = learned('click', target='Submit')
         assert acted['dispatched'] and acted['status'] == 'needs_inspection', acted
         script('assert js("document.body.dataset.submits") == "1"')
