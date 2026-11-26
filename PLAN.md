@@ -152,11 +152,26 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   skenario pemetaan paket lulus saat diuji ulang setelah koreksi skrip
   fixture. Jumlah jendela kembali ke kondisi awal. Bukti ini mencakup UI
   fixture dengan selector paket. Uji situs langsung menunggu kandidat lengkap.
-- Sebelum instalasi kandidat, selesaikan migrasi kontrol paket yang lain,
-  kelanjutan visual, dan aksi dasar browser yang masih memakai jalur lama.
-  Setelah ada pengganti teruji, tutup opsi yang memberi model akses memilih
-  eksekutor klik sendiri. Uji Gemini, Flow, dan satu situs hasil belajar
-  pada sesi Hermes baru sebelum mengganti versi produksi.
+- Klik visual diteruskan lewat aksi `click` yang sama dengan target awal,
+  ID screenshot, dan posisi pada gambar. ID berlaku sekali dalam sesi dan
+  giliran asal. Plugin mencocokkan tab, dokumen, viewport, dan gambar terbaru
+  sebelum meneruskan klik native. Hasil klik perlu diperiksa sebelum
+  pengulangan. Pengamat klik yang sudah ada menyimpan kontrol aktif jika
+  efek pada UI terkonfirmasi.
+- Pada pembanding `5289369`, fallback menampilkan screenshot tanpa ID untuk
+  melanjutkan aksi. Kandidat diuji lewat Hermes `ae2a81ccc0` pada macOS 27.2.1
+  dan Chrome 158.0.8127.38. Di fixture pada zoom 1,25, banner yang muncul
+  membuat screenshot lama ditolak tanpa klik. Screenshot baru mengirim
+  tepat satu klik di jendela yang sama, dapat dipakai ulang lewat katalog
+  setelah efeknya terkonfirmasi, dan menolak pengiriman kembali ID lama.
+  Regresi juga menolak ID dari tugas atau giliran lain. Sebanyak 471 tes
+  unit dan delapan uji Chrome pada fixture lulus. Jumlah jendela kembali
+  ke kondisi awal.
+- Sebelum instalasi kandidat, selesaikan migrasi kontrol paket yang lain
+  dan aksi dasar browser yang masih memakai jalur lama. Setelah ada
+  pengganti teruji, tutup opsi yang memberi model akses memilih eksekutor
+  klik sendiri. Uji Gemini, Flow, dan satu situs hasil belajar pada sesi
+  Hermes baru sebelum mengganti versi produksi.
 - Di 0.16.1, katalog membaca nama UI dan petunjuk tujuan dari tautan pada
   halaman aktif. Petunjuk hanya tampil jika path masih cocok dengan hash
   yang sudah diverifikasi. Pencarian label persis yang kosong dapat

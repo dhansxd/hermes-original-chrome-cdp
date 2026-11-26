@@ -32,6 +32,15 @@ Keep the same `browser_exec.session` across calls. Typing replaces the existing
 text by default. Pass `"clear_first":false` in `params` to type at the current
 insertion point.
 
+To activate a named control in the current page, use
+`{"action":"click","params":{"target":"Show details"}}`. If it returns a
+`screenshot_id`, use the screenshot to locate that same control. Repeat the
+action and target with the returned ID and `point: [x, y]`. Measure each
+coordinate as a fraction of the screenshot width or height from the top-left
+corner. Use the same browser session. For `stale_screenshot`, request the
+named click again. Once the click is dispatched, inspect the outcome before
+deciding to click again.
+
 For a request that names a section of a website without giving its URL,
 start on that site's home page when you need to open it. Check
 `list_learned_controls` there before navigating to the named section.

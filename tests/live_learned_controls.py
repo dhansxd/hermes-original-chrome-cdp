@@ -295,7 +295,54 @@ def exercise_basic_actions(mode, script, learned, origin, provider):
     print('NATIVE_BASIC_ACTIONS_PASS', mode, flush=True)
 
 
-def exercise(*, visual=False, extension=None, automatic=False, basic=None):
+def exercise_visual_continuation(script, learned, url, provider):
+    target = 'Open the details panel'
+    script(f'goto_url({url!r}); assert wait_for_element("button", timeout=8)')
+    script("cdp('Emulation.setPageScaleFactor', pageScaleFactor=1.25)")
+    owned, = provider.sessions.values()
+
+    def frame():
+        result = learned('click', target=target)
+        if result.get('_multimodal'):
+            result = json.loads(result['text_summary'])
+        assert result.get('source') == 'screenshot' and not result.get('dispatched'), result
+        assert result.get('screenshot_id'), result
+        from PIL import Image
+        with Image.open(result['screenshot_path']) as shot:
+            width, height = shot.size
+            pixels = shot.convert('RGB').get_flattened_data()
+            green = [(idx % width, idx // width) for idx, (r, g, b) in enumerate(pixels)
+                     if r < 80 and g > 155 and 65 < b < 155 and g - b > 50]
+        assert green
+        xs, ys = zip(*green)
+        return dict(target=target, screenshot_id=result['screenshot_id'],
+                    point=[(min(xs) + max(xs)) / (2 * width), (min(ys) + max(ys)) / (2 * height)])
+
+    intent = frame()
+    script("""js("document.getElementById('banner').hidden=false")""")
+    stale = learned('click', **intent)
+    assert not stale.get('dispatched') and stale.get('reason') == 'stale_screenshot', stale
+    script('assert not js("document.body.dataset.clicked")')
+    assert not learned('list_learned_controls')['controls']
+    script("""js("document.getElementById('banner').hidden=true")""")
+
+    fresh = frame()
+    incorrect = learned('click', **{**fresh, 'target': 'A different action'})
+    assert not incorrect.get('dispatched'), incorrect
+    result = learned('click', **fresh)
+    assert result.get('source') == 'screenshot' and result.get('dispatched'), result
+    script('assert js("document.body.dataset.clicked") == "details-1"')
+    row, = learned('list_learned_controls', label='Show details')['controls']
+    duplicate = learned('click', **fresh)
+    assert not duplicate.get('dispatched'), duplicate
+    script(f'goto_url({url!r}); assert wait_for_element("button", timeout=8)')
+    replayed = learned('click', target='Show details')
+    assert replayed.get('success') and replayed.get('source') == 'catalog' and replayed.get('control') == row['id'], replayed
+    assert list(provider.sessions.values()) == [owned]
+    print('NATIVE_VISUAL_CONTINUATION_PASS', flush=True)
+
+
+def exercise(*, visual=False, extension=None, automatic=False, basic=None, visual_continuation=False):
     Fixture.version = 1
     source = Path(__file__).resolve().parents[1]
     before = window_keys()
@@ -339,7 +386,7 @@ plugins:
                 provider = get_provider('original-chrome-default')
                 control = None
                 replay = {}
-                stages = ('basic',) if basic else (
+                stages = ('basic',) if basic or visual_continuation else (
                     ('learn', 'reuse') if extension else ('learn', 'reuse', 'refresh', 'reuse-after-refresh')
                 )
                 for stage in stages:
@@ -363,6 +410,9 @@ plugins:
                         return call(site_control=json.dumps({'action': action, 'params': params}))
 
                     try:
+                        if visual_continuation:
+                            exercise_visual_continuation(script, learned, url, provider)
+                            continue
                         if basic:
                             exercise_basic_actions(basic, script, learned, origin, provider)
                             continue
@@ -453,6 +503,9 @@ if __name__ == '__main__':
 
 
 class NativeLearnedControls(unittest.TestCase):
+    def test_named_click_continues_from_a_fresh_screenshot(self):
+        exercise(visual_continuation=True)
+
     def test_native_navigation_and_typing(self):
         exercise(basic='legacy')
 

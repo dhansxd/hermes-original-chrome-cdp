@@ -60,6 +60,7 @@ class SessionProfile:
     kept_title: str | None = None
     parked: bool = False
     device: str = 'local'
+    visual_click: dict | None = None
 
 
 class ChromeProvider(BrowserProvider):

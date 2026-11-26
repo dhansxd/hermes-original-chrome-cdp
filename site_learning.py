@@ -247,6 +247,61 @@ _FIND_DOM_CONTROL = r"""
 """.replace("CLICK_STATES", json.dumps(STATES))
 
 
+VISUAL_FRAME = r"""
+from hashlib import sha256
+import json
+from pathlib import Path
+from PIL import Image
+
+
+def visual_state():
+    return [
+        current_tab()['targetId'],
+        js('[location.href, performance.timeOrigin, devicePixelRatio]'),
+        cdp('Page.getLayoutMetrics')['cssVisualViewport'],
+    ]
+
+
+def visual_frame(path):
+    before = visual_state()
+    capture_screenshot(str(path), max_dim=1200)
+    if before != visual_state():
+        return None
+    with Image.open(path) as image:
+        image = image.convert('RGB')
+        digest = sha256(json.dumps([before, image.size], sort_keys=True).encode())
+        digest.update(image.tobytes())
+    viewport = before[2]
+    return {'fingerprint': digest.hexdigest(),
+            'viewport': [viewport['clientWidth'], viewport['clientHeight']]}
+"""
+
+
+def visual_capture_code(identifier):
+    return VISUAL_FRAME + (
+        'import os\n'
+        f"path = Path(os.environ['BH_AGENT_WORKSPACE']) / {'visual-click-' + identifier + '.png'!r}\n"
+        'frame = visual_frame(path)\n'
+        'print("VISUAL_CLICK=" + json.dumps({"frame": frame, "path": str(path)}))\n'
+        'if frame is not None:\n'
+        '    print(path)\n'
+    )
+
+
+def visual_dispatch_code(frame, point):
+    x, y = (ratio * span for ratio, span in zip(point, frame['viewport']))
+    return VISUAL_FRAME + (
+        'from tempfile import TemporaryDirectory\n'
+        'with TemporaryDirectory() as scratch:\n'
+        '    current = visual_frame(Path(scratch) / "check.png")\n'
+        f'if current != {frame!r}:\n'
+        '    print("VISUAL_CLICK=stale_screenshot")\n'
+        'else:\n'
+        f'    click_at_xy({x!r}, {y!r})\n'
+        '    print("VISUAL_CLICK=dispatched")\n'
+    )
+
+
 def page_key(url):
     if not isinstance(url, list) or len(url) != 2 or not all(isinstance(part, str) for part in url):
         raise ValueError('A current HTTP(S) page is required.')

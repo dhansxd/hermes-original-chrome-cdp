@@ -33,9 +33,11 @@ OBSERVATION_INTERVAL = 15
 
 
 if __package__:
-    from .site_learning import LEARNED_ACTIONS, cached_action, fallback
+    from .site_learning import (LEARNED_ACTIONS, cached_action, fallback, valid_point,
+                                visual_capture_code, visual_dispatch_code)
 else:
-    from site_learning import LEARNED_ACTIONS, cached_action, fallback
+    from site_learning import (LEARNED_ACTIONS, cached_action, fallback, valid_point,
+                               visual_capture_code, visual_dispatch_code)
 
 
 BROWSER_ACTIONS = ('navigate', 'type')
@@ -50,6 +52,8 @@ CONTROL_SCHEMA = {
                    '{"action":"type","params":{"selector":"#field","text":"Hello"}} to fill one editable field. '
                    'Set clear_first to false in type params to insert without clearing. '
                    'With a page open, use {"action":"click","params":{"target":"Model picker"}} for a named control. '
+                   'When the click returns a screenshot_id, repeat the same target in the same session '
+                   'with that ID and point [x,y], each a fraction of the displayed image from 0 to less than 1. '
                    'Examples: {"action":"list"}, {"action":"describe","app":"gemini"}, '
                    '{"app":"gemini","operation":"read_result"}. '
                    'Each installed site defines its own params. Window actions are keep_window, list_windows and close_window. '
@@ -569,26 +573,96 @@ class AppHost:
             catalog = self.provider.learning_catalog()
             if catalog is None:
                 raise RuntimeError('Learned controls are available on local Chrome.')
+            params = command.get('params')
+            if command['action'] == 'click' and isinstance(params, dict) and 'screenshot_id' in params:
+                return json.dumps(self.continue_visual_click(params, args, native, context), ensure_ascii=False)
             result = cached_action(catalog, command, run_expression, package_control=self.click_mapping)
             if (command['action'] == 'click' and not result.get('dispatched')
                     and result.get('reason') in {'unmatched', 'obscured'}):
-                shot = native({'session': args['session'], 'code': 'print(capture_screenshot(max_dim=1200))'},
-                              **context)
-                shot = json.loads(shot) if isinstance(shot, str) else shot
-                if isinstance(shot, dict):
-                    source = shot.get('meta', {}) if shot.get('_multimodal') else shot
-                    path = source.get('screenshot_path')
-                    if path:
-                        result.update(source='screenshot', screenshot_path=path,
-                                      next='Locate the requested target in this screenshot before dispatching.')
-                        if shot.get('_multimodal'):
-                            summary = json.dumps(result, ensure_ascii=False)
-                            images = [item for item in shot.get('content', []) if item.get('type') == 'image_url']
-                            return {**shot, 'text_summary': summary,
-                                    'content': [{'type': 'text', 'text': summary}, *images]}
+                result = self.offer_visual_click(result, params['target'].strip(), args, native, context)
+                if result.get('_multimodal'):
+                    return result
         except (KeyError, TypeError, OSError, sqlite3.Error, ValueError, RuntimeError) as error:
             result = fallback(str(error), dispatched=attempted)
         return json.dumps(result, ensure_ascii=False)
+
+    def visual_choice(self, session, context):
+        """Called with the provider lock held."""
+        provider = self.provider
+        choice = provider.profile_choices.get(provider.profile_routes.get(session))
+        if (choice is None or choice.browser_name != session or choice.finished or choice.switching
+                or choice.parked or provider.unloading or session in provider.finishing
+                or choice.device != 'local' or provider.owners.get(session) != choice.owner
+                or choice.owner[:2] != (context['task_id'], context['session_id'])):
+            return None
+        return choice
+
+    def offer_visual_click(self, result, target, args, native, context):
+        session = args['session']
+        with self.provider.lock:
+            choice = self.visual_choice(session, context)
+            if choice is None:
+                return result
+            choice.visual_click = None
+            turn = choice.turn_id
+
+        identifier = uuid.uuid4().hex
+        shot = native({'session': session, 'code': visual_capture_code(identifier)}, **context)
+        shot = json.loads(shot) if isinstance(shot, str) else shot
+        if not isinstance(shot, dict):
+            return result
+        native_result = json.loads(shot['text_summary']) if shot.get('_multimodal') else shot
+        if not native_result.get('success'):
+            return result
+        marker = next((line.removeprefix('VISUAL_CLICK=') for line in native_result['output'].splitlines()
+                       if line.startswith('VISUAL_CLICK=')), None)
+        if marker is None:
+            return result
+        capture = json.loads(marker)
+        if capture['frame'] is None:
+            return result
+
+        with self.provider.lock:
+            if self.visual_choice(session, context) is not choice or choice.turn_id != turn:
+                return result
+            choice.visual_click = {'id': identifier, 'target': target, 'frame': capture['frame'], 'turn': turn}
+        result.update(source='screenshot', screenshot_path=capture['path'], screenshot_id=identifier,
+                      next='Use click with the same target and screenshot_id in this session. '
+                           'Pass point [x,y] as fractions of the displayed image.')
+        if shot.get('_multimodal'):
+            summary = json.dumps(result, ensure_ascii=False)
+            images = [item for item in shot.get('content', []) if item.get('type') == 'image_url']
+            return {**shot, 'text_summary': summary, 'content': [{'type': 'text', 'text': summary}, *images]}
+        return result
+
+    def continue_visual_click(self, params, args, native, context):
+        point = params.get('point')
+        if (set(params) != {'target', 'screenshot_id', 'point'}
+                or not isinstance(params['target'], str)
+                or not isinstance(params['screenshot_id'], str)
+                or not valid_point(point) or not all(0 <= value < 1 for value in point)):
+            raise ValueError('Pass target, screenshot_id and point [x,y] within the displayed image.')
+        session = args['session']
+        expired = {**fallback('stale_screenshot', dispatched=False), 'source': 'screenshot',
+                   'next': 'Request the named click again to get the current page or screenshot.'}
+        with self.provider.lock:
+            choice = self.visual_choice(session, context)
+            saved = choice.visual_click if choice else None
+            if (saved is None or saved['id'] != params['screenshot_id']
+                    or saved['target'] != params['target'].strip() or saved['turn'] != choice.turn_id):
+                return expired
+            choice.visual_click = None  # Consume the screenshot before any input can be sent.
+        code = visual_dispatch_code(saved['frame'], point)
+        try:
+            result = native({'session': session, 'code': code}, **context)
+            result = json.loads(result) if isinstance(result, str) else result
+            if isinstance(result, dict) and result.get('success'):
+                output = result.get('output')
+                if isinstance(output, str) and 'VISUAL_CLICK=stale_screenshot' in output.splitlines():
+                    return expired
+        except (KeyError, TypeError, OSError, ValueError, RuntimeError):
+            pass  # The native handler may have sent the input before failing.
+        return {**fallback('check_visible_result', dispatched=True), 'source': 'screenshot'}
 
     def click_mapping(self, origin, target):
         """Find the enabled package for the current site without executing it."""

@@ -211,6 +211,26 @@ def run(context, operation, params):
                 self.assertIn(helper + '(', routed['code'])
         self.assertEqual(native.call_count, 2)
 
+    def test_visual_click_id_cannot_be_used_by_another_task_or_turn(self):
+        self.package()
+        name = self.invoke()['session']
+        other = self.invoke(task='B', chat='chat-B')['session']
+        choice = self.provider.profile_choices[self.provider.profile_routes[name]]
+        choice.visual_click = {'id': 'frame-A', 'target': 'Show details', 'turn': choice.turn_id}
+        params = {'target': 'Show details', 'screenshot_id': 'frame-A', 'point': [.2, .3]}
+        native = Mock()
+
+        wrong_session = self.host.continue_visual_click(
+            params, {'session': other}, native, {'task_id': 'B', 'session_id': 'chat-B'})
+        self.assertEqual(wrong_session['reason'], 'stale_screenshot')
+        self.assertFalse(wrong_session['dispatched'])
+        choice.turn_id = 'later-turn'
+        old_turn = self.host.continue_visual_click(
+            params, {'session': name}, native, {'task_id': 'A', 'session_id': 'chat-A'})
+        self.assertEqual(old_turn['reason'], 'stale_screenshot')
+        self.assertFalse(old_turn['dispatched'])
+        native.assert_not_called()
+
     def test_invalid_basic_browser_actions_do_not_allocate_a_window(self):
         invalid = [
             ({'action': 'navigate', 'params': {'url': '/relative'}}, {}),
