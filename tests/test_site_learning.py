@@ -39,10 +39,10 @@ class SiteLearningTests(unittest.TestCase):
     def test_click_requires_current_page_and_never_replays_uncertain_result(self):
         self.record('button-a')
         control, = self.catalog.list(self.origin, self.page)
-        command = {'action': 'click_learned_control', 'params': {'control': control['id']}}
-        wrong_page = Mock(return_value=['https://another.example', '/settings'])
+        command = {'action': 'click', 'params': {'target': control['label']}}
+        wrong_page = Mock(side_effect=[['https://another.example', '/settings'], {'reason': 'unmatched'}])
         self.assertFalse(cached_action(self.catalog, command, wrong_page)['dispatched'])
-        wrong_page.assert_called_once()
+        self.assertEqual(wrong_page.call_count, 2)
         click = Mock(side_effect=[self.url, 'unconfirmed'])
         result = cached_action(self.catalog, command, click)
         self.assertTrue(result['dispatched'])

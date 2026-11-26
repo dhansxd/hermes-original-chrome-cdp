@@ -46,12 +46,17 @@ class GeminiAppTests(ChromeFixture):
         args = {'app': 'gemini', 'session': 'inspection', **args}
         with patch.dict(os.environ, {}, clear=True):
             request = args if tool == plugin.PROFILE_TOOL else {'site_control': json.dumps(args), 'session': args['session']}
-            prepared = self.host.prepare_call(tool, request, 'agent', session_id='chat',
-                                              turn_id='turn', config=self.config)
+            prepare = self.provider.prepare_call if args.get('operation') == 'click' else self.host.prepare_call
+            routing = args if args.get('operation') == 'click' else request
+            prepared = prepare(tool, routing, 'agent', session_id='chat', turn_id='turn', config=self.config)
         self.assertEqual(prepared['action'], 'modify', prepared)
         args.update(prepared['args'])
         if tool == plugin.PROFILE_TOOL:
             return self.provider.profiles(args, task_id='agent', session_id='chat')
+        if args.get('operation') == 'click':
+            # Exercise the trusted package's click implementation directly.
+            return json.loads(self.host.handle({'action': 'run', **args},
+                                               task_id='agent', session_id='chat', turn_id='turn'))
         with patch('hermes_cli.config.load_config_readonly', return_value=self.config):
             return json.loads(self.host.execute({**request, **prepared['args']}, self.native,
                 task_id='agent', session_id='chat', turn_id='turn'))
@@ -61,7 +66,7 @@ class GeminiAppTests(ChromeFixture):
         entry = next(app for app in listing['apps'] if app['id'] == 'gemini')
         self.assertTrue(entry['enabled'])
         self.assertEqual(entry['operations'], [
-            'open_chat', 'type_prompt', 'click', 'select_model', 'read_result', 'inspect', 'reply',
+            'open_chat', 'type_prompt', 'select_model', 'read_result', 'inspect', 'reply',
         ])
         details = json.loads(self.host.handle({'action': 'describe', 'app': 'gemini'}))
         self.assertIn('Choose an existing Chrome profile', details['guide'])
@@ -200,7 +205,7 @@ class GeminiAppTests(ChromeFixture):
                                     'control': 'start_research', '_research_receipt': receipt}
             resumed = self.call(operation='read_result')
             self.assertIn(json.dumps(receipt), self.js.call_args.args[0])
-            self.assertEqual(resumed['next_control']['params']['control'], 'start_research')
+            self.assertEqual(resumed['next_control']['params']['target'], 'Start research')
         self.assertEqual(resumed['session'], result['session'])
         self.click.assert_called_once_with(2, 3)
         self.navigate.assert_not_called()
@@ -319,7 +324,7 @@ class GeminiAppTests(ChromeFixture):
             self.assertEqual(planning['data']['stage'], 'planning')
             ready = self.call(operation='read_result')
             self.assertEqual(ready['status'], 'running')
-            self.assertEqual(ready['next_control']['params']['control'], 'start_research')
+            self.assertEqual(ready['next_control']['params']['target'], 'Start research')
             first = self.call(operation='click', params={'control': 'start_research'})
             retry = self.call(operation='click', params={'control': 'start_research'})
         self.assertTrue(first['data']['clicked'])

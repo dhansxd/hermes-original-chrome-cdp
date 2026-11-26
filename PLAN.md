@@ -111,9 +111,8 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
 - Penerimaan jalur tunggal juga mencakup kontrol bawaan Gemini dan Flow serta
   data hasil pembelajaran. Eksekutor Chrome native, kepemilikan jendela,
   profil, startup, dan perilaku chat mengikuti kontrak yang telah ada.
-  Jalur lama pada kandidat pengembangan memberi pembanding sampai migrasi
-  pemanggil teruji. Satu alat pada sesi produksi berarti model tidak
-  memilih antara katalog dan inspeksi untuk melakukan klik yang sama.
+  Hermes menyebut target klik. Pemilihan antara katalog dan inspeksi
+  dilakukan oleh kode plugin pada sesi browser yang sama.
 - Tahap pertama 0.17.0 menambahkan aksi `click` dengan target UI ke
   `browser_exec`. Host mencari pemetaan katalog atau paket untuk origin
   halaman aktif. Jika pemetaan tidak cocok sebelum klik, host mencoba DOM.
@@ -178,11 +177,27 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   memakai jendela yang sama. Pada Hermes `ae2a81ccc0`, macOS 27.2.1 dan
   Chrome 158.0.8127.38, 471 tes unit dan delapan uji Chrome pada fixture
   lulus. Jumlah jendela kembali ke kondisi awal.
-- Sebelum instalasi kandidat, selesaikan migrasi kontrol paket yang lain
-  dan aksi dasar browser yang masih memakai jalur lama. Setelah ada
-  pengganti teruji, tutup opsi yang memberi model akses memilih eksekutor
-  klik sendiri. Uji Gemini, Flow, dan satu situs hasil belajar pada sesi
-  Hermes baru sebelum mengganti versi produksi.
+- Aturan aktif mewajibkan satu jalur klik. Dilarang menawarkan pilihan
+  eksekutor klik kepada model. Tombol paket dan katalog dipilih host dari
+  halaman aktif. DOM dan screenshot menjadi fallback dari aksi yang sama.
+- Pembanding `3c42b89` menerima Python bebas, kode yang disertakan pada
+  laporan temuan, dan operasi klik paket langsung. Kandidat menolak
+  semuanya, termasuk klik dengan ID katalog, baik di hook maupun saat
+  eksekusi tool. Aksi `screenshot` untuk peninjauan dapat dipakai melalui
+  tool yang sama. Klik visual hanya menerima ID dari fallback aksi `click`.
+  Paket bawaan yang sudah terpasang mewarisi pemetaan yang belum ada bila
+  versi dan skema operasinya cocok. File milik pengguna tetap dikelola
+  oleh profilnya.
+- Pada Hermes `ae2a81ccc0`, macOS 27.2.1, dan Chrome 158.0.8127.38,
+  474 tes unit dan delapan uji Chrome pada fixture lulus. Uji lokal Gemini
+  membuka halaman lewat navigasi biasa, memakai pengaman Send dari paket
+  melalui aksi `click`, dan memakai DOM untuk tombol lain di jendela yang
+  sama. Pengulangan Send tidak mengirim ulang. Uji progres terpisah
+  memverifikasi jendela yang sama melewati batas idle dan Stop
+  menghentikan pengamatan. Uji ini memakai fixture tanpa menghasilkan konten.
+- Uji penerimaan sebelum mengganti versi produksi memakai sesi Hermes baru
+  untuk Gemini, Flow, dan satu situs hasil belajar. Pastikan paket pada
+  profil uji memuat pemetaan nama terbaru.
 - Di 0.16.1, katalog membaca nama UI dan petunjuk tujuan dari tautan pada
   halaman aktif. Petunjuk hanya tampil jika path masih cocok dengan hash
   yang sudah diverifikasi. Pencarian label persis yang kosong dapat
@@ -298,18 +313,14 @@ tetap diperiksa pada jalur browser yang terdampak.
   `hermes config unset browser.cloud_provider`. Saat enable ulang, pilih
   Chrome asli lagi. Lihat [langkah resmi pada
   tutorial](docs/TUTORIAL.md#switch-back-disable-and-uninstall).
-- Plugin sudah mendaftarkan Chrome asli sebagai provider browser Hermes.
-  Pertahankan perilaku `browser_exec`, termasuk navigasi, pembacaan DOM,
-  screenshot dan penggunaan jendela tugas. Tambahan untuk Gemini, Google Flow
-  dan situs lain hanya berupa kontrol UI siap pakai melalui tool yang sama.
-  `browser_exec` adalah satu-satunya alat browsing. Paket ekstensi menyediakan
-  kontrol situs di alat ini lewat `site_control`. Skrip DOM dan screenshot
-  memakai eksekutor native tanpa pembungkus khusus dari paket situs. Untuk
-  mencatat kontrol yang belum dipetakan, panggil `record_missing_control`
-  secara eksplisit pada sesi yang sama.
-  Klik atau ketik langsung lewat CDP pada halaman aktif menghemat waktu dan
-  token karena Hermes cukup memakai kontrol yang sudah dikenal. Panduan
-  situs dapat menjelaskan cara menggunakan kontrol tersebut.
+- Chrome asli terdaftar sebagai provider Hermes. Panggilan browsing publik
+  memakai `browser_exec.site_control`. Untuk klik, Hermes hanya menyebut
+  target UI lewat aksi `click`. Plugin menentukan kontrol paket, katalog
+  hasil belajar, DOM, atau screenshot dari halaman aktif. Posisi pada
+  screenshot hanya diterima setelah aksi `click` memberi ID screenshot.
+  Python bebas, klik dengan ID katalog, dan operasi klik paket langsung
+  ditolak pada provider ini. Aksi terstruktur dan kode paket terpasang tetap
+  memakai eksekutor native CDP di belakang tool yang sama.
 - Satu tugas memakai satu jendela Chrome asli dan sambungan CDP yang sama
   sejak aksi pertama sampai seluruh permintaan selesai. Submit, cek progres,
   pembacaan hasil, unduhan, dan pengiriman yang diminta berlangsung dalam
@@ -327,15 +338,12 @@ tetap diperiksa pada jalur browser yang terdampak.
   perintah yang hanya menyatakan tugas. Gunakan provider Chrome asli melalui
   mekanisme resmi Hermes. Penemuan browser dan kontrol situs berjalan tanpa
   memori percakapan, prompt pribadi atau instruksi pengguna tentang nama tool.
-- Pakai kontrol yang sudah dipetakan secara langsung. Jika kontrol belum
-  dipetakan, lanjutkan dengan DOM terarah pada tool, sesi dan jendela yang sama.
-  Pakai screenshot bila DOM tidak cukup. Situs tanpa paket memakai cara browsing
-  biasa melalui tool yang sama. Untuk situs dengan paket, Hermes mencatat
-  setiap kontrol yang terkonfirmasi belum dipetakan saat harus memakai DOM
-  atau screenshot. Catat situs, halaman atau mode, kontrol dan cara inspeksinya
-  sebelum jawaban akhir. Periksa mode, model dan panel aktif agar kontrol yang
-  tersembunyi tidak keliru dicatat. Gunakan temuan untuk menambahkan kontrol
-  siap pakai saat pengguna meminta patch.
+- Plugin memakai pemetaan yang cocok terlebih dahulu dan meneruskan klik
+  melalui fallback sebelum ada dispatch. Klik yang mungkin sudah terkirim
+  diperiksa hasilnya sebelum dicoba lagi. Untuk kontrol yang terkonfirmasi
+  belum dipetakan di suatu paket, Hermes mencatat situs, bagian
+  halaman, kontrol dan fallback dengan `record_missing_control`. Gunakan
+  temuan untuk perbaikan paket. Pencatatan terpisah dari pelaksanaan klik.
 - Profil, login, dan cookie tetap dikelola Chrome. Pertahankan profil terpilih,
   startup dan izin debugging yang sudah diatur, serta isolasi jendela antaragen
   dan jendela manual. Aksi melalui UI asli dengan CDP tanpa menyalin atau

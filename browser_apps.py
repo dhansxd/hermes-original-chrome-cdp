@@ -28,6 +28,9 @@ else:
     from remote_downloads import collect as collect_remote_download
 
 
+PUBLIC_BROWSER_ERROR = 'Use browser_exec with a site_control action. Use click with a named UI target.'
+
+
 STATUSES = {'ok', 'running', 'quota_exhausted', 'needs_inspection', 'failed'}
 OBSERVATION_INTERVAL = 15
 
@@ -40,7 +43,7 @@ else:
                                visual_capture_code, visual_dispatch_code)
 
 
-BROWSER_ACTIONS = ('navigate', 'type', 'read')
+BROWSER_ACTIONS = ('navigate', 'type', 'read', 'screenshot')
 WINDOW_ACTIONS = ('keep_window', 'list_windows', 'close_window')
 CONTROL_ACTIONS = ('list', 'describe', 'run', 'observe', 'record_missing_control', 'enable', 'disable', 'remove',
                    *BROWSER_ACTIONS, *WINDOW_ACTIONS, *LEARNED_ACTIONS)
@@ -53,6 +56,7 @@ CONTROL_SCHEMA = {
                    'Set clear_first to false in type params to insert without clearing. '
                    'Use {"action":"read"} to read visible text on the open page. '
                    'An optional selector in read params limits it to visible matching elements. '
+                   'Use {"action":"screenshot"} to view the open page. '
                    'With a page open, use {"action":"click","params":{"target":"Model picker"}} for a named control. '
                    'When the click returns a screenshot_id, repeat the same target in the same session '
                    'with that ID and point [x,y], each a fraction of the displayed image from 0 to less than 1. '
@@ -63,21 +67,13 @@ CONTROL_SCHEMA = {
 }
 
 
-def has_site_request(args):
-    control = args.get('site_control')
-    if isinstance(control, str):
-        control = control.strip()
-        if not control or control == 'null':
-            return False
-        return control != '{}' or not args.get('code')
-    return control is not None and (bool(control) or not args.get('code'))
-
-
 def progress_control(app, can_read_result):
     return {'app': app, 'operation': 'read_result'} if can_read_result else {'app': app, 'action': 'observe'}
 
 
 def site_request(args):
+    if args.get('code') or not args.get('site_control'):
+        raise ValueError(PUBLIC_BROWSER_ERROR)
     command = args['site_control']
     if isinstance(command, str):
         try:
@@ -88,8 +84,9 @@ def site_request(args):
         raise ValueError('Use action, app, operation, params, job, target_profile or session in the site request.')
     command = {key: value for key, value in command.items() if value is not None and value != ''}
     action = command.get('action', 'run' if 'operation' in command else 'list')
-    if action not in CONTROL_ACTIONS:
-        raise ValueError('Choose an action from the site_control schema.')
+    if (action not in CONTROL_ACTIONS
+            or (action == 'run' and command.get('operation') == 'click')):
+        raise ValueError(PUBLIC_BROWSER_ERROR)
     if action in WINDOW_ACTIONS and set(command) - {'action', 'session'}:
         raise ValueError('Window actions accept only action and session.')
     if action in BROWSER_ACTIONS:
@@ -123,9 +120,13 @@ READ_PAGE = r"""
 
 def browser_action_code(command):
     action = command['action']
-    params = command.get('params', {} if action == 'read' else None)
+    params = command.get('params', {} if action in {'read', 'screenshot'} else None)
     if not isinstance(params, dict):
         raise ValueError('Browser action params must be an object.')
+    if action == 'screenshot':
+        if params:
+            raise ValueError('Screenshot takes no parameters.')
+        return 'print(capture_screenshot(max_dim=1200))'
     if action == 'read':
         selection = params.get('selector')
         if (set(params) - {'selector'} or ('selector' in params and
@@ -499,7 +500,7 @@ class AppHost:
                     shutil.rmtree(temporary, ignore_errors=True)
 
     def prepare_call(self, tool_name, args, task_id, **context):
-        if tool_name != 'browser_exec' or not has_site_request(args):
+        if tool_name != 'browser_exec':
             return self.provider.prepare_call(tool_name, args, task_id, **context)
         config = context.get('config')
         if config is None:
@@ -521,7 +522,7 @@ class AppHost:
             args = {**args, 'session': command['session']}
         if command['action'] in BROWSER_ACTIONS:
             route = {'session': args.get('session'), 'local': args.get('local')}
-            if command['action'] == 'read':
+            if command['action'] in {'read', 'screenshot'}:
                 context.update(require_existing=True, allow_current_app=True)
             return self.provider.prepare_call(tool_name, route, task_id, **context)
         if command['action'] in LEARNED_ACTIONS:
@@ -542,13 +543,9 @@ class AppHost:
                 pass  # handle() returns the package error to Hermes.
         context['require_existing'] = command['action'] in {'observe', 'record_missing_control'}
         route = {'session': args.get('session'), 'app': command.get('app'), 'local': args.get('local')}
-        if command['action'] == 'record_missing_control' and args.get('code'):
-            route['code'] = args['code']
         return self.provider.prepare_call(tool_name, route, task_id, **context)
 
     def execute(self, args, native, **context):
-        if not has_site_request(args):
-            return native(args, **context)
         from hermes_cli.config import load_config_readonly
         config = load_config_readonly()
         if config.get('browser', {}).get('cloud_provider') != self.provider.name:
@@ -570,10 +567,7 @@ class AppHost:
             return native({**route, 'code': self.prepare_code(code)}, **context)
         if command['action'] in LEARNED_ACTIONS:
             return self.execute_learned(command, args, native, context)
-        result = self.handle({**command, 'session': args.get('session')}, **context)
-        if command['action'] == 'record_missing_control' and args.get('code') and json.loads(result).get('success'):
-            return native({k: v for k, v in args.items() if k != 'site_control'}, **context)
-        return result
+        return self.handle({**command, 'session': args.get('session')}, **context)
 
     def execute_learned(self, command, args, native, context):
         import sqlite3
@@ -605,12 +599,14 @@ class AppHost:
 
         try:
             catalog = self.provider.learning_catalog()
-            if catalog is None:
-                raise RuntimeError('Learned controls are available on local Chrome.')
             params = command.get('params')
             if command['action'] == 'click' and isinstance(params, dict) and 'screenshot_id' in params:
                 return json.dumps(self.continue_visual_click(params, args, native, context), ensure_ascii=False)
-            result = cached_action(catalog, command, run_expression, package_control=self.click_mapping)
+            def run_package_click(origin, target):
+                return self.execute_package_click(origin, target, args['session'], context)
+
+            result = cached_action(catalog, command, run_expression, package_control=self.click_mapping,
+                                   package_action=run_package_click)
             if (command['action'] == 'click' and not result.get('dispatched')
                     and result.get('reason') in {'unmatched', 'obscured'}):
                 result = self.offer_visual_click(result, params['target'].strip(), args, native, context)
@@ -620,13 +616,13 @@ class AppHost:
             result = fallback(str(error), dispatched=attempted)
         return json.dumps(result, ensure_ascii=False)
 
-    def visual_choice(self, session, context):
+    def owned_browser_choice(self, session, context):
         """Called with the provider lock held."""
         provider = self.provider
         choice = provider.profile_choices.get(provider.profile_routes.get(session))
         if (choice is None or choice.browser_name != session or choice.finished or choice.switching
                 or choice.parked or provider.unloading or session in provider.finishing
-                or choice.device != 'local' or provider.owners.get(session) != choice.owner
+                or provider.owners.get(session) != choice.owner
                 or choice.owner[:2] != (context['task_id'], context['session_id'])):
             return None
         return choice
@@ -634,7 +630,7 @@ class AppHost:
     def offer_visual_click(self, result, target, args, native, context):
         session = args['session']
         with self.provider.lock:
-            choice = self.visual_choice(session, context)
+            choice = self.owned_browser_choice(session, context)
             if choice is None:
                 return result
             choice.visual_click = None
@@ -657,7 +653,7 @@ class AppHost:
             return result
 
         with self.provider.lock:
-            if self.visual_choice(session, context) is not choice or choice.turn_id != turn:
+            if self.owned_browser_choice(session, context) is not choice or choice.turn_id != turn:
                 return result
             choice.visual_click = {'id': identifier, 'target': target, 'frame': capture['frame'], 'turn': turn}
         result.update(source='screenshot', screenshot_path=capture['path'], screenshot_id=identifier,
@@ -680,7 +676,7 @@ class AppHost:
         expired = {**fallback('stale_screenshot', dispatched=False), 'source': 'screenshot',
                    'next': 'Request the named click again to get the current page or screenshot.'}
         with self.provider.lock:
-            choice = self.visual_choice(session, context)
+            choice = self.owned_browser_choice(session, context)
             saved = choice.visual_click if choice else None
             if (saved is None or saved['id'] != params['screenshot_id']
                     or saved['target'] != params['target'].strip() or saved['turn'] != choice.turn_id):
@@ -698,7 +694,45 @@ class AppHost:
             pass  # The native handler may have sent the input before failing.
         return {**fallback('check_visible_result', dispatched=True), 'source': 'screenshot'}
 
+    def execute_package_click(self, origin, target, session, context):
+        command = self.site_click_mapping(origin, target, commands=True)
+        if command is None:
+            return None
+        with self.provider.lock:
+            choice = self.owned_browser_choice(session, context)
+            if choice is None:
+                return fallback('Use the current owned page for this control.', dispatched=False)
+            prepared = self.provider.prepare_call(
+                'browser_exec', {'session': session, 'app': command['app']}, context['task_id'],
+                session_id=context['session_id'], session_key=choice.owner[2], turn_id=choice.turn_id,
+                require_existing=True)
+        if not prepared or prepared.get('args', {}).get('session') != session:
+            message = (prepared or {}).get('message', 'The selected site control requires the current window.')
+            return fallback(message, dispatched=False)
+        result = json.loads(self.handle({**command, 'session': session}, **context))
+        return {**result, 'source': 'package'}
+
+    def click_metadata(self, metadata):
+        if self.bundled_source is None:
+            return metadata
+        fields = ('click_targets', 'click_commands')
+        if all(key in metadata for key in fields):
+            return metadata
+        # Apply mapping defaults to matching templates already seeded in older profiles.
+        try:
+            path = self.bundled_source / metadata['id'] / 'app.json'
+            bundled = json.loads(path.read_text())
+        except (KeyError, OSError, ValueError):
+            return metadata
+        if not all(metadata.get(key) == bundled.get(key) for key in ('api_version', 'id', 'version', 'operations')):
+            return metadata
+        return {**{key: bundled[key] for key in fields if key in bundled}, **metadata}
+
     def click_mapping(self, origin, target):
+        return self.site_click_mapping(origin, target)
+
+    def site_click_mapping(self, origin, target, *, commands=False):
+
         """Find the enabled package for the current site without executing it."""
         if self.bundled_source:
             self.seed_packages(self.bundled_source)
@@ -711,8 +745,17 @@ class AppHost:
                 _, metadata, _ = read_package(self.root, identifier)
             except (OSError, RuntimeError, ValueError):
                 continue
+            metadata = self.click_metadata(metadata)
             mapping = metadata.get('click_targets')
             if not isinstance(mapping, dict) or mapping.get('origin') != origin:
+                continue
+            if commands:
+                labels = metadata.get('click_commands')
+                control = next((value for label, value in labels.items()
+                                if label.casefold() == target.casefold()), None) if isinstance(labels, dict) else None
+                if isinstance(control, str) and 'click' in metadata['operations']:
+                    matches.append({'action': 'run', 'app': identifier, 'operation': 'click',
+                                    'params': {'control': control}})
                 continue
             controls = mapping.get('controls')
             spec = controls.get(target) if isinstance(controls, dict) else None
@@ -814,7 +857,7 @@ class AppHost:
                         entries.append({'id': directory.name, 'available': True,
                                         'enabled': not bool(self.get_setting('apps_disabled.' + directory.name)),
                                         'name': metadata.get('name', directory.name),
-                                        'operations': list(metadata['operations'])})
+                                        'operations': [name for name in metadata['operations'] if name != 'click']})
                     except (OSError, ValueError, RuntimeError) as error:
                         entries.append({'id': directory.name, 'available': False,
                                         'error': str(error)})
@@ -826,9 +869,15 @@ class AppHost:
             elif action in {'describe', 'run', 'observe'}:
                 identifier = app_identifier(args.get('app'))
                 directory, metadata, source = read_package(self.root, identifier)
+                metadata = self.click_metadata(metadata)
                 if action == 'describe':
                     guide = directory / 'SKILL.md'
-                    result = {'success': True, 'status': 'ok', 'app': metadata,
+                    public = {key: value for key, value in metadata.items() if key != 'click_commands'}
+                    public['operations'] = {name: description for name, description in metadata['operations'].items()
+                                            if name != 'click'}
+                    if isinstance(metadata.get('click_commands'), dict):
+                        public['named_clicks'] = list(metadata['click_commands'])
+                    result = {'success': True, 'status': 'ok', 'app': public,
                               'enabled': not bool(self.get_setting('apps_disabled.' + identifier)),
                               'data_directory': str(self.data_dir() / 'browser-apps' / identifier),
                               'guide': guide.read_text() if guide.exists() else ''}
@@ -938,6 +987,18 @@ class AppHost:
                             choice.pending = True
             else:
                 raise ValueError('Choose an action from the site control schema.')
+            next_control = result.get('next_control', {})
+            if (action == 'run' and isinstance(next_control, dict) and next_control.get('operation') == 'click'
+                    and next_control.get('app') == identifier):
+                params = next_control.get('params')
+                labels = metadata.get('click_commands')
+                target = None
+                if isinstance(params, dict) and isinstance(labels, dict):
+                    target = next((label for label, command in labels.items() if command == params.get('control')), None)
+                if target:
+                    result['next_control'] = {'action': 'click', 'params': {'target': target}}
+                else:
+                    result['next_control'] = progress_control(identifier, can_read and not rolling)
             return json.dumps(result, ensure_ascii=False)
         except Exception as error:
             return json.dumps({'success': False, 'status': 'failed',

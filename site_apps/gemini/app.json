@@ -19,6 +19,29 @@
       }
     }
   },
+  "click_commands": {
+    "Create image": "create_image",
+    "Create video": "create_video",
+    "Deep Research": "deep_research",
+    "Create music": "create_music",
+    "Send": "send",
+    "Send message": "send",
+    "Download video": "download_video",
+    "Start research": "start_research",
+    "Mulai penelitian": "start_research",
+    "Open research report": "open_research_report",
+    "Open report": "open_research_report",
+    "View report": "open_research_report",
+    "Lihat laporan": "open_research_report",
+    "Buat gambar": "create_image",
+    "Buat video": "create_video",
+    "Buat musik": "create_music",
+    "Kirim": "send",
+    "Kirim pesan": "send",
+    "Unduh video": "download_video",
+    "Mulai riset": "start_research",
+    "Buka laporan": "open_research_report"
+  },
   "operations": {
     "open_chat": {
       "description": "Open Gemini Web or an existing conversation by ID in this Chrome session. Return only the current chat ID.",

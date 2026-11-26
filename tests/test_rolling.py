@@ -613,7 +613,7 @@ settings={'apps_directory':str(root/'packages'),'profile_directory':'Default'}
 provider=plugin.ChromeProvider(settings.get,data=root,set_setting=settings.__setitem__)
 host=browser_apps.AppHost(provider,settings.get,lambda *a,**k:None,plugin.prepare_code,lambda:root/'plugin-data')
 args={'action':'run','app':'fixture','operation':'generate','session':'work','params':{'prompt':'fixture'}}
-prepared=host.prepare_call('browser_exec',args,'A',session_id='chat-A',turn_id='turn',config={'browser':{'cloud_provider':plugin.NAME,'auto_local_for_private_urls':False}})
+prepared=host.prepare_call('browser_exec',{'site_control':args,'session':args['session']},'A',session_id='chat-A',turn_id='turn',config={'browser':{'cloud_provider':plugin.NAME,'auto_local_for_private_urls':False}})
 host.handle({**args,**prepared['args']},task_id='A',session_id='chat-A')
 '''
         paths = [str(Path(__file__).resolve().parents[1]), str(Path(agent.browser_provider.__file__).resolve().parents[1])]

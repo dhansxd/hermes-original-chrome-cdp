@@ -4,14 +4,11 @@ Use your installed, signed-in Google Chrome as the browser backend for Hermes Ag
 Choose **Original Chrome · CDP** in Hermes's Browser Automation picker, then use the
 native `browser_exec` tool and browser helpers.
 
-Website packages supply controls inside native `browser_exec`. Set the tool's `site_control` field
-to JSON text, for example `{"action":"describe","app":"gemini"}`.
-For a known control, call the operation directly in the task's existing window.
-Mapped site operations execute alone. A confirmed missing-control report can accompany native fallback code. Ordinary browser
-Python goes in `code` with `site_control` omitted or null.
-The former `browser_app` tool has been removed. On upgrade, an existing user-owned
-package may still mention that tool in its guide. Use the guide’s operation names
-in the `site_control` parameter and update those references in your own package.
+Use `browser_exec.site_control` for actions and site operations. For a click,
+name its UI target, for example `{"action":"click","params":{"target":"Model picker"}}`.
+The plugin picks the installed control, learned mapping, DOM, or screenshot
+fallback on the task's current page. A screenshot position can continue an
+existing click only when the plugin returns a screenshot ID.
 
 The [project handoff](HANDOFF.md) records the verified baseline and recovery
 steps for a fresh Mac installation. The active plan records current open work.
@@ -105,10 +102,8 @@ For a reproducible install, pass the full commit SHA from a
 [GitHub release](https://github.com/dhansxd/hermes-original-chrome-cdp/releases)
 to `hermes plugins install --ref`.
 
-For mapped site controls, approve the plugin's declared `tools.override` capability
-during enablement. This lets the plugin add the `site_control` parameter on the existing
-`browser_exec` tool. Ordinary Python uses the original Hermes handler. Declining
-the grant leaves ordinary browsing available. To grant it later, use
+Approve the declared `tools.override` capability during enablement to use
+Original Chrome through `browser_exec.site_control`. To grant it later, use
 `hermes plugins enable original-chrome-default --allow-tool-override`.
 
 Review the source and dependency prompts that Hermes displays. In Browser Automation,
@@ -274,7 +269,7 @@ using `Path(__file__).parent`.
 
 After using DOM or screenshot fallback for a confirmed unmapped control, Hermes
 records the page or mode and the control in `missing-controls.jsonl` under that
-package's `data_directory`. Include the report with native fallback code when the control is already identified. This uses the same app and exact session with
+package's `data_directory`. Submit the report for the same app and exact session with
 `site_control` action `record_missing_control`.
 
 Packages execute trusted local Python code with the permissions of the Hermes
@@ -416,9 +411,7 @@ name. Profile paths are resolved from the macOS user's home directory at runtime
 
 Shared-profile cookies and website storage follow Chrome's normal behavior. Signing
 out, changing account settings, or modifying shared website data can affect every
-user of that same profile. Tab ownership governs the plugin's target routing. Native
-`browser_exec` runs Python with the permissions of the Hermes process, so agents
-should receive the same trust you would give an operator of that signed-in browser.
+user of that same profile. Tab ownership governs the plugin's target routing. Trusted packages run with the permissions of the Hermes process.
 
 The relay refuses browser-wide shutdown, browser-wide cookie/cache clearing, and
 operations targeting another session's windows. It forwards native DOM, JavaScript,

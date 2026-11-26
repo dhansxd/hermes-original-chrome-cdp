@@ -16,7 +16,7 @@ from hermes_cli.plugins import get_plugin_manager, invoke_hook
 from hermes_cli.plugins_manifest import parse_manifest_file
 from hermes_constants import set_hermes_home_override
 from model_tools import handle_function_call
-from native_windows import verify_cleanup, window_keys
+from native_windows import native_fixture_call, verify_cleanup, window_keys
 from tools.browser_session_lifecycle import cleanup_profile_browsers
 
 
@@ -160,7 +160,7 @@ def exercise_extended(stage, extension, script, learned, url, replay):
         if stage == 'learn':
             click_from_screenshot(script, zoom=1.2)
         else:
-            result = learned('click_learned_control', control=replay['Open options'])
+            result = learned('click', target='Open options')
             assert result.get('success'), result
         script('assert js("!document.querySelector(\'#options\').hidden")')
         if stage == 'learn':
@@ -188,7 +188,7 @@ assert js("location.pathname") == {pathname!r}
                 assert result['controls'][0]['destination'] == pathname, result
                 replay[label] = result['controls'][0]['id']
             else:
-                result = learned('click_learned_control', control=replay[label])
+                result = learned('click', target=label)
                 assert result.get('success'), result
                 script(f'assert js("location.pathname") == {pathname!r}')
         script(f'goto_url({url!r}); wait_for_element("#cancel-link", timeout=8)')
@@ -205,7 +205,7 @@ assert js("location.pathname") == {pathname!r}
             script('js("document.querySelector(\'#page-link\').href = \'/wrong-destination\'")')
             result = learned('list_learned_controls', label='Destination page')
             assert all(x['id'] != replay['Open page'] for x in result.get('suggestions', [])), result
-            result = learned('click_learned_control', control=replay['Open page'])
+            result = learned('click', target='Open page')
             assert result['status'] == 'needs_inspection' and not result['dispatched'], result
             script('assert js("location.pathname") == "/new-controls"')
     print('NATIVE_EXTENDED_CONTROLS_PASS', extension, stage, flush=True)
@@ -433,7 +433,10 @@ plugins:
                         return json.loads(result) if isinstance(result, str) else result
 
                     def script(code):
-                        result = call(code=code)
+                        # The fixture arranges and inspects the page with the original native handler.
+                        result = native_fixture_call(provider, owner, owner, turn,
+                                                     {'session': 'settings', 'code': code})
+                        result = json.loads(result) if isinstance(result, str) else result
                         assert result.get('success'), result
                         return result
 
@@ -445,6 +448,11 @@ plugins:
                             exercise_visual_continuation(script, learned, url, provider)
                             continue
                         if basic:
+                            if basic == 'structured':
+                                direct = call(code='click_at_xy(10, 10)')
+                                assert not direct.get('success'), direct
+                                old_click = learned('click_learned_control', control='1' * 24)
+                                assert not old_click.get('success'), old_click
                             exercise_basic_actions(basic, script, learned, origin, provider)
                             continue
                         if automatic:
@@ -465,25 +473,20 @@ plugins:
                         if stage in ('reuse', 'reuse-after-refresh'):
                             if stage == 'reuse':
                                 script(f'goto_url({(origin + "/other")!r}); wait_for_element("button", timeout=8)')
-                                other = learned('click_learned_control', control=control)
-                                assert other['status'] == 'needs_inspection' and not other['dispatched'], other
+                                other = learned('list_learned_controls', label='Show details')
+                                assert not other['controls'], other
                                 script('assert not js("document.body.dataset.clicked")')
                                 script(f'goto_url({url!r}); wait_for_element("button", timeout=8)')
                             if visual:
                                 script("cdp('Emulation.setPageScaleFactor', pageScaleFactor=1.1)")
                                 script('js("document.getElementById(\'banner\').hidden=false")')
-                                obscured = learned('click_learned_control', control=control)
+                                obscured = learned('click', target='Show details')
                                 assert obscured.get('reason') == 'obscured' and not obscured['dispatched'], obscured
                                 script('assert not js("document.body.dataset.clicked")')
                                 script('js("document.getElementById(\'banner\').hidden=true")')
-                            result = learned('click_learned_control', control=control)
+                            result = learned('click', target='Show details')
                             assert result.get('success') and result['status'] == 'ok', result
                         else:
-                            if stage == 'refresh':
-                                missed = learned('click_learned_control', control=control)
-                                assert missed['status'] == 'needs_inspection' and not missed['dispatched'], missed
-                                assert not learned('list_learned_controls')['controls']
-                                script('assert not js("document.body.dataset.clicked")')
                             if visual:
                                 click_from_screenshot(script, zoom=1.4 if stage == 'learn' else 1.2)
                                 script(f'assert js("document.body.dataset.clicked")=={("details-" + str(Fixture.version))!r}, js("document.body.dataset.event")')

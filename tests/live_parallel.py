@@ -21,6 +21,7 @@ from gateway.session_context import clear_session_vars, set_session_vars
 from hermes_constants import set_hermes_home_override
 from hermes_cli.plugins import get_plugin_manager, invoke_hook
 from hermes_cli.plugins_manifest import parse_manifest_file
+from native_windows import native_fixture_call
 from tools.browser_session_lifecycle import cleanup_profile_browsers
 from model_tools import handle_function_call
 
@@ -67,8 +68,11 @@ plugins:
                     tokens = set_session_vars(platform='cli', session_key='parallel-' + task,
                                               session_id=task + '-chat')
                     try:
-                        result = handle_function_call(tool, args, task_id=task, session_id=task + '-chat',
-                                                    turn_id=turns[task], tool_call_id=uuid.uuid4().hex)
+                        if tool == 'browser_exec' and 'code' in args:
+                            result = native_fixture_call(provider, task, task + '-chat', turns[task], args)
+                        else:
+                            result = handle_function_call(tool, args, task_id=task, session_id=task + '-chat',
+                                                        turn_id=turns[task], tool_call_id=uuid.uuid4().hex)
                         result = json.loads(result) if isinstance(result, str) else result
                         assert result.get('success'), result
                         return result

@@ -34,9 +34,14 @@ and verification evidence before calling a checklist item complete.
   Chrome manually after enable, and restore the previous browser settings
   manually before disable or remove. The Git URL is the supported install
   source for this plugin.
-- Execute site behavior only on explicit `site_control` calls. Leave native
-  fallback clicks and results to Hermes. Use `record_missing_control` to report
-  findings explicitly in the same owned session.
+- Accept one public click action in `browser_exec.site_control`. The agent
+  names the UI target. The plugin chooses the installed controls, learned
+  catalog, DOM and screenshot fallback for that target. A screenshot position
+  is accepted only to continue a click that returned a screenshot ID.
+- Reject public browser Python, catalog ID clicks and direct package click
+  operations while Original Chrome is selected. Trusted package code and
+  structured browser actions use the native executor internally. Keep
+  `record_missing_control` for reports without executable code.
 - Use one owned window in the original Chrome for the entire task. Reuse its
   CDP session for clicks, typing, progress checks, result collection and any
   requested delivery. Keep the other agents' and manual windows independent.
@@ -51,11 +56,10 @@ and verification evidence before calling a checklist item complete.
   every requested step before the final answer. Close the task's owned browser
   resources at completion unless the user request calls for keeping the
   window. Use the existing cleanup for Stop or failure.
-- Use the mapped control directly when available. For an unmapped control,
-  inspect the relevant DOM and use a screenshot as needed through the same
-  browser tool and window. When this happens on a site with an extension,
-  Hermes records the missing control for a later mapping update. Check the
-  active mode and panel first, since a menu or banner can hide a mapped control.
+- Use a mapped or learned control when it can be matched. If this fails
+  before dispatch, the plugin checks the DOM and uses a screenshot if needed
+  in the same window. Verify the outcome before repeating any dispatched click.
+  Record confirmed UI gaps and reuse controls whose effects were verified.
 - Keep Chrome in charge of profiles, login, and cookies. Drive the real UI
   through CDP and never copy or export cookies. Preserve the existing Chrome
   startup, profile selection, debugging consent, ownership and cleanup behavior.
@@ -85,8 +89,8 @@ and verification evidence before calling a checklist item complete.
 - Make the smallest change that addresses an observed issue or requested feature.
 - State material assumptions and concrete success criteria. Reuse existing code
   and keep planning and verification proportional to the change.
-- Preserve native Hermes provider registration and normal `browser_exec` calls.
-  Limit changes for mapped controls to the site extension integration.
+- Preserve native Hermes provider registration and execution behind structured
+  `browser_exec` calls. Limit mapped control changes to site integration.
 - Keep changes within this plugin. Preserve Hermes core and managed dependencies.
 - Protect other agents' and manual Chrome targets during every test and cleanup.
 - Keep credentials, browser state, personal identities, private media, and runtime

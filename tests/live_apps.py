@@ -20,6 +20,7 @@ from gateway.session_context import clear_session_vars, set_session_vars
 from hermes_constants import hermes_home_key, set_hermes_home_override
 from hermes_cli.plugins import get_plugin_manager, invoke_hook
 from hermes_cli.plugins_manifest import parse_manifest_file
+from native_windows import native_fixture_call
 from tools.browser_session_lifecycle import cleanup_profile_browsers, cleanup_single_session
 from tools import browser_session
 from tools.registry import registry
@@ -260,9 +261,8 @@ assert fresh_result['_research_receipt'] == {'chat': 'c_new-chat', 'home': '/app
     assert result['success'] and result.get('exit_code', 0) == 0, result
 
 
-def verify_research_fallback(call):
-    request = {'app': 'gemini', 'session': 'research'}
-    opened = call('research', **request, operation='open_chat')
+def verify_research_fallback(call, url):
+    opened = call('research', session='research', action='navigate', params={'url': url + '/app'})
     name = opened['session']
     call('research', session=name, code=r'''js("""document.body.innerHTML = `
         <form><fieldset>
@@ -279,27 +279,22 @@ def verify_research_fallback(call):
           document.querySelector('[role=textbox]').textContent = '';
         };
         document.querySelector('#references').onclick = () => window.references++;""")''')
-    sent = call('research', **request, operation='click', params={'control': 'send'})
+    sent = call('research', session=name, action='click', params={'target': 'Send'})
     assert sent['status'] == 'running'
-    repeat = call('research', **request, operation='click', params={'control': 'send'})
+    repeat = call('research', session=name, action='click', params={'target': 'Send'})
     assert repeat['status'] == 'running' and repeat['data']['reason'] == 'research_submission_pending'
-    code = 'js("document.querySelector(\'#references\').click()")'
-    raw = call('research', session=name, code=code)
-    verified = call('research', session=name, code='print(js("JSON.stringify([window.sends, window.references])"))')
-    assert json.loads(verified['output'].strip()) == [1, 1], (raw, verified)
-    assert raw['success'] and 'status' not in raw
-    paired = call('research', session=name, code=code,
-                  site_control=json.dumps({'app': 'gemini', 'action': 'record_missing_control',
-                    'params': {'page_or_mode': 'Gemini conversation',
-                               'control': 'Inspect references', 'fallback': 'dom'}}))
-    assert paired['success'] and 'status' not in paired
-    snapshot = call('research', session=name,
-                    code='print(js("document.body.innerText")); print(capture_screenshot())')
-    words, image = snapshot['output'].strip().rsplit('\n', 1)
-    assert snapshot.get('exit_code', 0) == 0 and 'References' in words
+    rejected = call('research', session=name, code='click_at_xy(1, 1)', public=True, require_success=False)
+    assert not rejected.get('success'), rejected
+    clicked = call('research', session=name, action='click', params={'target': 'References'},
+                   require_success=False)
+    assert clicked.get('dispatched') and clicked.get('source') == 'dom', clicked
+    words = call('research', session=name, action='read')
+    assert 'References' in json.loads(words['output'])['text'], words
+    snapshot = call('research', session=name, action='screenshot')
+    image = snapshot.get('screenshot_path') or snapshot.get('meta', {}).get('screenshot_path')
     assert Path(image).read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
     verified = call('research', session=name, code='print(js("JSON.stringify([window.sends, window.references])"))')
-    assert json.loads(verified['output'].strip()) == [1, 2]
+    assert json.loads(verified['output'].strip()) == [1, 1], verified
     return name
 
 
@@ -352,7 +347,7 @@ def verify_kept_window(call, run, provider, turns):
     assert call('research', action='list_windows')['windows'][0]['state'] == 'parked'
     assert call('parent', action='list_windows')['windows'] == []
     assert not call('parent', action='close_window', session=name, require_success=False)['success']
-    assert not call('parent', session=name, code='print(page_info())', require_success=False).get('success')
+    assert not call('parent', session=name, action='read', require_success=False).get('success')
     invoke_hook('agent_loop_stopped', session_key='apps-fixture-research', platform='cli',
                 reason='user_stop', invalidation_reason='session_interrupt')
     cleanup_single_session(owned.cache_key)
@@ -373,7 +368,7 @@ def verify_kept_window(call, run, provider, turns):
     assert call('research', action='list_windows')['windows'] == []
 
 
-def verify(*, research_only=False):
+def verify(*, research_only=False, click_only=False):
     source = Path(__file__).resolve().parents[1]
     server = ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -389,6 +384,10 @@ def verify(*, research_only=False):
                         ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
         gemini_app = local_gemini / 'app.py'
         gemini_app.write_text(gemini_app.read_text().replace('https://gemini.google.com', url))
+        manifest = local_gemini / 'app.json'
+        existing = json.loads(manifest.read_text().replace('https://gemini.google.com', url))
+        existing.pop('click_commands')  # Exercise the template already installed before the new host.
+        manifest.write_text(json.dumps(existing))
         (home / 'config.yaml').write_text('''browser:
   cloud_provider: original-chrome-default
   auto_local_for_private_urls: false
@@ -408,7 +407,7 @@ plugins:
             manager._load_plugin(parse_manifest_file(source / 'plugin.yaml', source, 'user', ''))
             provider = get_provider('original-chrome-default')
 
-            def call(task, tool='browser_exec', platform='cli', *, require_success=True, **args):
+            def call(task, tool='browser_exec', platform='cli', *, require_success=True, public=False, **args):
                 if tool == 'browser_exec' and 'code' not in args:
                     session = args.pop('session', 'default')
                     args = {'site_control': json.dumps(args), 'session': session}
@@ -416,11 +415,14 @@ plugins:
                     tokens = set_session_vars(platform=platform, session_key='apps-fixture-' + task,
                                               session_id=task + '-chat')
                     try:
-                        value = handle_function_call(tool, args, task_id=task, session_id=task + '-chat',
-                                                    turn_id=turns[task], tool_call_id=uuid.uuid4().hex)
+                        if tool == 'browser_exec' and 'code' in args and not public:
+                            value = native_fixture_call(provider, task, task + '-chat', turns[task], args)
+                        else:
+                            value = handle_function_call(tool, args, task_id=task, session_id=task + '-chat',
+                                                        turn_id=turns[task], tool_call_id=uuid.uuid4().hex)
                         result = json.loads(value) if isinstance(value, str) else value
                         if require_success:
-                            assert result.get('success'), result
+                            assert result.get('success') or result.get('_multimodal'), result
                         return result
                     finally:
                         clear_session_vars(tokens)
@@ -444,8 +446,10 @@ plugins:
                 assert call('parent', action='describe', app='fixture')['guide'] == 'Local fixture guide'
                 assert not provider.sessions and not provider.owners
                 report['discovery_and_guide_without_browser'] = True
-                research_session = verify_research_fallback(call)
+                research_session = verify_research_fallback(call, url)
                 report['mapped_send_and_native_fallback_share_one_window'] = True
+                if click_only:
+                    return report
                 if research_only:
                     verify_research_wait_and_stop(call, provider, research_session)
                     report['explicit_research_checks_keep_window_and_official_stop_cancels'] = True
@@ -610,4 +614,4 @@ plugins:
 
 
 if __name__ == '__main__':
-    print(json.dumps(verify(research_only='--research-only' in sys.argv), indent=2))
+    print(json.dumps(verify(research_only='--research-only' in sys.argv, click_only='--click-only' in sys.argv), indent=2))

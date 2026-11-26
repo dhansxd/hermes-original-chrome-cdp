@@ -12,7 +12,7 @@ import time
 from urllib.parse import urlsplit
 
 
-LEARNED_ACTIONS = ('list_learned_controls', 'click_learned_control', 'click')
+LEARNED_ACTIONS = ('list_learned_controls', 'click')
 STATES = ('aria-expanded', 'aria-pressed', 'aria-checked', 'aria-selected')
 
 # Reuse an unambiguous control with a repeatable, verifiable outcome.
@@ -668,8 +668,8 @@ def attempt_dom_control(url, target, run_expression, *, mapping=None, opens=None
 def click_by_target(catalog, url, page, target, run_expression, package_control):
     """Prefer a verified mapping, then inspect for the same target in the owned tab."""
     origin = url[0]
-    controls = catalog.list(origin, page, target)
-    if not controls:
+    controls = catalog.list(origin, page, target) if catalog is not None else []
+    if catalog is not None and not controls:
         controls = controls_on_page(catalog, url, page, target, run_expression)['controls']
     entry = catalog.get(controls[0]['id'], origin, page) if len(controls) == 1 else None
     if entry is not None:
@@ -695,7 +695,7 @@ def click_by_target(catalog, url, page, target, run_expression, package_control)
         return {**fallback(status, dispatched=status not in CLICK_NOT_SENT), 'source': source}
     result = {'success': True, 'status': 'ok', 'source': source, 'dispatched': True}
     label = candidate['label']
-    if not label or len(label) > 100 or not label.isprintable():
+    if catalog is None or not label or len(label) > 100 or not label.isprintable():
         return result
     proof = (candidate['label'], candidate['element_id'], candidate['state'], candidate['value'])
     catalog.record([(origin, page, proof)])
@@ -703,7 +703,7 @@ def click_by_target(catalog, url, page, target, run_expression, package_control)
     return {**result, 'control': learned['id'], 'repaired': entry is not None and source == 'dom'}
 
 
-def cached_action(catalog, command, run_expression, *, package_control=None):
+def cached_action(catalog, command, run_expression, *, package_control=None, package_action=None):
     params = command.get('params', {})
     action = command['action']
     if not isinstance(params, dict):
@@ -715,25 +715,23 @@ def cached_action(catalog, command, run_expression, *, package_control=None):
             raise ValueError('Pass one short visible target label to click.')
         url = run_expression('[location.origin, location.pathname]')
         _, page = page_key(url)
-        return click_by_target(catalog, url, page, target.strip(), run_expression, package_control)
-    if ((action == 'list_learned_controls' and
-         (set(params) - {'label'} or ('label' in params and
-          (not isinstance(params['label'], str) or not 0 < len(params['label']) <= 100))))
-            or (action == 'click_learned_control' and
-                (set(params) != {'control'} or not isinstance(params['control'], str)
-                 or not re.fullmatch(r'[0-9a-f]{24}', params['control'])))):
-        raise ValueError('Pass an optional exact label to list_learned_controls or a listed control ID to click_learned_control.')
+        target = target.strip()
+        if package_action:
+            result = package_action(url[0], target)
+            if result is not None:
+                return result
+        return click_by_target(catalog, url, page, target, run_expression, package_control)
+    if (action != 'list_learned_controls' or set(params) - {'label'} or
+            ('label' in params and (not isinstance(params['label'], str) or not 0 < len(params['label']) <= 100))):
+        raise ValueError('Pass an optional exact label to list_learned_controls.')
     url = run_expression('[location.origin, location.pathname]')
     origin, page = page_key(url)
-    if action == 'list_learned_controls':
-        return controls_on_page(catalog, url, page, params.get('label'), run_expression)
-    entry = catalog.get(params['control'], origin, page)
-    if entry is None:
-        return fallback('unmatched', dispatched=False)
-    return catalog_outcome(catalog, entry, replay_control(entry, url, run_expression))
+    if catalog is None:
+        return {'success': True, 'status': 'ok', 'site': origin, 'controls': []}
+    return controls_on_page(catalog, url, page, params.get('label'), run_expression)
 
 
 def fallback(reason, *, dispatched):
     return {'success': False, 'status': 'needs_inspection', 'reason': reason,
             'dispatched': dispatched, 'next': ('Check the current page before repeating the click.'
-                                              if dispatched else 'Use native DOM, then screenshot if needed.')}
+                                              if dispatched else 'Inspect the current page and use a named click for the requested control.')}

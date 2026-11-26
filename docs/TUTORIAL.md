@@ -5,8 +5,8 @@ Chrome profile on macOS. It uses your own local Chrome installation and sign-ins
 For Chrome on a second device, see [Windows setup](WINDOWS.md).
 
 Use `browser_exec` for both ordinary browsing and site controls. Pass each
-site request below as JSON text in its `site_control` parameter. Ordinary Python goes in
-the `code` parameter. Pass the same session to subsequent browser calls.
+request below as JSON text in its `site_control` parameter. Pass the same
+session to subsequent browser calls.
 
 ## Prepare Chrome and macOS
 
@@ -46,9 +46,7 @@ hermes plugins list
 ```
 
 During enablement, grant the declared Hermes capability `tools.override` to use
-site controls inside `browser_exec`. Hermes keeps its native browser handler for
-ordinary Python, DOM inspection and screenshots. If you decline, ordinary Chrome
-browsing remains available. To review the grant later, use
+Original Chrome through `browser_exec.site_control`. To review the grant later, use
 `hermes plugins enable original-chrome-default --allow-tool-override`.
 
 Hermes displays source-scan and dependency information during installation or
@@ -393,41 +391,18 @@ removal for future template installation.
 
 ## Automatically learned controls on Mac
 
-Once a page is open, DOM clicks and single left clicks through
-`browser_exec` can teach the plugin a control in Chrome on Mac. A click based
-on a screenshot or zoom is matched to the element that received it. The
-catalog stores the site origin and a page-specific match for that element.
-The control becomes reusable when its label is unique and Chrome confirms
-one of these outcomes in the same tab:
-
-- A same-origin link reaches its expected path. The catalog hashes that path.
-- A panel referenced by `aria-controls` or `popovertarget` becomes visible.
-- The button changes a supported accessible state such as `aria-expanded`.
-
-Other observed button clicks can stay as candidates until there is proof of
-their effect. Reuse also checks the current element and its target before clicking.
-
-Use these requests in the same `browser_exec` session.
+Use a named click on the current page:
 
 ```json
-{"action":"list_learned_controls"}
-{"action":"list_learned_controls","params":{"label":"Show details"}}
-{"action":"click_learned_control","params":{"control":"<ID returned by the catalog>"}}
+{"action":"click","params":{"target":"Show details"}}
 ```
 
-Learned links show their current UI label and a destination hint if the
-visible link still matches the verified route. An exact label lookup can
-return links in `suggestions` when the label differs from the request. Use the
-ID of a clear match. The hint is read from the current page and the catalog
-continues to store only the route hash.
-
-If a learned click returns `needs_inspection`, inspect the current page with
-native DOM and use a screenshot as needed. If the tool reports `dispatched`,
-check the visible result before trying the click again. A confirmed native
-DOM or pointer click can update the entry for later visits. Inspect the
-current page after an unexpected click. The catalog learns the element
-reached by the click and recalls it by its page context and identity, so
-the same control can be used across changes in zoom.
+The plugin checks installed and learned controls first, then falls back to DOM
+and screenshot as needed. When a screenshot ID is returned, continue the same
+click with its target, ID, and a point expressed as fractions of the image
+width and height. Inspect an uncertain result before repeating a dispatched
+click. The catalog reuses controls once Chrome confirms a navigation or UI
+state change in the owned tab.
 
 ## Keep a window across turns
 

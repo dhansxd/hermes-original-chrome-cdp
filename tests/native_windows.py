@@ -39,6 +39,17 @@ def window_keys():
         ax.clear()
 
 
+def native_fixture_call(provider, task_id, session_id, turn_id, args):
+    """Arrange or inspect a local fixture outside the public model tool."""
+    from tools.registry import registry
+
+    route = provider.prepare_call('browser_exec', args, task_id, session_id=session_id, turn_id=turn_id)
+    if not route or route.get('action') != 'modify':
+        return {'success': False, 'error': (route or {}).get('message')}
+    return registry.snapshot_registration('browser_exec').handler(
+        route['args'], task_id=task_id, session_id=session_id)
+
+
 def verify_cleanup(before, timeout=3):
     deadline = time.monotonic() + timeout
     while True:

@@ -16,16 +16,16 @@ open a menu with a named click in that same session:
 {"action":"click","params":{"target":"Model picker"}}
 ```
 
-Read any required labels from the open menu using the native DOM helpers.
+Read any required labels from the open menu using `read`.
 Use the package's mapped operations below for composing, selecting a tool or
 model, and following a submission.
 
 For an existing Deep Research report, open its conversation and call
-`read_result`. Follow the offered `open_research_report` control and read
+`read_result`. Follow the offered `Open research report` control and read
 the report in that same session.
 
 To start Deep Research, use the topic from the request or the conversation. Ask for
-the topic if it is missing. Select `deep_research`, enter the topic, then send it
+the topic if it is missing. Select `Deep Research`, enter the topic, then send it
 once. A confirmed selection returns `mode_active: true`. If Send reports that
 Deep Research is inactive, inspect the composer in the same window and confirm
 the selection before sending. Use the same composer actions for a research
@@ -44,23 +44,21 @@ fallback.
 | --- | --- |
 | `open_chat` | Open Gemini Web or an existing conversation by ID |
 | `type_prompt` | Fill the empty composer without submitting |
-| `click` | Use a named control such as `create_image`, `deep_research`, or `send`. Send reports `running` while the request is still awaiting its result. |
+| `click` | Request a UI target such as `Create image`, `Deep Research`, or `Send`. Send reports `running` while Gemini prepares the result. |
 | `select_model` | Click the model matching the visible label |
 | `read_result` | Read the latest visible text response or report that it is still running |
 
 For example, select a mapped tool in the open chat using:
 
 ```json
-{"action":"run","app":"gemini","operation":"click","session":"work","params":{"control":"create_image"}}
+{"action":"click","session":"work","params":{"target":"Create image"}}
 ```
 
 The action returns only its result. If a control is unmapped, hidden behind a
-banner, or otherwise unavailable, the result is `needs_inspection`. Pass its
-returned `session` to native `browser_exec`. Inspect the relevant DOM or use a
-screenshot if needed, then continue with the same Chrome window. After Send,
+banner, or otherwise unavailable, the result is `needs_inspection`. Use its returned `session` to inspect the result with `read` or `screenshot`. After Send,
 verify that the new response has appeared and finish any requested download
 before ending the turn. If Send is unconfirmed, check the chat before retrying.
-For an existing or newly generated video, call `click` with `control: download_video`
+For an existing or newly generated video, call `click` with `target: Download video`
 on the requested response. Follow `read_result` while Chrome finishes its download.
 Use the verified `data.file.path` for the current channel's requested attachment.
 A “video ready” message only confirms generation. If verification fails, report the

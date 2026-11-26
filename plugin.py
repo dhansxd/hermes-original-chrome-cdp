@@ -753,33 +753,23 @@ def prepare_call(tool_name, args, task_id, *, session_id='', turn_id='', provide
     return {'action': 'modify', 'args': changes}
 
 
-SITE_HELP = ('Use browser_exec for website tasks in Original Chrome. The site-controls skill covers '
-             'navigation, mapped website actions and using a kept window in a later turn. '
-             'Use browser_exec directly for Gemini Web and Google Flow, including requests called '
-             'browser_app in older chats. To open Gemini pass site_control as JSON text: '
-             '{"app":"gemini","operation":"open_chat"}. To see a site guide use action describe with its app ID. '
-             'Use site_control action read for visible DOM text in the open page, optionally with a CSS selector. '
-             'Use code with site_control omitted or null for other DOM inspection, screenshots and ordinary '
-             'browsing in the same session. For a confirmed unmapped UI control, include site_control action '
-             'record_missing_control with the native code to log the finding and act in one call. '
-             'For a named site section with no URL supplied, start on the site home page and check '
-             'list_learned_controls before navigating to the section. With a page open, use '
-             'list_learned_controls before inspecting the DOM for a requested UI action. '
-             'Match the label or verified destination, checking suggestions after an exact-label miss. '
-             'Use click_learned_control with the ID of the unambiguous match. On needs_inspection, continue '
-             'with the native DOM or screenshot in the same session. Check the page before replaying '
-             'a click whose result was not confirmed. '
-             'Use keep_window when the user wants the page to remain available after the turn. '
-             'Use list_windows and close_window to find or close a kept session in this conversation.')
+SITE_HELP = ('Drive the task’s Original Chrome window with browser_exec.site_control. '
+             'Use navigate to open URLs, read to inspect visible page text, type for fields, and '
+             'click with the desired UI target. The plugin selects site controls, the learned catalog, '
+             'DOM, and screenshot fallback in the current window. When click asks for a screenshot '
+             'position, continue the same click with its screenshot ID. Check an uncertain result before '
+             'repeating. Use screenshot alone when the user needs an image of the page. '
+             'Use describe with a site ID for its guide and operations. Use keep_window, list_windows, '
+             'and close_window for windows the user explicitly wants to keep or resume.')
 
 
 def with_site_controls(schema):
     parameters = schema['parameters']
-    fields = parameters['properties']
-    code = {**fields['code'], 'description': fields['code']['description'] + ' Use with record_missing_control for a confirmed DOM or screenshot fallback.'}
-    return {**schema, 'description': SITE_HELP + '\n\n' + schema['description'], 'parameters': {
-        **parameters, 'properties': {**fields, 'code': code, 'site_control': CONTROL_SCHEMA},
-        'required': [key for key in parameters.get('required', []) if key != 'code'],
+    fields = {key: value for key, value in parameters['properties'].items()
+              if key not in {'code', 'local'}}
+    return {**schema, 'description': SITE_HELP, 'parameters': {
+        **parameters, 'properties': {**fields, 'site_control': CONTROL_SCHEMA},
+        'required': ['site_control'],
     }}
 
 
@@ -795,6 +785,11 @@ def register_site_controls(ctx, apps):
 
     def browser_control(args, **context):
         return apps.execute(args, native.handler, **context)
+
+    def dispatch_package_browser(_tool_name, args, **context):
+        return native.handler(args, **context)
+
+    apps.dispatch = dispatch_package_browser
 
     def browser_schema():
         overrides = native.dynamic_schema_overrides() if native.dynamic_schema_overrides else {}

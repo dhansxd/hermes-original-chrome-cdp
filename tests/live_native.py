@@ -49,10 +49,11 @@ class Handler(BaseHTTPRequestHandler):
 server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
 threading.Thread(target=server.serve_forever,daemon=True).start()
 base=f'http://127.0.0.1:{server.server_port}'
-from hermes_cli.plugins import get_plugin_manager,_dispatch_pre_tool_call_hooks
+from hermes_cli.plugins import get_plugin_manager
 from hermes_cli.plugins_manifest import parse_manifest_file
 from tools.registry import registry
 import tools.browser_use_cli as native
+from native_windows import native_fixture_call
 from tools.browser_session_lifecycle import cleanup_profile_browsers
 source=Path(__file__).resolve().parents[1];results=[]
 turns={task:uuid.uuid4().hex for task in ('A','B','C','D')}
@@ -65,9 +66,7 @@ with set_hermes_home_override(home):
  def call(task,code,timeout=60,success=True):
   with set_hermes_home_override(home), scoped_session_key('fixture-route-'+task):
    args={'code':code,'session':'same','timeout_s':timeout}
-   blocked,modified=_dispatch_pre_tool_call_hooks('browser_exec',args,task_id=task,session_id=task+'-chat',turn_id=turns[task],tool_call_id=uuid.uuid4().hex)
-   assert not blocked,blocked
-   result=registry.dispatch('browser_exec',modified or args,scope=str(home),task_id=task)
+   result=native_fixture_call(provider, task, task+'-chat', turns[task], args)
    result=json.loads(result) if isinstance(result,str) else result
    results.append({'task':task,'result':result});print(json.dumps(results[-1]),flush=True)
    assert bool(result.get('success'))==success,result

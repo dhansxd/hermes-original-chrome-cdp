@@ -113,19 +113,24 @@ class BrowserAppTests(unittest.TestCase):
         self.host.execute(args, native, **ctx)
         self.assertFalse(path.exists())
 
-    def test_declared_missing_control_and_native_screenshot_in_one_owned_call(self):
+    def test_missing_control_report_and_screenshot_are_separate_owned_actions(self):
         self.package()
         session = self.invoke()['session']
         command = {'action': 'record_missing_control', 'app': 'fixture',
                    'params': {'page_or_mode': 'Settings', 'control': 'Show credits', 'fallback': 'screenshot'}}
-        args = {'site_control': json.dumps(command), 'session': session, 'code': 'screenshot()'}
-        native = Mock(return_value='screenshot result')
+        args = {'site_control': json.dumps(command), 'session': session}
+        native = Mock(return_value={'success': True, 'screenshot_path': '/fixture/shot.png'})
         with patch('hermes_cli.config.load_config_readonly', return_value=self.config):
-            self.assertEqual(self.host.execute(args, native, task_id='A', session_id='chat-A'), 'screenshot result')
+            report = self.host.execute(args, native, task_id='A', session_id='chat-A')
             wrong = self.host.execute(args, native, task_id='B', session_id='chat-B')
+        self.assertTrue(json.loads(report)['success'])
         self.assertFalse(json.loads(wrong)['success'])
-        self.assertEqual(native.call_count, 1)
-        self.assertEqual(native.call_args.args[0], {'session': session, 'code': 'screenshot()'})
+        native.assert_not_called()
+        result = self.dispatch_native({'session': session, 'site_control': {'action': 'screenshot'}},
+                                      native, task_id='A', session_id='chat-A', turn_id='turn')
+        self.assertEqual(result, native.return_value)
+        self.assertEqual(native.call_args.args[0]['session'], session)
+        self.assertIn('capture_screenshot(', native.call_args.args[0]['code'])
         self.assertTrue((self.root / 'data/browser-apps/fixture/missing-controls.jsonl').is_file())
 
     def test_terminal_guardrail_halt_releases_only_the_running_owner(self):
@@ -171,24 +176,73 @@ class BrowserAppTests(unittest.TestCase):
             self.assertIn(skill, build_skills_system_prompt(available_tools={'browser_exec', 'skill_view'}, **settings))
             self.assertNotIn(skill, build_skills_system_prompt(available_tools={'skill_view'}, **settings))
 
-    def test_running_site_does_not_replace_explicit_native_browser_code(self):
-        self.package(source='''FALLBACK_CLICK_OBSERVER = "legacy observer"
-def fallback_send_pending(context):
-    return True
-def run(context, operation, params):
-    return params
-''')
+    def test_reading_an_active_site_does_not_restart_its_operation(self):
+        self.package()
         started = self.invoke(params={'status': 'running'})
-        native = Mock(return_value=json.dumps({'success': True, 'output': 'browser output'}))
-        for script in ('import time\ntime.sleep(120)\nprint(page_info())',
-                       'js("document.querySelector(\'#send\').click()")'):
-            with self.subTest(script=script):
-                result = self.dispatch_native({'session': started['session'], 'code': script}, native,
-                                              task_id='A', session_id='chat-A', turn_id='turn')
-                self.assertEqual(result, native.return_value)
-                self.assertEqual(native.call_args.args[0]['code'], plugin.prepare_code(script))
-                self.assertEqual(native.call_args.args[0]['session'], started['session'])
+        native = Mock(return_value=json.dumps({'success': True, 'output': 'page output'}))
+        result = self.dispatch_native(
+            {'session': started['session'], 'site_control': {'action': 'read'}},
+            native, task_id='A', session_id='chat-A', turn_id='turn')
+        self.assertEqual(result, native.return_value)
+        self.assertEqual(native.call_args.args[0]['session'], started['session'])
+        self.assertIn('innerText', native.call_args.args[0]['code'])
         self.dispatch.assert_not_called()
+
+    def test_seeded_package_inherits_click_names_without_replacing_its_files(self):
+        self.host.bundled_source = Path(browser_apps.__file__).parent / 'site_apps'
+        self.host.seed_packages(self.host.bundled_source)
+        path = self.host.root / 'gemini' / 'app.json'
+        previous = json.loads(path.read_text())
+        previous.pop('click_targets')
+        previous.pop('click_commands')
+        path.write_text(json.dumps(previous))
+        origin = 'https://gemini.google.com'
+        chosen = self.host.site_click_mapping(origin, 'Send', commands=True)
+        self.assertEqual(chosen['params'], {'control': 'send'})
+        self.assertEqual(json.loads(path.read_text()), previous)
+
+        edited = {**previous, 'click_commands': {}}
+        path.write_text(json.dumps(edited))
+        self.assertIsNone(self.host.site_click_mapping(origin, 'Send', commands=True))
+        self.assertEqual(json.loads(path.read_text()), edited)
+
+    def test_public_tool_schema_exposes_only_structured_browser_execution(self):
+        native = {'description': 'Run Python', 'parameters': {'type': 'object',
+                  'properties': {'code': {'type': 'string'}, 'local': {'type': 'boolean'},
+                                 'session': {'type': 'string'}, 'timeout_s': {'type': 'number'}},
+                  'required': ['code']}}
+        schema = plugin.with_site_controls(native)
+        self.assertEqual(set(schema['parameters']['properties']), {'site_control', 'session', 'timeout_s'})
+        self.assertEqual(schema['parameters']['required'], ['site_control'])
+        self.assertEqual(native['parameters']['required'], ['code'])
+
+    def test_original_chrome_rejects_alternate_click_entry_points(self):
+        self.package()
+        session = self.invoke()['session']
+        requests = [
+            {'code': "click_at_xy(10, 20)"},
+            {'code': "js('document.querySelector(\"button\").click()')",
+             'site_control': json.dumps({'action': 'read'})},
+            {'site_control': json.dumps({'action': 'click_learned_control',
+                                        'params': {'control': '1' * 24}})},
+            {'site_control': json.dumps({'app': 'fixture', 'operation': 'click',
+                                        'params': {'control': 'settings'}})},
+            {'code': "click_at_xy(10, 20)",
+             'site_control': json.dumps({'action': 'record_missing_control', 'app': 'fixture',
+                                         'params': {'page_or_mode': 'Fixture', 'control': 'Test',
+                                                    'fallback': 'screenshot'}})},
+        ]
+        native = Mock(return_value='{"success":true}')
+        with patch('hermes_cli.config.load_config_readonly', return_value=self.config):
+            for request in requests:
+                args = {**request, 'session': session}
+                with self.subTest(request=request):
+                    prepared = self.host.prepare_call('browser_exec', args, 'A',
+                                                      session_id='chat-A', turn_id='turn')
+                    self.assertEqual(prepared['action'], 'block', prepared)
+                    result = json.loads(self.host.execute(args, native, task_id='A', session_id='chat-A'))
+                    self.assertFalse(result['success'], result)
+        native.assert_not_called()
 
     def test_basic_browser_action_reuses_site_window_and_native_timeout(self):
         self.package()
@@ -479,9 +533,9 @@ def run(context, operation, params):
             with patch('hermes_cli.config.load_config_readonly', return_value=self.config):
                 self.host.execute({**args, **changes['args']}, lambda args, **kw: self.dispatch('browser_exec', args), **identity)
             return changes['args']['session']
-        ordinary = call(code='print(page_info())')
+        ordinary = call(site_control={'action': 'navigate', 'params': {'url': 'https://example.com'}})
         mapped = call(site_control=json.dumps({'app': 'fixture', 'operation': 'inspect'}))
-        screenshot = call(code='capture_screenshot()')
+        screenshot = call(site_control={'action': 'screenshot'})
         self.assertEqual([ordinary, mapped, screenshot], [ordinary] * 3)
         self.assertEqual([entry.args[1]['session'] for entry in self.dispatch.call_args_list], [ordinary] * 3)
         self.assertEqual(set(self.provider.owners), {ordinary})
@@ -495,15 +549,13 @@ def run(context, operation, params):
                 self.dispatch.assert_not_called()
 
     def test_model_supplied_optional_fields_do_not_change_the_requested_action(self):
-        args = {'code': 'print("unused")', 'site_control': {'app': 'fixture', 'operation': 'inspect',
+        args = {'site_control': {'app': 'fixture', 'operation': 'inspect',
                 'action': '', 'job': '', 'target_profile': '', 'session': None, 'params': {}}}
-        self.assertTrue(browser_apps.has_site_request(args))
         self.assertEqual(browser_apps.site_request(args), {'app': 'fixture', 'operation': 'inspect',
                                                            'action': 'run', 'params': {}})
         for control in [None, '', 'null', '{}']:
-            ordinary = {'code': 'print(page_info())', 'site_control': control}
-            self.host.execute(ordinary, self.dispatch)
-            self.dispatch.assert_called_with(ordinary)
+            with self.assertRaises(ValueError):
+                browser_apps.site_request({'code': 'print(page_info())', 'site_control': control})
 
     def test_site_commands_respect_the_provider_and_permission(self):
         args = {'site_control': {'action': 'list'}}

@@ -21,6 +21,7 @@ from hermes_cli.plugins import get_plugin_manager, _dispatch_pre_tool_call_hooks
 from hermes_cli.plugins_manifest import parse_manifest_file
 from agent.browser_registry import get_provider
 from tools.registry import registry
+from native_windows import native_fixture_call
 from tools.browser_session_lifecycle import cleanup_profile_browsers
 from profiles import get_profile
 from relay import ChromeSession
@@ -69,6 +70,9 @@ plugins:
             def call(task, tool='browser_exec', **arguments):
                 with set_hermes_home_override(home), scoped_session_key('profile-fixture-' + task):
                     args = {'session': 'work', **arguments}
+                    if tool == 'browser_exec':
+                        result = native_fixture_call(provider, task, 'chat-' + task, turns[task], args)
+                        return json.loads(result) if isinstance(result, str) else result
                     blocked, modified = _dispatch_pre_tool_call_hooks(
                         tool, args, task_id=task, session_id='chat-' + task,
                         turn_id=turns[task], tool_call_id=uuid.uuid4().hex)
