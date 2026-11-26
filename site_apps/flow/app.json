@@ -5,6 +5,15 @@
   "version": "0.4.6",
   "profile_policy": "rotate_on_limit",
   "handoff_mode": "manual",
+  "click_targets": {
+    "origin": "https://flow.google.com",
+    "controls": {
+      "Settings": {
+        "selector": "button.settings-trigger-button",
+        "opens": "flow-prompt-box-settings"
+      }
+    }
+  },
   "operations": {
     "inspect": {
       "description": "Confirm the project, active mode and visible controls. Use configure in the same session to read the complete model options.",

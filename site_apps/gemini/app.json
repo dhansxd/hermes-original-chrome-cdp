@@ -6,6 +6,15 @@
   "profile_policy": "rotate_on_limit",
   "handoff_mode": "manual",
   "rolling_parameters": {"reply": "continuation"},
+  "click_targets": {
+    "origin": "https://gemini.google.com",
+    "controls": {
+      "Tools": {
+        "selector": "button[aria-haspopup=menu]:has(mat-icon[fonticon=plus]),button[aria-label=Tools],button[aria-label=Alat],button[aria-label='Upload and tools'],button[aria-label='Upload & alat']",
+        "opens": "gem-menu-item:has(mat-icon[fonticon=image_create]),[role=menu] [aria-label='Create image'],[role=menu] [aria-label='Buat gambar']"
+      }
+    }
+  },
   "operations": {
     "open_chat": {
       "description": "Open Gemini Web or an existing conversation by ID in this Chrome session. Return only the current chat ID.",

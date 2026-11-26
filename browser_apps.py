@@ -515,10 +515,51 @@ class AppHost:
             catalog = self.provider.learning_catalog()
             if catalog is None:
                 raise RuntimeError('Learned controls are available on local Chrome.')
-            result = cached_action(catalog, command, run_expression)
+            result = cached_action(catalog, command, run_expression, package_control=self.click_mapping)
+            if (command['action'] == 'click' and not result.get('dispatched')
+                    and result.get('reason') in {'unmatched', 'obscured'}):
+                shot = native({'session': args['session'], 'code': 'print(capture_screenshot(max_dim=1200))'},
+                              **context)
+                shot = json.loads(shot) if isinstance(shot, str) else shot
+                if isinstance(shot, dict):
+                    source = shot.get('meta', {}) if shot.get('_multimodal') else shot
+                    path = source.get('screenshot_path')
+                    if path:
+                        result.update(source='screenshot', screenshot_path=path,
+                                      next='Locate the requested target in this screenshot before dispatching.')
+                        if shot.get('_multimodal'):
+                            summary = json.dumps(result, ensure_ascii=False)
+                            images = [item for item in shot.get('content', []) if item.get('type') == 'image_url']
+                            return {**shot, 'text_summary': summary,
+                                    'content': [{'type': 'text', 'text': summary}, *images]}
         except (KeyError, TypeError, OSError, sqlite3.Error, ValueError, RuntimeError) as error:
             result = fallback(str(error), dispatched=attempted)
         return json.dumps(result, ensure_ascii=False)
+
+    def click_mapping(self, origin, target):
+        """Find the enabled package for the current site without executing it."""
+        if self.bundled_source:
+            self.seed_packages(self.bundled_source)
+        matches = []
+        for manifest in sorted(self.root.glob('*/app.json')):
+            identifier = manifest.parent.name
+            if identifier in self.changing or self.get_setting('apps_disabled.' + identifier):
+                continue
+            try:
+                _, metadata, _ = read_package(self.root, identifier)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            mapping = metadata.get('click_targets')
+            if not isinstance(mapping, dict) or mapping.get('origin') != origin:
+                continue
+            controls = mapping.get('controls')
+            spec = controls.get(target) if isinstance(controls, dict) else None
+            if (not isinstance(spec, dict) or 'selector' not in spec or set(spec) - {'selector', 'opens'}
+                    or not all(isinstance(value, str) and 0 < len(value) <= 512
+                               and value.isprintable() for value in spec.values())):
+                continue
+            matches.append(spec)
+        return matches[0] if len(matches) == 1 else None
 
     def manage(self, action, identifier):
         directory = self.root / identifier

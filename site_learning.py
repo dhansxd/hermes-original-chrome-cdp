@@ -12,7 +12,7 @@ import time
 from urllib.parse import urlsplit
 
 
-LEARNED_ACTIONS = ('list_learned_controls', 'click_learned_control')
+LEARNED_ACTIONS = ('list_learned_controls', 'click_learned_control', 'click')
 STATES = ('aria-expanded', 'aria-pressed', 'aria-checked', 'aria-selected')
 
 # Reuse an unambiguous control with a repeatable, verifiable outcome.
@@ -54,6 +54,12 @@ const knownLink = entry => {
     const candidates = matchingControl(linkSelector, entry.label);
     return candidates.length === 1 && candidates[0].id === entry.element_id ? candidates[0] : null;
 };
+const unobscured = element => {
+    const rect = element.getBoundingClientRect();
+    const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return element.contains(top);
+};
+const oneVisible = selector => [...document.querySelectorAll(selector)].filter(usable).length === 1;
 """
 
 _OBSERVER = r"""
@@ -172,12 +178,12 @@ _DESCRIBE_LINKS = r"""
 _CLICK = r"""
 ((entry, origin, path) => {
     if (location.origin !== origin || location.pathname !== path) return 'wrong_page';
-    const candidates = matchingControl(entry.state === 'navigation' ? linkSelector : selector, entry.label);
+    const candidates = entry.selector ? [...document.querySelectorAll(entry.selector)].filter(usable)
+        : matchingControl(entry.state === 'navigation' ? linkSelector : selector, entry.label);
     if (candidates.length !== 1 || candidates[0].id !== entry.element_id) return 'unmatched';
     const button = candidates[0];
-    const rect = button.getBoundingClientRect();
-    const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-    if (!button.contains(top)) return 'obscured';
+    if (label(button) !== entry.label) return 'unmatched';
+    if (!unobscured(button)) return 'obscured';
     if (entry.state === 'navigation') {
         if (linkPath(button) !== entry.value) return 'unmatched';
         button.click();
@@ -189,6 +195,15 @@ _CLICK = r"""
         button.click();
         return button.isConnected && panelVisible(entry.value) ? 'verified' : 'unconfirmed';
     }
+    if (entry.state === 'selector-visible') {
+        if (oneVisible(entry.value)) return 'state_changed';
+        button.click();
+        return button.isConnected && oneVisible(entry.value) ? 'verified' : 'unconfirmed';
+    }
+    if (entry.state === 'unverified') {
+        button.click();
+        return 'unconfirmed';
+    }
     const before = button.getAttribute(entry.state);
     if (!['true', 'false'].includes(before) || before === entry.value) return 'state_changed';
     button.click();
@@ -196,6 +211,34 @@ _CLICK = r"""
         ? 'verified' : 'unconfirmed';
 })(ENTRY, ORIGIN, ROUTE)
 """
+
+_FIND_DOM_CONTROL = r"""
+((request, origin, path) => {
+    if (location.origin !== origin || location.pathname !== path) return {reason:'wrong_page'};
+    const candidates = request.selector ? [...document.querySelectorAll(request.selector)].filter(usable)
+        : matchingControl(selector + ',' + linkSelector, request.target);
+    if (candidates.length !== 1) return {reason:'unmatched'};
+    const button = candidates[0];
+    if (!unobscured(button)) return {reason:'obscured'};
+    const info = {label:label(button), element_id:button.id};
+    const destination = linkPath(button);
+    if (destination) return {...info, state:'navigation', value:destination};
+    if (!button.matches(selector)) return {reason:'unmatched'};
+    if (request.opens) {
+        if (oneVisible(request.opens)) return {reason:'state_changed'};
+        return {...info, state:'selector-visible', value:request.opens};
+    }
+    for (const state of CLICK_STATES) {
+        const before = button.getAttribute(state);
+        if (before === 'true' || before === 'false') {
+            return {...info, state, value:before === 'true' ? 'false' : 'true'};
+        }
+    }
+    const panel = panelId(button);
+    if (panel && !panelVisible(panel)) return {...info, state:'panel-visible', value:panel};
+    return {...info, state:'unverified', value:''};
+})(ENTRY, ORIGIN, ROUTE)
+""".replace("CLICK_STATES", json.dumps(STATES))
 
 
 def page_key(url):
@@ -507,14 +550,111 @@ def controls_on_page(catalog, url, page, label, run_expression):
     return result
 
 
-def cached_action(catalog, command, run_expression):
-    """Use the current native tab and dispatch at most one explicit DOM click."""
+def replay_control(entry, url, run_expression):
+    """Send at most one click and verify the result on the same page attachment."""
+    origin = url[0]
+    data = {key: entry[key] for key in ('label', 'element_id', 'state', 'value')}
+    if entry.get('selector'):
+        data['selector'] = entry['selector']
+
+    if data['state'] == 'navigation':
+        destination = run_expression(page_expression(_FIND_LINK, data, url))
+        if (not isinstance(destination, str) or not destination.startswith('/')
+                or page_key([origin, destination])[1] != data['value']):
+            return 'unmatched'
+        data['value'] = destination
+    status = run_expression(page_expression(_CLICK, data, url), click=True)
+    if status == 'navigation_dispatched':
+        expected = [origin, data['value']]
+        reached = run_expression('[location.origin, location.pathname]', until=expected)
+        status = 'verified' if reached == expected else 'unconfirmed'
+    return status if isinstance(status, str) else 'unconfirmed'
+
+
+CLICK_NOT_SENT = ('unmatched', 'wrong_page', 'obscured', 'state_changed')
+
+
+def catalog_outcome(catalog, entry, status):
+    if status == 'verified':
+        return {'success': True, 'status': 'ok', 'control': entry['id'], 'dispatched': True}
+    if status == 'unmatched' or status not in CLICK_NOT_SENT:
+        catalog.stale(entry)
+    return fallback(status, dispatched=status not in CLICK_NOT_SENT)
+
+
+def attempt_dom_control(url, target, run_expression, *, mapping=None, opens=None, previous=None):
+    request = {'target': target, **(mapping or {})}
+    if opens:
+        request['opens'] = opens
+    candidate = run_expression(page_expression(_FIND_DOM_CONTROL, request, url))
+    if not isinstance(candidate, dict):
+        return None, 'unmatched'
+    if candidate.get('reason'):
+        return None, candidate['reason']
+    if candidate['state'] == 'navigation':
+        _, candidate['value'] = page_key([url[0], candidate['value']])
+    if previous and (candidate['state'], candidate['value']) != (previous['state'], previous['value']):
+        # Check the verified effect before retrying under a changed DOM.
+        return None, 'state_changed'
+    if mapping:
+        candidate['selector'] = mapping['selector']
+    return candidate, replay_control(candidate, url, run_expression)
+
+
+def click_by_target(catalog, url, page, target, run_expression, package_control):
+    """Prefer a verified mapping, then inspect for the same target in the owned tab."""
+    origin = url[0]
+    controls = catalog.list(origin, page, target)
+    if not controls:
+        controls = controls_on_page(catalog, url, page, target, run_expression)['controls']
+    entry = catalog.get(controls[0]['id'], origin, page) if len(controls) == 1 else None
+    if entry is not None:
+        status = replay_control(entry, url, run_expression)
+        if status not in ('unmatched', 'obscured'):
+            return {**catalog_outcome(catalog, entry, status), 'source': 'catalog'}
+        if status == 'unmatched':
+            catalog.stale(entry)
+
+    # Use the original label for lookups after the display name of a cached link was resolved.
+    target = entry['label'] if entry else target
+    mapped = package_control(origin, target) if not entry and package_control else None
+    opens = entry['value'] if entry and entry['state'] == 'selector-visible' else None
+    source = 'package'
+    candidate, status = None, 'unmatched'
+    if mapped:
+        candidate, status = attempt_dom_control(url, target, run_expression, mapping=mapped)
+        opens = mapped.get('opens')
+    if status in ('unmatched', 'obscured'):
+        source = 'dom'
+        candidate, status = attempt_dom_control(url, target, run_expression, opens=opens, previous=entry)
+    if status != 'verified':
+        return {**fallback(status, dispatched=status not in CLICK_NOT_SENT), 'source': source}
+    result = {'success': True, 'status': 'ok', 'source': source, 'dispatched': True}
+    label = candidate['label']
+    if not label or len(label) > 100 or not label.isprintable():
+        return result
+    proof = (candidate['label'], candidate['element_id'], candidate['state'], candidate['value'])
+    catalog.record([(origin, page, proof)])
+    learned, = catalog.list(origin, page, candidate['label'])
+    return {**result, 'control': learned['id'], 'repaired': entry is not None and source == 'dom'}
+
+
+def cached_action(catalog, command, run_expression, *, package_control=None):
     params = command.get('params', {})
     action = command['action']
-    if (not isinstance(params, dict)
-            or (action == 'list_learned_controls' and
-                (set(params) - {'label'} or ('label' in params and
-                 (not isinstance(params['label'], str) or not 0 < len(params['label']) <= 100))))
+    if not isinstance(params, dict):
+        raise ValueError('Browser action params must be an object.')
+    if action == 'click':
+        target = params.get('target')
+        if (set(params) != {'target'} or not isinstance(target, str)
+                or not 0 < len(target.strip()) <= 100 or not target.strip().isprintable()):
+            raise ValueError('Pass one short visible target label to click.')
+        url = run_expression('[location.origin, location.pathname]')
+        _, page = page_key(url)
+        return click_by_target(catalog, url, page, target.strip(), run_expression, package_control)
+    if ((action == 'list_learned_controls' and
+         (set(params) - {'label'} or ('label' in params and
+          (not isinstance(params['label'], str) or not 0 < len(params['label']) <= 100))))
             or (action == 'click_learned_control' and
                 (set(params) != {'control'} or not isinstance(params['control'], str)
                  or not re.fullmatch(r'[0-9a-f]{24}', params['control'])))):
@@ -526,26 +666,7 @@ def cached_action(catalog, command, run_expression):
     entry = catalog.get(params['control'], origin, page)
     if entry is None:
         return fallback('unmatched', dispatched=False)
-    data = {key: entry[key] for key in ('label', 'element_id', 'state', 'value')}
-
-    if data['state'] == 'navigation':
-        destination = run_expression(page_expression(_FIND_LINK, data, url))
-        if (not isinstance(destination, str) or not destination.startswith('/')
-                or page_key([origin, destination])[1] != data['value']):
-            catalog.stale(entry)
-            return fallback('unmatched', dispatched=False)
-        data['value'] = destination
-    status = run_expression(page_expression(_CLICK, data, url), click=True)
-    if status == 'navigation_dispatched':
-        expected = [origin, data['value']]
-        reached = run_expression('[location.origin, location.pathname]', until=expected)
-        status = 'verified' if reached == expected else 'unconfirmed'
-    if status == 'verified':
-        return {'success': True, 'status': 'ok', 'control': entry['id'], 'dispatched': True}
-    no_click = status in ('unmatched', 'wrong_page', 'obscured', 'state_changed')
-    if status == 'unmatched' or not no_click:
-        catalog.stale(entry)
-    return fallback(status if isinstance(status, str) else 'unconfirmed', dispatched=not no_click)
+    return catalog_outcome(catalog, entry, replay_control(entry, url, run_expression))
 
 
 def fallback(reason, *, dispatched):

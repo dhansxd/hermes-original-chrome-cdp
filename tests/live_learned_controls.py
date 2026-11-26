@@ -63,6 +63,15 @@ document.querySelector('#spa-link').onclick = event => {
 };
 document.querySelector('#cancel-link').onclick = event => event.preventDefault();
 </script>"""
+        elif self.path.startswith('/mapped-controls'):
+            body = b"""<!doctype html><title>Packaged controls</title>
+<button aria-label="Tools" onclick="document.querySelector('#tools').hidden=false">Tools</button>
+<div id="tools" role="menu" hidden><span aria-label="Create image">Create image</span></div>
+<button class="settings-trigger-button"
+        onclick="document.querySelector('flow-prompt-box-settings').hidden=false">Settings</button>
+<flow-prompt-box-settings hidden>Flow settings</flow-prompt-box-settings>
+<button onclick="document.body.dataset.submits=String(Number(document.body.dataset.submits || 0) + 1)">Submit</button>
+"""
         self.send_response(200)
         self.send_header('Content-Type', 'text/html')
         self.end_headers()
@@ -151,7 +160,41 @@ assert js("location.pathname") == {pathname!r}
     print('NATIVE_EXTENDED_CONTROLS_PASS', extension, stage, flush=True)
 
 
-def exercise(*, visual=False, extension=None):
+def exercise_automatic_click(stage, script, learned, url, catalog):
+    from site_learning import page_key
+
+    origin = url.split('/settings', 1)[0]
+    _, page = page_key([origin, '/settings'])
+    if stage == 'refresh':
+        Fixture.version = 2
+    script(f'goto_url({url!r}); wait_for_element("button", timeout=8)')
+    payload = {'target': 'Show details'}
+    result = learned('click', **payload)
+    expected = {'learn': 'package', 'refresh': 'dom'}.get(stage, 'catalog')
+    assert result.get('success') and result.get('dispatched') and result.get('source') == expected, result
+    assert result.get('repaired', False) == (stage == 'refresh'), result
+    script(f'assert js("document.body.dataset.clicked")=={("details-" + str(Fixture.version))!r}')
+    control, = catalog.list(origin, page, 'Show details')
+    assert control['element_id'] == 'details-' + str(Fixture.version), control
+    if stage == 'reuse-after-refresh':
+        missing = learned('click', target='Missing button')
+        assert missing.get('source') == 'screenshot' and not missing.get('dispatched'), missing
+        assert Path(missing['screenshot_path']).is_file(), missing
+        mapped = origin + '/mapped-controls'
+        script(f'goto_url({mapped!r}); wait_for_element("button", timeout=8)')
+        for target, panel in (('Tools', '#tools'), ('Settings', 'flow-prompt-box-settings')):
+            picked = learned('click', target=target)
+            assert picked.get('success') and picked.get('dispatched') and picked.get('source') == 'package', picked
+            script(f'assert js("!document.querySelector({panel!r}).hidden")')
+            print('NATIVE_PACKAGE_ACTION_PASS', target, flush=True)
+        acted = learned('click', target='Submit')
+        assert acted['dispatched'] and acted['status'] == 'needs_inspection', acted
+        script('assert js("document.body.dataset.submits") == "1"')
+        print('NATIVE_NO_BLIND_REPEAT_PASS', flush=True)
+    print('NATIVE_AUTOMATIC_CLICK_PASS', stage, expected, flush=True)
+
+
+def exercise(*, visual=False, extension=None, automatic=False):
     Fixture.version = 1
     source = Path(__file__).resolve().parents[1]
     before = window_keys()
@@ -160,6 +203,22 @@ def exercise(*, visual=False, extension=None):
         origin = f'http://127.0.0.1:{server.server_port}'
         url = origin + ('/new-controls' if extension else '/settings?private=must-not-be-persisted')
         home = Path(temp).resolve()
+        if automatic:
+            package = home / 'browser-apps' / 'fixture'
+            package.mkdir(parents=True)
+            (package / 'app.json').write_text(json.dumps({
+                'api_version': 1, 'id': 'fixture', 'name': 'Fixture', 'operations': {},
+                'click_targets': {'origin': origin,
+                                  'controls': {'Show details': {'selector': '#details-1'}}},
+            }))
+            (package / 'app.py').write_text('def run(context, operation, params):\n    raise RuntimeError("Unexpected package operation")\n')
+            for app in ('gemini', 'flow'):
+                bundled = json.loads((source / 'site_apps' / app / 'app.json').read_text())
+                bundled['click_targets']['origin'] = origin
+                fixture = package.parent / app
+                fixture.mkdir()
+                (fixture / 'app.json').write_text(json.dumps(bundled))
+                (fixture / 'app.py').write_text('def run(context, operation, params):\n    raise RuntimeError("Unexpected package operation")\n')
         (home / 'config.yaml').write_text('''browser:
   cloud_provider: original-chrome-default
   auto_local_for_private_urls: false
@@ -201,6 +260,9 @@ plugins:
                         return call(site_control=json.dumps({'action': action, 'params': params}))
 
                     try:
+                        if automatic:
+                            exercise_automatic_click(stage, script, learned, url, provider.learning_catalog())
+                            continue
                         if extension:
                             exercise_extended(stage, extension, script, learned, url, replay)
                             continue
@@ -284,6 +346,9 @@ if __name__ == '__main__':
 
 
 class NativeLearnedControls(unittest.TestCase):
+    def test_browser_picks_repairs_and_reuses_a_control_in_one_action(self):
+        exercise(automatic=True)
+
     def test_browser_learns_extended_navigation(self):
         exercise(extension='navigation')
 

@@ -102,6 +102,36 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
 
 ### Katalog klik otomatis di Mac
 
+- Penyatuan eksekusi aksi browser dimulai di `AppHost.execute`. Satu aksi
+  klik membawa target UI. Dalam jendela yang sudah dimiliki tugas, plugin
+  memilih kontrol, menjalankan fallback jika target lama tidak cocok, dan
+  menyimpan bukti aksi yang berhasil. Uji pembanding, fallback, dan pemakaian
+  ulang harus memakai panggilan aksi yang sama. Aksi yang sudah terkirim
+  diperiksa hasilnya sebelum ada percobaan lain.
+- Penerimaan jalur tunggal juga mencakup kontrol bawaan Gemini dan Flow serta
+  data hasil pembelajaran. Eksekutor Chrome native, kepemilikan jendela,
+  profil, startup, dan perilaku chat mengikuti kontrak yang telah ada.
+  Jalur lama pada kandidat pengembangan memberi pembanding sampai migrasi
+  pemanggil teruji. Satu alat pada sesi produksi berarti model tidak
+  memilih antara katalog dan inspeksi untuk melakukan klik yang sama.
+- Tahap pertama 0.17.0 menambahkan aksi `click` dengan target UI ke
+  `browser_exec`. Host mencari pemetaan katalog atau paket untuk origin
+  halaman aktif. Jika pemetaan tidak cocok sebelum klik, host mencoba DOM.
+  Jika DOM belum menentukan target, host mengambil screenshot pada sesi itu.
+  Konfirmasi hasil DOM memperbarui entri yang sama. Gemini Tools dan Flow
+  Settings Klasik memakai kontrak pemetaan paket yang sama pada tahap ini.
+- Pada pembanding `e90df09`, Hermes menolak bentuk aksi itu. Kandidat diuji
+  pada Hermes `ae2a81ccc0`, macOS 27.2.1 dan Chrome 158.0.8127.38. Uji native
+  mencakup kontrol paket, reuse katalog, ID lama yang dipulihkan lewat DOM,
+  screenshot saat target tidak tersedia, dan satu dispatch saat hasil
+  belum terkonfirmasi. Pemetaan Tools dan Settings diuji pada fixture yang
+  memakai selector paket. Lima uji Chrome dan 468 tes unit lulus. Jumlah
+  jendela Chrome kembali ke kondisi awal.
+- Sebelum instalasi kandidat, selesaikan migrasi kontrol paket yang lain,
+  kelanjutan visual, dan aksi dasar browser ke pintu masuk yang sama.
+  Setelah ada pengganti teruji, tutup opsi yang memberi model akses memilih
+  eksekutor klik sendiri. Uji Gemini, Flow, dan satu situs hasil belajar
+  pada sesi Hermes baru sebelum mengganti versi produksi.
 - Di 0.16.1, katalog membaca nama UI dan petunjuk tujuan dari tautan pada
   halaman aktif. Petunjuk hanya tampil jika path masih cocok dengan hash
   yang sudah diverifikasi. Pencarian label persis yang kosong dapat
