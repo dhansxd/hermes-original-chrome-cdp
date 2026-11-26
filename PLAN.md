@@ -113,6 +113,14 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   petunjuk tujuan saat istilah pencarian berbeda. Tujuan yang berubah
   hilang dari saran sebelum klik. Keempat uji Chrome untuk tautan, panel,
   klik ARIA dari DOM dan screenshot serta 468 tes unit lulus.
+- Uji percakapan 0.16.1 membuka Jelajahi lewat URL langsung, sehingga
+  belum memakai katalog. Di 0.16.2, panduan tool dan skill meminta Hermes
+  membuka beranda dan memeriksa katalog untuk bagian situs yang disebut
+  pengguna tanpa URL. Permintaan URL eksplisit mengikuti alamat tersebut.
+- Navigasi Instagram ketika hanya menampilkan ikon menghasilkan teks mentah
+  ganda dari judul SVG dan teks tersembunyi. 0.16.2 memakai nama SVG yang
+  unik saat teks tampilan kosong. Fixture bentuk ini gagal sebelum patch
+  dan lulus setelahnya bersama empat uji Chrome dan 468 tes unit.
 - Di 0.16.0, `browser_exec` belajar dari tautan satu origin yang membuka
   tujuan yang diharapkan pada tab yang sama. Katalog menyimpan hash path
   tujuan. Tombol dengan `aria-controls` atau `popovertarget` bisa dipakai

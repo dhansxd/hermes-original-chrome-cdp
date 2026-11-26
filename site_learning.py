@@ -160,7 +160,11 @@ _DESCRIBE_LINKS = r"""
         const own = clean(element.getAttribute('aria-label') || '');
         const lines = (element.innerText || '').split('\n').map(clean).filter(Boolean);
         const visible = [...new Set(lines)].join(' ');
-        return [[entry.id, {label: (referenced || own || visible || entry.label).slice(0, 100), destination}]];
+        const iconNames = [...new Set([...element.querySelectorAll('svg title')]
+            .filter(title => !title.closest('[aria-hidden="true"]'))
+            .map(title => clean(title.textContent)).filter(Boolean))];
+        const iconLabel = iconNames.length === 1 ? iconNames[0] : '';
+        return [[entry.id, {label: (referenced || own || visible || iconLabel || entry.label).slice(0, 100), destination}]];
     }));
 })(ENTRY, ORIGIN, ROUTE)
 """

@@ -17,6 +17,11 @@ with `site_control` omitted or null for an ordinary DOM or screenshot call. For 
 {"app":"gemini","operation":"click","params":{"control":"deep_research"}}
 ```
 
+For a request that names a section of a website without giving its URL,
+start on that site's home page when you need to open it. Check
+`list_learned_controls` there before navigating to the named section.
+For a URL explicitly provided by the user, open that address directly.
+
 On an open page in local Chrome, use `site_control` action
 `list_learned_controls` before inspecting the DOM for a requested UI action.
 Match the requested action against both `label` and the verified `destination`

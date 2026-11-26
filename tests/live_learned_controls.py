@@ -49,7 +49,8 @@ document.querySelector('button').onclick = event => {{
 <button aria-controls="options" id="open-panel" style="background:rgb(17,203,101);margin:42px">
 Open options</button>
 <div id="options" role="menu" hidden>Site options</div>
-<a id="page-link" href="/page-do-not-persist-route"><span hidden>Open page</span><span>Open page</span></a>
+<a id="page-link" href="/page-do-not-persist-route"><svg width="24" height="16">
+<title>Open page</title><rect width="24" height="16" /></svg><span hidden>Open page</span></a>
 <a id="spa-link" href="/spa">Open settings</a>
 <a id="cancel-link" href="/canceled">Canceled link</a>
 <script>
