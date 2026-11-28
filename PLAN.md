@@ -47,17 +47,35 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
 | `upload_file` | Aksi upload umum tidak terdaftar. Paket Flow memilih berkas melalui CDP. |
 | `http_get` | Helper HTTP native tidak dapat dipanggil lewat tool browser saat `code` ditolak. Helper ini membuat permintaan HTTP langsung. |
 
-- [ ] Pulihkan kemampuan helper native lewat eksekutor Hermes dalam sesi
+- [x] Pulihkan kemampuan helper native lewat eksekutor Hermes dalam sesi
   Chrome milik tugas. Pertahankan `site_control` untuk aksi terstruktur,
   kontrol siap pakai, pembelajaran katalog dan laporan progres paket.
-  Uji bahwa Hermes hanya dapat memulai klik lewat aksi `click` sekalipun
-  kemampuan browser umum sudah dipulihkan.
-- [ ] Uji kesetaraan helper native dengan fixture tanpa paket. Cakup input file
+  Aksi `upload` memakai `upload_file` bila inputnya tunggal. Pemilih dinamis
+  memakai event Chrome dalam sesi yang sama dan klik bernama. Lanjutan
+  screenshot membawa permintaan berkas dari klik asal. Status `file_selected`
+  menyatakan pilihan berkas. Progres upload dibaca dari situs.
+- Aksi `scroll`, `press_key`, `wait`, `tabs`, `inspect`, `events`, `page_info`,
+  dan opsi `read` serta `screenshot` berjalan lewat eksekutor native.
+  Aktivasi tombol fokus lewat Enter dan Space diteruskan ke pemilih klik
+  bernama. Tab baru diverifikasi berada di jendela tugas. Pembacaan iframe
+  memakai dokumen yang cocok atau attachment iframe dari harness. JavaScript
+  dan CDP dipakai di dalam aksi tersebut. `http_get` adalah permintaan HTTP
+  langsung di luar sesi Chrome.
+- [x] Uji helper native dengan fixture tanpa paket. Cakup input file
   yang sudah ada dan input yang baru muncul setelah klik, scroll, tombol
   keyboard, tab dan iframe, penantian serta screenshot. Uji akses native dan
   kontrol situs dalam jendela yang sama, verifikasi katalog dan pemisahan
-  jendela antaragen, serta pastikan panggilan dari sesi Hermes baru menemukan
-  kedua bentuk penggunaan. Catat pembanding, kandidat dan hasil aktual.
+  jendela antaragen, serta pastikan panggilan dari sesi Hermes baru memakai
+  aksi umum dan kontrol situs lewat `browser_exec` yang sama.
+- Pada 28 November 2026, `1f8bd5e` menolak aksi upload dan helper baru
+  sebelum mencapai harness. Kandidat lulus uji pilihan file langsung,
+  pemilih dinamis, dan kelanjutan screenshot dengan satu klik. Fixture lain
+  memverifikasi scroll, keyboard yang memakai jalur klik bernama, iframe
+  lintas origin, screenshot, dan tab baru dalam jendela yang sama. Empat
+  regresi Chrome untuk katalog, klik visual, popup dan aksi dasar lulus di
+  kedua versi. Enam uji Chrome kandidat dan 476 tes lokal lulus. Lingkungan
+  uji memakai Hermes `ae2a81ccc0`, macOS 27.2.1, Chrome 158.0.8127.38,
+  dan browser-harness `0.1.13`.
 
 ### Chrome di perangkat lain
 

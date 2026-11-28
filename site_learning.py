@@ -9,6 +9,7 @@ import secrets
 import sqlite3
 import threading
 import time
+from textwrap import indent
 from urllib.parse import urlsplit
 
 
@@ -396,13 +397,16 @@ def visual_check_code(frame):
     )
 
 
-def visual_dispatch_code(frame, point):
+def visual_dispatch_code(frame, point, *, wrap=None):
     x, y = (ratio * span for ratio, span in zip(point, frame['viewport']))
+    click = f'click_at_xy({x!r}, {y!r})'
+    if wrap:
+        click = wrap(click)
     return visual_check_code(frame) + (
         'if not visual_matches():\n'
         '    print("VISUAL_CLICK=stale_screenshot")\n'
         'else:\n'
-        f'    click_at_xy({x!r}, {y!r})\n'
+        f'{indent(click.rstrip(), "    ")}\n'
         '    print("VISUAL_CLICK=dispatched")\n'
     )
 

@@ -12,6 +12,13 @@ The plugin picks the installed control, learned mapping, DOM, or screenshot
 fallback on the task's current page. A screenshot position can continue an
 existing click only when the plugin returns a screenshot ID.
 
+Use `upload` with an explicit file `path` or `paths` in the same session.
+The plugin uses the page's unique file input or follows a named picker
+`target` through the click path above. `file_selected` confirms selection.
+Read the site's progress to verify the upload. The [site controls guide](skills/site-controls/SKILL.md#native-browser-actions)
+lists scroll, keyboard, tab, iframe inspection, wait, event and screenshot
+options.
+
 The [project handoff](HANDOFF.md) records the verified baseline and recovery
 steps for a fresh Mac installation. The active plan records current open work.
 

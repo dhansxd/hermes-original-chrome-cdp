@@ -36,24 +36,28 @@ OBSERVATION_INTERVAL = 15
 
 
 if __package__:
+    from .file_controls import chooser_upload_code, direct_upload_code, upload_parameters, upload_result
+    from .native_actions import NATIVE_ACTIONS, browser_url, key_target, native_action_code, read_dom_code, screenshot_code
     from .site_learning import (LEARNED_ACTIONS, cached_action, fallback, valid_point,
                                 visual_capture_code, visual_check_code, visual_dispatch_code)
     from .site_popups import SITE_ORIGINS, guarded_code, popup_result
 else:
+    from file_controls import chooser_upload_code, direct_upload_code, upload_parameters, upload_result
+    from native_actions import NATIVE_ACTIONS, browser_url, key_target, native_action_code, read_dom_code, screenshot_code
     from site_learning import (LEARNED_ACTIONS, cached_action, fallback, valid_point,
                                visual_capture_code, visual_check_code, visual_dispatch_code)
     from site_popups import SITE_ORIGINS, guarded_code, popup_result
 
 
-class PopupOutcome(Exception):
+class BrowserOutcome(Exception):
     def __init__(self, outcome):
         self.outcome = outcome
 
 
-BROWSER_ACTIONS = ('navigate', 'type', 'read', 'screenshot')
+BROWSER_ACTIONS = ('navigate', 'type', 'read', 'screenshot', *NATIVE_ACTIONS)
 WINDOW_ACTIONS = ('keep_window', 'list_windows', 'close_window')
 CONTROL_ACTIONS = ('list', 'describe', 'run', 'observe', 'record_missing_control', 'enable', 'disable', 'remove',
-                   *BROWSER_ACTIONS, *WINDOW_ACTIONS, *LEARNED_ACTIONS)
+                   'upload', *BROWSER_ACTIONS, *WINDOW_ACTIONS, *LEARNED_ACTIONS)
 CONTROL_FIELDS = {'action', 'app', 'operation', 'params', 'job', 'target_profile', 'session'}
 CONTROL_SCHEMA = {
     'type': ['string', 'null'],
@@ -62,8 +66,14 @@ CONTROL_SCHEMA = {
                    '{"action":"type","params":{"selector":"#field","text":"Hello"}} to fill one editable field. '
                    'Set clear_first to false in type params to insert without clearing. '
                    'Use {"action":"read"} to read visible text on the open page. '
-                   'An optional selector in read params limits it to visible matching elements. '
-                   'Use {"action":"screenshot"} to view the open page. '
+                   'Read accepts selector, frame (CSS selector), and max_chars. '
+                   'Use inspect for element attributes, page_info for page metrics, '
+                   'screenshot with optional full, max_dim and path, or events for Chrome event names. '
+                   'Use scroll with dx and dy, press_key with key and modifiers, '
+                   'wait with mode load, element, network_idle or seconds, and '
+                   'tabs with mode list, current, open, switch, close or ensure. '
+                   'Use upload with params.path or params.paths to select explicit local files. '
+                   'Pass params.target with the visible file-picker label when the input opens after a click. '
                    'With a page open, use {"action":"click","params":{"target":"Model picker"}} for a named control. '
                    'When the click returns a screenshot_id, repeat the same target in the same session '
                    'with that ID and point [x,y], each a fraction of the displayed image from 0 to less than 1. '
@@ -96,7 +106,7 @@ def site_request(args):
         raise ValueError(PUBLIC_BROWSER_ERROR)
     if action in WINDOW_ACTIONS and set(command) - {'action', 'session'}:
         raise ValueError('Window actions accept only action and session.')
-    if action in BROWSER_ACTIONS:
+    if action in (*BROWSER_ACTIONS, 'upload'):
         if args.get('code') or set(command) - {'action', 'session', 'params'}:
             raise ValueError('Browser actions accept action, session and params without separate code.')
     if action in LEARNED_ACTIONS and set(command) - {'action', 'session', 'params'}:
@@ -105,8 +115,7 @@ def site_request(args):
 
 
 READ_PAGE = r"""
-(selection => {
-    const limit = 4000;
+((selection, limit) => {
     const elements = selection === null ? [document.body] : document.querySelectorAll(selection);
     let found = false;
     let text = '';
@@ -121,39 +130,39 @@ READ_PAGE = r"""
     const truncated = text.length > limit;
     if (truncated) text = text.slice(0, limit).replace(/[\uD800-\uDBFF]$/, '');
     return {title: document.title, text, found, truncated};
-})(SELECTION)
+})(SELECTION, LIMIT)
 """
 
 
 def browser_action_code(command):
     action = command['action']
-    params = command.get('params', {} if action in {'read', 'screenshot'} else None)
+    params = command.get('params', {} if action not in {'navigate', 'type'} else None)
     if not isinstance(params, dict):
         raise ValueError('Browser action params must be an object.')
     if action == 'screenshot':
-        if params:
-            raise ValueError('Screenshot takes no parameters.')
-        return 'print(capture_screenshot(max_dim=1200))'
+        return screenshot_code(params)
     if action == 'read':
         selection = params.get('selector')
-        if (set(params) - {'selector'} or ('selector' in params and
+        limit = params.get('max_chars', 4000)
+        if (set(params) - {'selector', 'frame', 'max_chars'} or ('selector' in params and
                 (not isinstance(selection, str) or not selection.strip()))):
             raise ValueError('Pass an optional CSS selector to read visible page text.')
-        expression = READ_PAGE.replace('SELECTION', json.dumps(selection))
-        return 'import json\n' + f'print(json.dumps(js({expression!r})))'
+        if type(limit) is not int or limit <= 0:
+            raise ValueError('Pass a positive max_chars.')
+        expression = READ_PAGE.replace('SELECTION, LIMIT', f'{json.dumps(selection)}, {limit}')
+        return read_dom_code(expression, params.get('frame'))
 
     if action == 'navigate':
-        url = params.get('url')
-        if (set(params) != {'url'} or not isinstance(url, str) or not url.isprintable()
-                or any(char.isspace() for char in url) or '\\' in url):
+        if set(params) != {'url'}:
             raise ValueError('Pass an absolute HTTP or HTTPS URL to navigate.')
-        parsed = urlsplit(url)
-        if parsed.scheme not in {'http', 'https'} or not parsed.hostname:
-            raise ValueError('Pass an absolute HTTP or HTTPS URL to navigate.')
+        url = browser_url(params['url'])
         # Keep the literal URL visible to Hermes's native URL policy.
         return (f'navigation = goto_url({url!r})\n'
                 "if navigation.get('errorText'):\n"
                 "    raise RuntimeError(navigation['errorText'])")
+
+    if action in NATIVE_ACTIONS:
+        return native_action_code(action, params)
 
     selector, text = params.get('selector'), params.get('text')
     clear_first = params.get('clear_first', True)
@@ -526,6 +535,8 @@ class AppHost:
             command = site_request(args)
             if command['action'] in BROWSER_ACTIONS:
                 browser_action_code(command)
+            elif command['action'] == 'upload':
+                upload_parameters(command.get('params'))
         except ValueError as error:
             return {'action': 'block', 'message': str(error)}
         if 'session' in command:
@@ -534,10 +545,10 @@ class AppHost:
             args = {**args, 'session': command['session']}
         if command['action'] in BROWSER_ACTIONS:
             route = {'session': args.get('session'), 'local': args.get('local')}
-            if command['action'] in {'read', 'screenshot'}:
+            if command['action'] in {'read', 'screenshot', *NATIVE_ACTIONS}:
                 context.update(require_existing=True, allow_current_app=True)
             return self.provider.prepare_call(tool_name, route, task_id, **context)
-        if command['action'] in LEARNED_ACTIONS:
+        if command['action'] in (*LEARNED_ACTIONS, 'upload'):
             if args.get('code'):
                 return {'action': 'block', 'message': 'Call a learned control or run native code separately.'}
             return self.provider.prepare_call(tool_name, {'session': args.get('session')}, task_id,
@@ -572,12 +583,14 @@ class AppHost:
             command = site_request(args)
             if command['action'] in BROWSER_ACTIONS:
                 code = browser_action_code(command)
+            elif command['action'] == 'upload':
+                files, upload_target = upload_parameters(command.get('params'))
         except ValueError as error:
             return json.dumps({'success': False, 'error': str(error)})
         if command['action'] in BROWSER_ACTIONS:
             route = {key: value for key, value in args.items() if key != 'site_control'}
             guarded = False
-            if command['action'] == 'type':
+            if command['action'] in {'type', 'press_key'}:
                 code = guarded_code(code)
                 guarded = True
             elif command['action'] == 'navigate':
@@ -590,12 +603,58 @@ class AppHost:
                 data = json.loads(result) if isinstance(result, str) else result
                 if popup := popup_result(data):
                     return json.dumps(popup)
+                if command['action'] == 'press_key' and (target := key_target(data)) is not None:
+                    if not target:
+                        return json.dumps(fallback('Identify the focused control by its visible name.', dispatched=False))
+                    return self.execute_learned({'action': 'click', 'params': {'target': target}}, args, native, context)
             return result
+        if command['action'] == 'upload':
+            if upload_target:
+                return self.execute_learned({'action': 'click', 'params': {'target': upload_target}},
+                                            args, native, context, files=files)
+            try:
+                paths, expected = self.upload_files(files, args['session'], context)
+                route = {key: value for key, value in args.items() if key != 'site_control'}
+                result = native({**route, 'code': guarded_code(direct_upload_code(paths, expected))}, **context)
+                data = json.loads(result) if isinstance(result, str) else result
+                outcome = popup_result(data) or upload_result(data)
+                return json.dumps(outcome) if outcome else result
+            except (KeyError, OSError, RuntimeError, ValueError) as error:
+                return json.dumps({'success': False, 'error': str(error)})
         if command['action'] in LEARNED_ACTIONS:
             return self.execute_learned(command, args, native, context)
         return self.handle({**command, 'session': args.get('session')}, **context)
 
-    def execute_learned(self, command, args, native, context):
+    def upload_files(self, files, session, context):
+        provider = self.provider
+
+        def check_owner():
+            with provider.lock:
+                choice = self.owned_browser_choice(session, context)
+                if choice is None:
+                    raise RuntimeError('File selection requires the currently owned Chrome session.')
+                provider.require_device(choice.device)
+                return choice
+
+        choice = check_owner()
+        if choice.device == 'local':
+            return [str(path) for path in files], [[path.name, path.stat().st_size] for path in files]
+
+        with provider.lock:
+            desktop = provider.desktop(choice.device)
+            browsers = [browser for _, browser in provider._browser_sessions(session)
+                        if browser.ready and not browser.closed and not browser.disconnected
+                        and browser.desktop is desktop and browser.profile == choice.profile.id]
+        if len(browsers) != 1 or desktop is None:
+            raise RuntimeError('File selection requires the active Windows Chrome session.')
+        paths = []
+        for path in files:
+            with path.open('rb') as stream:
+                digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+            paths.append(browsers[0].stage_upload(path, digest, check_owner))
+        return paths, [[path.name, path.stat().st_size] for path in files]
+
+    def execute_learned(self, command, args, native, context, *, files=None):
         import sqlite3
         attempted = False
         first = True
@@ -620,6 +679,18 @@ class AppHost:
                     '    wait(.1)\n'
                     'print(json.dumps(_observed))'
                 )
+            if files and click:
+                paths, expected = self.upload_files(files, args['session'], context)
+                code = ('import json\n'
+                        f'_click = cdp("Runtime.evaluate", expression={expression!r}, userGesture=True, '
+                        'awaitPromise=True, returnByValue=True)\n'
+                        'if _click.get("exceptionDetails"):\n'
+                        '    raise RuntimeError("Could not verify the file-picker click.")\n'
+                        '_state = _click.get("result", {}).get("value")\n'
+                        'print(json.dumps(_state))')
+                code = chooser_upload_code(code, paths, expected, dispatched=
+                    "_state not in ('unmatched', 'obscured', 'wrong_page', 'state_changed') and not "
+                    "(isinstance(_state, dict) and _state.get('reason'))")
             if command['action'] == 'click':
                 if first or click:
                     code = guarded_code(code, target=target)
@@ -632,7 +703,9 @@ class AppHost:
             data = json.loads(result) if isinstance(result, str) else result
             if popup := popup_result(data):
                 attempted = already_attempted
-                raise PopupOutcome(popup)
+                raise BrowserOutcome(popup)
+            if files and (selection := upload_result(data)):
+                raise BrowserOutcome(selection)
             if not isinstance(data, dict) or not data.get('success'):
                 raise RuntimeError('Could not verify the current page.')
             return json.loads(data['output'].strip())
@@ -642,6 +715,10 @@ class AppHost:
             if command['action'] == 'click' and isinstance(params, dict) and 'screenshot_id' in params:
                 return json.dumps(self.continue_visual_click(params, args, native, context), ensure_ascii=False)
             def run_package_click(origin, target):
+                if files:
+                    if self.site_click_mapping(origin, target, commands=True):
+                        return fallback('Choose the visible control that opens the file picker.', dispatched=False)
+                    return None
                 return self.execute_package_click(origin, target, args['session'], context)
 
             result = cached_action(catalog, command, run_expression, package_control=self.click_mapping,
@@ -650,10 +727,10 @@ class AppHost:
             if (command['action'] == 'click' and not result.get('dispatched')
                     and (guarded or result.get('reason') in {'unmatched', 'obscured'})):
                 result = self.offer_visual_click(result, params['target'].strip(), args, native, context,
-                                                 package_command=guarded)
+                                                 package_command=guarded, files=files)
                 if result.get('_multimodal'):
                     return result
-        except PopupOutcome as error:
+        except BrowserOutcome as error:
             result = error.outcome
             result['dispatched'] |= attempted
         except (KeyError, TypeError, OSError, sqlite3.Error, ValueError, RuntimeError) as error:
@@ -671,7 +748,7 @@ class AppHost:
             return None
         return choice
 
-    def offer_visual_click(self, result, target, args, native, context, *, package_command=None):
+    def offer_visual_click(self, result, target, args, native, context, *, package_command=None, files=None):
         session = args['session']
         with self.provider.lock:
             choice = self.owned_browser_choice(session, context)
@@ -701,6 +778,8 @@ class AppHost:
                 return result
             choice.visual_click = {'id': identifier, 'target': target, 'frame': capture['frame'],
                                    'turn': turn, 'package_command': package_command}
+            if files:
+                choice.visual_click['files'] = files
         result.update(source='screenshot', screenshot_path=capture['path'], screenshot_id=identifier,
                       next='Use click with the same target and screenshot_id in this session. '
                            'Pass point [x,y] as fractions of the displayed image.')
@@ -734,12 +813,18 @@ class AppHost:
             result = self.run_package_click(saved['package_command'], session, context, visual=visual)
             return {**result, 'source': 'screenshot'}
         target = ' '.join(saved['target'].casefold().split())
-        code = guarded_code(visual_dispatch_code(saved['frame'], point), target=target)
         try:
+            wrap = None
+            if 'files' in saved:
+                paths, expected = self.upload_files(saved['files'], session, context)
+                wrap = lambda click: chooser_upload_code(click, paths, expected)
+            code = guarded_code(visual_dispatch_code(saved['frame'], point, wrap=wrap), target=target)
             result = native({'session': session, 'code': code}, **context)
             result = json.loads(result) if isinstance(result, str) else result
             if popup := popup_result(result):
                 return popup
+            if 'files' in saved and (selection := upload_result(result)):
+                return {**selection, 'source': 'screenshot'}
             if isinstance(result, dict) and result.get('success'):
                 output = result.get('output')
                 if isinstance(output, str) and 'VISUAL_CLICK=stale_screenshot' in output.splitlines():

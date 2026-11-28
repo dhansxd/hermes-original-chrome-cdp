@@ -171,6 +171,42 @@ function openActions() {
     }, 190);
 }
 </script>'''
+        if self.path == '/harness-actions':
+            body = b'''<!doctype html><title>Harness actions</title>
+<input id="edit" value="awal">
+<button id="menu" aria-expanded="false" onclick="openMenu()">Open menu</button>
+<output id="click-count">0</output>
+<iframe id="fixture-frame" src="/fixture-frame"></iframe>
+<iframe id="cross" src="http://localhost:PORT/fixture-frame"></iframe>
+<div style="height:2400px">Below</div>
+<script>
+function openMenu() {
+  document.querySelector('#menu').setAttribute('aria-expanded', 'true');
+  document.querySelector('#click-count').textContent = Number(document.querySelector('#click-count').textContent)+1;
+}
+</script>'''.replace(b'PORT', str(self.server.server_port).encode())
+        elif self.path == '/fixture-frame':
+            body = b'<!doctype html><title>Frame title</title><label id="inside">Text in the owned iframe</label>'
+        if self.path.startswith('/file-actions'):
+            body = b'''<!doctype html><title>File input fixture</title>
+<input id="direct" type="file" onchange="report(this)">
+<button id="chooser" onclick="choose()" style="background:rgb(17,203,101)">Pick a file</button>
+<output id="result"></output>
+<script>
+function choose() {
+  document.body.dataset.clicks = String(1 + Number(document.body.dataset.clicks || 0));
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.hidden = true;
+  input.onchange = () => report(input);
+  document.body.append(input);
+  input.click();
+}
+async function report(input) {
+  const file = input.files[0];
+  document.querySelector('#result').textContent = file.name + ':' + await file.text();
+}
+</script>'''
         if self.path == '/project/existing?late-popup':
             body += f'<script>setTimeout(() => {{ {FLOW_POPUP} }}, 160)</script>'.encode()
         self.send_response(200)
@@ -418,6 +454,93 @@ click_at_xy(x, y)""")
     print('NATIVE_DYNAMIC_MENU_AND_DISMISS_PASS', flush=True)
 
 
+def exercise_upload(script, learned, origin, home):
+    from PIL import Image
+    url = origin + '/file-actions'
+    sample = home / 'sample.txt'
+    sample.write_text('fixture file')
+    assert learned('navigate', url=url)['success']
+    script('assert wait_for_element("#direct", timeout=8)')
+    result = learned('upload', path=str(sample))
+    assert result.get('success') and result.get('status') == 'file_selected', result
+    script('assert js("document.querySelector(\'#result\').textContent") == "sample.txt:fixture file"')
+
+    assert learned('navigate', url=url)['success']
+    script('assert wait_for_element("#chooser", timeout=8)')
+    result = learned('upload', path=str(sample), target='Pick a file')
+    assert result.get('success') and result.get('status') == 'file_selected', result
+    script('assert js("document.body.dataset.clicks") == "1"')
+    script('assert js("document.querySelector(\'#result\').textContent") == "sample.txt:fixture file"')
+    ambiguous = learned('upload', path=str(sample))
+    assert ambiguous['status'] == 'choose_file_target' and not ambiguous['dispatched'], ambiguous
+
+    assert learned('navigate', url=url)['success']
+    script('assert wait_for_element("#chooser", timeout=8)')
+    upload = learned('upload', path=str(sample), target='Select the asset')
+    if upload.get('_multimodal'):
+        upload = json.loads(upload['text_summary'])
+    assert upload.get('source') == 'screenshot' and not upload.get('dispatched'), upload
+    with Image.open(upload['screenshot_path']) as screenshot:
+        width, height = screenshot.size
+        points = [(i % width, i // width) for i, (r, g, b) in enumerate(screenshot.convert('RGB').get_flattened_data())
+                  if r < 80 and g > 155 and 65 < b < 155 and g - b > 50]
+    xs, ys = zip(*points)
+    point = [(min(xs) + max(xs)) / (2 * width), (min(ys) + max(ys)) / (2 * height)]
+    args = dict(target='Select the asset', screenshot_id=upload['screenshot_id'], point=point)
+    result = learned('click', **args)
+    assert result.get('success') and result.get('status') == 'file_selected', result
+    assert not learned('click', **args).get('dispatched')
+    script('assert js("document.body.dataset.clicks") == "1"')
+    print('NATIVE_GENERIC_FILE_CHOOSER_PASS', flush=True)
+
+
+def exercise_harness_actions(script, learned, origin, home):
+    def action(name, **params):
+        result = learned(name, **params)
+        assert result.get('success'), result
+        return json.loads(result.get('output') or '{}')
+
+    url = origin + '/harness-actions'
+    assert learned('navigate', url=url)['success']
+    assert action('wait', mode='element', selector='#edit', visible=True)['ready']
+    assert action('page_info')['url'] == url
+    assert action('inspect', selector='#edit')['elements'][0]['attributes']['id'] == 'edit'
+    assert action('read', frame='#fixture-frame', selector='#inside')['text'] == 'Text in the owned iframe'
+    assert action('read', frame='#cross', selector='#inside')['text'] == 'Text in the owned iframe'
+    assert isinstance(action('events')['events'], list)
+
+    assert learned('type', selector='#edit', text='A')['success']
+    assert learned('press_key', key='End')['success']
+    assert learned('press_key', key='b')['success']
+    script('assert js("document.querySelector(\'#edit\').value") == "Ab"')
+    script('js("document.querySelector(\'#menu\').focus()")')
+    key_click = learned('press_key', key='Enter')
+    assert key_click.get('success') and key_click.get('source') == 'dom', key_click
+    script('assert js("document.querySelector(\'#click-count\').textContent") == "1"')
+    assert learned('list_learned_controls', label='Open menu')['controls']
+
+    assert learned('scroll', dy=420)['success']
+    script('wait(.3); assert js("window.scrollY") > 0')
+    output = home / 'full-page.png'
+    shot = learned('screenshot', full=True, max_dim=900, path=str(output))
+    if shot.get('_multimodal'):
+        shot = json.loads(shot['text_summary'])
+    assert shot.get('success') and output.is_file(), shot
+
+    first = action('tabs', mode='current')['target_id']
+    second = action('tabs', mode='open', url=origin + '/fixture-frame')['target_id']
+    assert second != first
+    tabs = action('tabs', mode='list')['tabs']
+    assert {tab['target_id'] for tab in tabs} == {first, second}
+    script(f'''a=cdp("Browser.getWindowForTarget", targetId={first!r})['windowId']
+b=cdp("Browser.getWindowForTarget", targetId={second!r})['windowId']
+assert a == b''')
+    action('tabs', mode='switch', target_id=first)
+    action('tabs', mode='close', target_id=second)
+    assert len(action('tabs', mode='list')['tabs']) == 1
+    print('NATIVE_HARNESS_ACTIONS_PASS', flush=True)
+
+
 def exercise_basic_actions(mode, script, learned, origin, provider):
     url = origin + '/basic-actions'
     next_url = origin + '/basic-next'
@@ -611,6 +734,12 @@ plugins:
                             if basic == 'dynamic-clicks':
                                 exercise_dynamic_clicks(script, learned, origin)
                                 continue
+                            if basic == 'file-actions':
+                                exercise_upload(script, learned, origin, home)
+                                continue
+                            if basic == 'harness-actions':
+                                exercise_harness_actions(script, learned, origin, home)
+                                continue
                             if basic == 'site-popups':
                                 module = sys.modules.get(type(provider).__module__.rsplit('.', 1)[0] + '.site_popups')
                                 if module:
@@ -708,6 +837,12 @@ if __name__ == '__main__':
 
 
 class NativeLearnedControls(unittest.TestCase):
+    def test_supported_native_helpers_share_the_task_window(self):
+        exercise(basic='harness-actions')
+
+    def test_native_upload_existing_input_and_one_named_chooser(self):
+        exercise(basic='file-actions')
+
     def test_browser_learns_delayed_menu_and_dialog_dismissal_without_package(self):
         exercise(basic='dynamic-clicks')
 

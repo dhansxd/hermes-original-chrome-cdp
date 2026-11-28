@@ -311,6 +311,11 @@ class BrowserAppTests(unittest.TestCase):
             ({'action': 'read'}, {}),
             ({'action': 'read', 'params': {'selector': ['#field']}}, {}),
             ({'action': 'read', 'params': {'javascript': 'scrollTo(0, 10)'}}, {}),
+            ({'action': 'upload', 'params': {'path': 'relative.txt'}}, {}),
+            ({'action': 'tabs', 'params': {'mode': 'open', 'url': 'javascript:document.body.click()'}}, {}),
+            ({'action': 'press_key', 'params': {'key': 'Enter', 'selector': '#submit'}}, {}),
+            ({'action': 'inspect', 'params': {'javascript': 'document.body.click()'}}, {}),
+            ({'action': 'screenshot', 'params': {'path': 'relative.png'}}, {}),
         ]
         with patch('hermes_cli.config.load_config_readonly', return_value=self.config):
             for command, extra in invalid:

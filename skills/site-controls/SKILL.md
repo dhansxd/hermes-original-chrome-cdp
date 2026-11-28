@@ -29,6 +29,9 @@ Read visible text from the open page with `{"action":"read"}`. To read a
 specific part of the page, pass a CSS selector in `params`. The result
 contains the page title, text, and a `truncated` flag. If the text was
 truncated, read a smaller section in the same browser session.
+`read` can also take `max_chars` and a CSS `frame` selector for an iframe.
+Use `inspect` with a selector to see element attributes, or `page_info` for
+the current URL, title, viewport and scroll position.
 
 To activate a named control in the current page, use
 `{"action":"click","params":{"target":"Show details"}}`. If it returns a
@@ -43,6 +46,36 @@ The plugin selects matching site controls or catalog entries before trying
 DOM and screenshot fallback. Use `read` to check the result of a dispatched
 click. Use `screenshot` when the requested result is an image of the page.
 A screenshot from that action carries no click continuation ID.
+
+## Select a file
+
+Use `upload` in the current tab with the intended file's absolute path.
+When the page has one enabled file input, pass `path` by itself. When a
+button opens the picker, add its visible label as `target`.
+
+```json
+{"action":"upload","params":{"path":"/absolute/path/video.mp4","target":"Pilih file"}}
+```
+
+If this returns a screenshot ID, continue the same named click with its ID
+and position. The file request remains attached to that click. Pass `paths`
+instead of `path` for a file input that accepts multiple files. Check the page
+for upload progress after `file_selected`. Read the result before retrying an
+unconfirmed selection.
+
+## Native browser actions
+
+- `scroll` accepts `dx`, `dy`, and optional viewport coordinates `x`, `y`.
+- `press_key` accepts a `key` and the optional native modifier bitmask.
+  Enter or Space on a focused control uses the named click path when that
+  key activates the control.
+- `wait` accepts `mode` of `load`, `element`, `network_idle`, or `seconds`.
+  Use `selector` for `element` and `seconds` for a fixed delay.
+- `tabs` accepts `mode` of `list`, `current`, `open`, `switch`, `close`, or
+  `ensure`. Pass `url` to `open` and a task `target_id` to `switch` or `close`.
+- `events` returns a summary of CDP observations from the current session.
+- `screenshot` accepts optional `full`, `max_dim`, and a new absolute PNG
+  `path`.
 
 For a request naming a site section, open the site first and request the
 named control. For an explicit URL, open that address. Use

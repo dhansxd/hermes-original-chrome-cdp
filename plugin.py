@@ -754,6 +754,8 @@ def prepare_call(tool_name, args, task_id, *, session_id='', turn_id='', provide
 
 
 SITE_HELP = ('Drive the task’s Original Chrome window with browser_exec.site_control. '
+             'Use upload to choose explicit files in the current tab. Use page_info, inspect, '
+             'scroll, press_key, wait, tabs and events for general browsing. '
              'Use navigate to open URLs, read to inspect visible page text, type for fields, and '
              'click with the desired UI target. The plugin selects site controls, the learned catalog, '
              'DOM, and screenshot fallback in the current window. When click asks for a screenshot '
