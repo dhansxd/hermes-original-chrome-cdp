@@ -219,6 +219,17 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   membuka menu melalui satu klik visual dan membaca pilihan. Pada uji
   lanjutan, setelah tombol terlihat, aksi dengan target yang sama berhasil
   lewat paket. Uji sesi baru belum membuktikan klik langsung lewat paket.
+- Pada `54f7048`, sesi Hermes CLI baru di profil uji membuka Gemini lewat
+  paket Gemini 0.4.13. Panggilan pertama `click` untuk `Model picker`
+  berhasil lewat paket dan Hermes membaca dua pilihan dari menu. Seluruh
+  operasi halaman memakai satu jendela Chrome yang tertutup saat selesai.
+- Pada commit dan lingkungan yang sama, uji lewat registry Hermes dengan
+  `navigate` diikuti langsung oleh klik menemukan nol elemen yang cocok
+  dengan selector paket. Aksi menawarkan screenshot sebelum mengirim klik.
+  Setelah tombol terlihat, aksi yang sama berhasil lewat paket di jendela
+  yang sama. Uji memakai Hermes `ae2a81ccc0`, macOS 27.2.1, dan Chrome
+  158.0.8127.38. Titik perbaikan tersisa ada pada penantian singkat untuk
+  pemilih model Gemini setelah navigasi biasa, sebelum fallback.
 - Di Flow, Hermes membaca daftar proyek, tetapi gagal membuka proyek yang
   sudah ada. Judul yang diminta tampil di kartu tanpa tautan atau peran
   tombol pada judul dan elemen induknya. Aksi berdasarkan judul kembali ke
