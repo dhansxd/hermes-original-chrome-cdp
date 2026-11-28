@@ -60,6 +60,68 @@ const unobscured = element => {
     return element.contains(top);
 };
 const visibleMatching = selector => [...document.querySelectorAll(selector)].some(visible);
+
+const surfaceRoles = ['dialog', 'alertdialog', 'menu', 'listbox', 'tree', 'grid', 'tablist', 'toolbar'];
+const surfaces = 'dialog,[popover],[id],' + surfaceRoles.map(role => `[role=${role}]`).join(',');
+const surfaceSelector = key => {
+    const split = key.indexOf(':');
+    const kind = key.slice(0, split), value = CSS.escape(key.slice(split + 1));
+    return {id: '#' + value, role: '[role=' + value + ']', tag: value}[kind];
+};
+const surfaceElement = key => {
+    const query = surfaceSelector(key);
+    const elements = query ? document.querySelectorAll(query) : [];
+    return elements.length === 1 ? elements[0] : null;
+};
+const surfaceKey = element => {
+    const role = element.getAttribute('role');
+    const keys = [];
+    if (/^[\w:.-]{1,128}$/.test(element.id)) keys.push('id:' + element.id);
+    if (surfaceRoles.includes(role)) keys.push('role:' + role);
+    if (element.localName === 'dialog' || /^[a-z][a-z\d]*-[a-z\d-]+$/.test(element.localName)) {
+        keys.push('tag:' + element.localName);
+    }
+    return keys.find(key => surfaceElement(key) === element);
+};
+const surfaceVisible = element => visible(element) &&
+    element.checkVisibility({visibilityProperty:true, opacityProperty:true});
+const visibleSurfaces = () => new Map([...document.querySelectorAll(surfaces)]
+    .filter(e => surfaceVisible(e) && (e.matches('dialog,[popover]') || surfaceRoles.includes(e.getAttribute('role')) ||
+        e.querySelector(selector + ',' + linkSelector + ',input,textarea,select,[role=menuitem],[role=option]')))
+    .map(e => [surfaceKey(e), e]).filter(([key]) => key));
+
+function observeVisibility(button) {
+    const origin = location.origin, path = location.pathname;
+    const before = visibleSurfaces();
+    const alreadyVisible = new Set(before.values());
+    let containing;
+    for (let node = button.parentElement; node && node !== document.body; node = node.parentElement) {
+        const key = surfaceKey(node);
+        if (key && before.get(key) === node) { containing = key; break; }
+    }
+    return () => {
+        if (location.origin !== origin || location.pathname !== path) return null;
+        if (containing && !surfaceVisible(before.get(containing))) {
+            const current = surfaceElement(containing);
+            if (!current || !surfaceVisible(current)) return {state:'ui-hidden', value:containing};
+        }
+        if (!button.isConnected) return null;
+        const added = [...visibleSurfaces()].filter(([key, e]) =>
+            !before.has(key) && !alreadyVisible.has(e) && !e.contains(button));
+        const roots = added.filter(([, node]) => !added.some(([, other]) => other !== node && other.contains(node)));
+        return roots.length === 1 ? {state:'ui-shown', value:roots[0][0]} : null;
+    };
+}
+
+async function awaitEffect(check) {
+    const deadline = performance.now() + 1400;
+    let proof = check();
+    while (!proof && performance.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 65));
+        proof = check();
+    }
+    return proof;
+}
 """
 
 _OBSERVER = r"""
@@ -131,7 +193,8 @@ _OBSERVER = r"""
         };
         if (observation) {
             // Match the target during the click. The relay checks its effect after the release.
-            pending = {id:observation, inspect};
+            const visibility = observeVisibility(button);
+            pending = {id:observation, inspect:() => awaitEffect(() => inspect() || visibility())};
             send({url, label:text, element, state:'', value:'', observation, ...pointer});
         } else {
             queueMicrotask(() => {
@@ -176,7 +239,7 @@ _DESCRIBE_LINKS = r"""
 """
 
 _CLICK = r"""
-((entry, origin, path) => {
+(async (entry, origin, path) => {
     if (location.origin !== origin || location.pathname !== path) return 'wrong_page';
     const candidates = entry.selector ? [...document.querySelectorAll(entry.selector)].filter(usable)
         : matchingControl(entry.state === 'navigation' ? linkSelector : selector, entry.label);
@@ -192,23 +255,38 @@ _CLICK = r"""
     if (entry.state === 'panel-visible') {
         if (panelId(button) !== entry.value) return 'unmatched';
         if (panelVisible(entry.value)) return 'state_changed';
+        const visibility = observeVisibility(button);
         button.click();
-        return button.isConnected && panelVisible(entry.value) ? 'verified' : 'unconfirmed';
+        return (await awaitEffect(() => button.isConnected && panelVisible(entry.value)
+            ? 'verified' : visibility())) || 'unconfirmed';
     }
     if (entry.state === 'selector-visible') {
         if (visibleMatching(entry.value)) return 'state_changed';
         button.click();
         return visibleMatching(entry.value) ? 'verified' : 'panel_open_dispatched';
     }
-    if (entry.state === 'unverified') {
+    if (entry.state === 'ui-shown' || entry.state === 'ui-hidden' || entry.state === 'unverified') {
+        const surface = entry.state === 'unverified' ? null : surfaceElement(entry.value);
+        if (entry.state === 'ui-shown' && surface && surfaceVisible(surface)) return 'state_changed';
+        if (entry.state === 'ui-hidden' && (!surface || !surfaceVisible(surface) || !surface.contains(button))) return 'unmatched';
+        const visibility = observeVisibility(button);
         button.click();
-        return 'unconfirmed';
+        return (await awaitEffect(() => {
+            if (location.origin !== origin || location.pathname !== path) return null;
+            const current = entry.state === 'unverified' ? null : surfaceElement(entry.value);
+            if (entry.state === 'ui-shown' && current && surfaceVisible(current)) return 'verified';
+            if (entry.state === 'ui-hidden' && !surfaceVisible(surface) && (!current || !surfaceVisible(current))) {
+                return 'verified';
+            }
+            return visibility();
+        })) || 'unconfirmed';
     }
     const before = button.getAttribute(entry.state);
     if (!['true', 'false'].includes(before) || before === entry.value) return 'state_changed';
+    const visibility = observeVisibility(button);
     button.click();
-    return button.isConnected && button.getAttribute(entry.state) === entry.value
-        ? 'verified' : 'unconfirmed';
+    return (await awaitEffect(() => button.isConnected && button.getAttribute(entry.state) === entry.value
+        ? 'verified' : visibility())) || 'unconfirmed';
 })(ENTRY, ORIGIN, ROUTE)
 """
 
@@ -402,6 +480,8 @@ def valid_proof(state, value):
     if state == 'panel-visible':
         return isinstance(value, str) and 0 < len(value) <= 128 and value.isprintable() and not any(
             letter.isspace() for letter in value)
+    if state in ('ui-shown', 'ui-hidden'):
+        return isinstance(value, str) and re.fullmatch(r'(id:[A-Za-z0-9_:.-]{1,128}|(?:role|tag):[a-z][a-z0-9-]{0,127})', value) is not None
     return state in STATES and value in ('true', 'false')
 
 
@@ -525,7 +605,7 @@ class PageLearning:
         expression = 'globalThis[' + json.dumps(self.binding + 'Effect') + '](' + json.dumps(observation) + ')'
         try:
             result = wire.call('Runtime.evaluate', {'expression': expression, 'contextId': context,
-                                                     'returnByValue': True}, sid, timeout=.4)
+                                                     'returnByValue': True, 'awaitPromise': True}, sid, timeout=2.6)
             value = result.get('result') if isinstance(result, dict) else None
             proof = value.get('value') if isinstance(value, dict) else None
         except (ConnectionError, OSError, RuntimeError, TimeoutError):
@@ -652,6 +732,9 @@ def replay_control(entry, url, run_expression):
             return 'unmatched'
         data['value'] = destination
     status = run_expression(page_expression(_CLICK, data, url), click=True)
+    if isinstance(status, dict) and valid_proof(status.get('state'), status.get('value')):
+        entry.update(state=status['state'], value=status['value'])
+        return 'verified'
     if status == 'navigation_dispatched':
         expected = [origin, data['value']]
         reached = run_expression('[location.origin, location.pathname]', until=expected)
@@ -727,9 +810,15 @@ def click_by_target(catalog, url, page, target, run_expression, package_control)
         controls = controls_on_page(catalog, url, page, target, run_expression)['controls']
     entry = catalog.get(controls[0]['id'], origin, page) if len(controls) == 1 else None
     if entry is not None:
+        previous = (entry['state'], entry['value'])
         status = replay_control(entry, url, run_expression)
         if status not in ('unmatched', 'obscured'):
-            return {**catalog_outcome(catalog, entry, status), 'source': 'catalog'}
+            result = {**catalog_outcome(catalog, entry, status), 'source': 'catalog'}
+            if status == 'verified' and previous != (entry['state'], entry['value']):
+                proof = (entry['label'], entry['element_id'], entry['state'], entry['value'])
+                catalog.record([(origin, page, proof)])
+                result['repaired'] = True
+            return result
         if status == 'unmatched':
             catalog.stale(entry)
 
@@ -749,7 +838,8 @@ def click_by_target(catalog, url, page, target, run_expression, package_control)
         opens = mapped.get('opens')
     if status in ('unmatched', 'obscured'):
         source = 'dom'
-        candidate, status = attempt_dom_control(url, target, run_expression, opens=opens, previous=entry)
+        previous = entry if entry and entry['state'] not in ('ui-shown', 'ui-hidden') else None
+        candidate, status = attempt_dom_control(url, target, run_expression, opens=opens, previous=previous)
     if status != 'verified':
         return {**fallback(status, dispatched=status not in CLICK_NOT_SENT), 'source': source}
     result = {'success': True, 'status': 'ok', 'source': source, 'dispatched': True}

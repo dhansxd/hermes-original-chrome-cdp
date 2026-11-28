@@ -149,6 +149,28 @@ function openGeminiModels() {
 </script>
 <button onclick="document.body.dataset.submits=String(Number(document.body.dataset.submits || 0) + 1)">Submit</button>
 """
+        if self.path.startswith('/dynamic-clicks'):
+            body = b'''<!doctype html><meta charset="utf-8"><title>Unmapped effects</title>
+<button id="create" onclick="openActions()">Buat</button>
+<div id="welcome" role="dialog"><button onclick="dismiss(this)">Lanjutkan</button></div>
+<button id="check" onclick="count('checked')">Cek saja</button>
+<script>
+function count(key) { document.body.dataset[key] = String(1 + Number(document.body.dataset[key] || 0)); }
+function dismiss(button) { count('dismissed'); setTimeout(() => button.closest('[role=dialog]').remove(), 160); }
+function openActions() {
+    count('opened');
+    setTimeout(() => {
+        const panel = document.createElement('section');
+        if (location.search) panel.id = 'changed-menu';
+        panel.setAttribute('role', location.search ? 'listbox' : 'menu');
+        const choice = document.createElement('button');
+        choice.setAttribute('role', location.search ? 'option' : 'menuitem');
+        choice.textContent = 'Upload video';
+        panel.append(choice);
+        document.body.append(panel);
+    }, 190);
+}
+</script>'''
         if self.path == '/project/existing?late-popup':
             body += f'<script>setTimeout(() => {{ {FLOW_POPUP} }}, 160)</script>'.encode()
         self.send_response(200)
@@ -358,6 +380,44 @@ def exercise_site_popups(script, learned, origin):
     print('NATIVE_SITE_POPUP_ORDER_PASS', flush=True)
 
 
+def exercise_dynamic_clicks(script, learned, origin):
+    url = origin + '/dynamic-clicks'
+    assert learned('navigate', url=url)['success']
+    script('assert wait_for_element("#welcome button", timeout=8)')
+    dismissed = learned('click', target='Lanjutkan')
+    assert dismissed.get('success') and dismissed.get('source') == 'dom', dismissed
+    opened = learned('click', target='Buat')
+    assert opened.get('success') and opened.get('source') == 'dom', opened
+    script('assert js("document.body.dataset.dismissed") == "1"')
+    script('assert js("document.body.dataset.opened") == "1"')
+
+    assert learned('navigate', url=url)['success']
+    script('assert wait_for_element("#welcome button", timeout=8)')
+    for target, previous in [('Lanjutkan', dismissed), ('Buat', opened)]:
+        result = learned('click', target=target)
+        assert result.get('success') and result.get('source') == 'catalog', result
+        assert result['control'] == previous['control'], result
+    untouched = learned('click', target='Cek saja')
+    assert untouched.get('reason') == 'unconfirmed' and untouched.get('dispatched'), untouched
+    assert not learned('list_learned_controls', label='Cek saja')['controls']
+    script('assert js("document.body.dataset.checked") == "1"')
+
+    assert learned('navigate', url=url + '?changed')['success']
+    script('assert wait_for_element("#create", timeout=8)')
+    repaired = learned('click', target='Buat')
+    assert repaired.get('success') and repaired.get('repaired'), repaired
+    assert repaired['control'] == opened['control'], repaired
+    script('assert js("document.body.dataset.opened") == "1"')
+
+    assert learned('navigate', url=url + '-visual')['success']
+    script('assert wait_for_element("#create", timeout=8)')
+    script("""x,y=js("(() => {const r=document.querySelector('#create').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()")
+click_at_xy(x, y)""")
+    assert learned('list_learned_controls', label='Buat')['controls']
+    script('assert js("document.body.dataset.opened") == "1"')
+    print('NATIVE_DYNAMIC_MENU_AND_DISMISS_PASS', flush=True)
+
+
 def exercise_basic_actions(mode, script, learned, origin, provider):
     url = origin + '/basic-actions'
     next_url = origin + '/basic-next'
@@ -548,6 +608,9 @@ plugins:
                             if basic == 'flow-project-title':
                                 exercise_flow_project_title(script, learned, origin, provider)
                                 continue
+                            if basic == 'dynamic-clicks':
+                                exercise_dynamic_clicks(script, learned, origin)
+                                continue
                             if basic == 'site-popups':
                                 module = sys.modules.get(type(provider).__module__.rsplit('.', 1)[0] + '.site_popups')
                                 if module:
@@ -645,6 +708,9 @@ if __name__ == '__main__':
 
 
 class NativeLearnedControls(unittest.TestCase):
+    def test_browser_learns_delayed_menu_and_dialog_dismissal_without_package(self):
+        exercise(basic='dynamic-clicks')
+
     def test_browser_handles_site_popups_before_page_controls(self):
         exercise(basic='site-popups')
 

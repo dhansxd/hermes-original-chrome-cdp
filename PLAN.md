@@ -108,6 +108,24 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   menyimpan bukti aksi yang berhasil. Uji pembanding, fallback, dan pemakaian
   ulang harus memakai panggilan aksi yang sama. Aksi yang sudah terkirim
   diperiksa hasilnya sebelum ada percobaan lain.
+- Pembuktian klik berlaku lintas situs. Plugin mengamati keadaan DOM
+  sebelum dan sesudah satu klik, termasuk panel atau menu yang baru tampil
+  dan dialog yang ditutup oleh tombol di dalamnya. Pemetaan dipelajari pada
+  situs yang belum punya paket dan diperbarui saat struktur efek berubah.
+  Gunakan jalur klik yang sama untuk kontrol katalog, DOM dan screenshot.
+  Simpan tombol siap pakai setelah perubahan yang jelas terkonfirmasi di
+  halaman yang sama. Pengiriman klik saja belum menjadi bukti hasil, dan
+  tidak memicu klik kedua secara otomatis.
+- Pada 28 November 2026, `a1b6089` membuka menu Buat di YouTube Studio
+  tetapi mengembalikan `unconfirmed` dan tidak mengaktifkan kontrol.
+  Kandidat mengenali panel yang baru terlihat, mempelajari tombol lewat
+  DOM dan membuka menu lagi lewat katalog setelah halaman dibuka ulang.
+  Uji memakai Chrome 158.0.8127.38 di macOS 27.2.1 dengan Hermes
+  `ae2a81ccc0`. Pemeriksaan jendela kembali ke kondisi awal walaupun
+  verifikasi cleanup oleh provider melaporkan peringatan pada uji situs
+  asli. Uji fixture meniru menu yang muncul terlambat, dialog yang
+  menghilang, perubahan identitas menu, pembelajaran klik visual dan
+  aksi tanpa efek yang tetap belum terkonfirmasi.
 - Penerimaan jalur tunggal juga mencakup kontrol bawaan Gemini dan Flow serta
   data hasil pembelajaran. Eksekutor Chrome native, kepemilikan jendela,
   profil, startup, dan perilaku chat mengikuti kontrak yang telah ada.
