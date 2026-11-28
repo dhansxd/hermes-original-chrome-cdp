@@ -1326,6 +1326,25 @@ kualitas, jumlah hasil dan referensi mengikuti kontrol yang tersedia. Nilai yang
 hanya diminta melalui prompt dicatat sebagai permintaan. Hasil dipantau sampai
 identitas media dan file asli dapat dikaitkan dengan permintaan asal.
 
+#### Popup pembaruan di editor
+
+- Audit `b2ac395` pada Hermes `ae2a81ccc0`, Browser Harness 0.1.13,
+  macOS 27.2.1 dan Chrome 158.0.8127.38 memeriksa 14 profil Chrome lokal
+  satu per satu. Sebanyak 12 profil mencapai editor proyek lama dan dua
+  profil tidak menampilkan proyek lama yang dapat dibuka. Seluruh jendela
+  uji kembali ke kondisi awal setelah sesi berakhir.
+- Pada enam profil, editor menampilkan dialog **Yang baru** atau
+  **What's new**. Kontrolnya menampilkan tautan changelog dan aksi
+  **Mulai** atau **Get started**. Pemeriksaan tambahan pada tiga dialog
+  mengonfirmasi iframe changelog yang terlihat di dalam panel.
+  Efek aksi penutup dan pembukaan proyek baru belum diuji.
+- Kandidat perbaikan mengenali dialog pembaruan yang terlihat dari
+  ciri changelog, memakai kontrol UI-nya lewat `browser_exec` di jendela
+  yang sama, lalu memverifikasi dialog hilang sebelum aksi editor.
+  Uji juga dialog yang baru muncul setelah editor mulai siap.
+  [Kasus changelog Flow](https://github.com/ffroliva/gflow-cli/issues/26) ·
+  [Kasus dialog muncul terlambat](https://github.com/ffroliva/gflow-cli/pull/867)
+
 - [x] **FLO-01** Mode klasik, pemilihan pengaturan, generate gambar/video, progres,
   dan unduhan. Uji readback pengaturan serta file nyata yang dapat didekode.
   Pada 0.9.0 Nano Banana 2.1 menghasilkan JPEG vertikal. Omni 1.2 Flash menghasilkan
