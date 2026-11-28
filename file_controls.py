@@ -4,6 +4,14 @@ from pathlib import Path
 from textwrap import indent
 
 
+UPLOAD_HELP = (
+    'Select files with browser_exec.site_control '
+    '{"action":"upload","params":{"path":"/absolute/video.mp4","target":"Choose file"}}. '
+    'Use the visible label of the file-picker button as target. '
+    'Omit target when the page has one enabled file input. Pass paths for multiple files.'
+)
+
+
 def upload_parameters(params):
     if not isinstance(params, dict) or set(params) - {'path', 'paths', 'target'}:
         raise ValueError('Pass path or paths and an optional named file-picker target.')

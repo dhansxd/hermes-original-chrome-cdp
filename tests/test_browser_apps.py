@@ -259,6 +259,20 @@ class BrowserAppTests(unittest.TestCase):
                     self.assertFalse(result['success'], result)
         native.assert_not_called()
 
+    def test_file_input_mistake_points_to_the_public_upload_action(self):
+        request = json.dumps({'action': 'set_file_input',
+                              'params': {'path': '/tmp/video.mp4', 'selector': 'input[type=file]'}})
+        args = {'site_control': request}
+        native = Mock()
+        with patch('hermes_cli.config.load_config_readonly', return_value=self.config):
+            route = self.host.prepare_call('browser_exec', args, 'A', session_id='chat-A', turn_id='turn')
+            result = json.loads(self.host.execute(args, native, task_id='A', session_id='chat-A'))
+        self.assertEqual(route['action'], 'block')
+        self.assertIn('{"action":"upload"', route['message'])
+        self.assertIn('visible label', route['message'])
+        self.assertEqual(result['error'], route['message'])
+        native.assert_not_called()
+
     def test_basic_browser_action_reuses_site_window_and_native_timeout(self):
         self.package()
         opened = self.invoke()

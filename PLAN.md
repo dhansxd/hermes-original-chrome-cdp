@@ -76,6 +76,10 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   kedua versi. Enam uji Chrome kandidat dan 476 tes lokal lulus. Lingkungan
   uji memakai Hermes `ae2a81ccc0`, macOS 27.2.1, Chrome 158.0.8127.38,
   dan browser-harness `0.1.13`.
+- Dalam uji Telegram pada `f02904e`, Hermes sampai ke dialog upload dan
+  meminta `set_file_input`. Aksi itu ditolak sebelum file dipilih. Contoh
+  `upload` ditampilkan di deskripsi tool dan pesan koreksi untuk permintaan
+  tersebut. Jalur eksekusi upload tetap memakai aksi `upload` yang sama.
 
 ### Chrome di perangkat lain
 

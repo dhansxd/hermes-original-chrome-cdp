@@ -1,6 +1,6 @@
 ---
 name: site-controls
-description: Browse websites in Original Chrome with browser_exec, use mapped site controls, download files, and keep or resume a Chrome window across turns.
+description: Browse websites in Original Chrome with browser_exec, use mapped site controls, select files for upload, download, and resume a kept window.
 ---
 
 # Browsing in Original Chrome

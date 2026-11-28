@@ -21,6 +21,7 @@ if __package__:
     from .startup import CHROME, PERSONAL
     from .profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
     from .browser_apps import AppHost, CONTROL_SCHEMA, app_identifier
+    from .file_controls import UPLOAD_HELP
     from .profile_rules import ProfileRules
     from .site_learning import ClickCatalog
     from .windows_chrome import WindowsChrome
@@ -30,6 +31,7 @@ else:
     from startup import CHROME, PERSONAL
     from profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
     from browser_apps import AppHost, CONTROL_SCHEMA, app_identifier
+    from file_controls import UPLOAD_HELP
     from profile_rules import ProfileRules
     from site_learning import ClickCatalog
     from windows_chrome import WindowsChrome
@@ -754,7 +756,7 @@ def prepare_call(tool_name, args, task_id, *, session_id='', turn_id='', provide
 
 
 SITE_HELP = ('Drive the task’s Original Chrome window with browser_exec.site_control. '
-             'Use upload to choose explicit files in the current tab. Use page_info, inspect, '
+             f'{UPLOAD_HELP} Use page_info, inspect, '
              'scroll, press_key, wait, tabs and events for general browsing. '
              'Use navigate to open URLs, read to inspect visible page text, type for fields, and '
              'click with the desired UI target. The plugin selects site controls, the learned catalog, '
@@ -828,7 +830,7 @@ def register(ctx):
     if hasattr(ctx, 'register_skill'):
         ctx.register_skill('site-controls', root / 'skills' / 'site-controls' / 'SKILL.md',
                            description='Use browser_exec for website browsing in Original Chrome, Gemini Web '
-                                       'and Google Flow controls, downloads and continuing a kept Chrome window.',
+                                       'and Google Flow controls, file uploads, downloads and continuing a kept Chrome window.',
                            frontmatter={'platforms': ['macos'],
                                         'metadata': {'hermes': {'requires_tools': ['browser_exec']}}})
 

@@ -36,13 +36,13 @@ OBSERVATION_INTERVAL = 15
 
 
 if __package__:
-    from .file_controls import chooser_upload_code, direct_upload_code, upload_parameters, upload_result
+    from .file_controls import UPLOAD_HELP, chooser_upload_code, direct_upload_code, upload_parameters, upload_result
     from .native_actions import NATIVE_ACTIONS, browser_url, key_target, native_action_code, read_dom_code, screenshot_code
     from .site_learning import (LEARNED_ACTIONS, cached_action, fallback, valid_point,
                                 visual_capture_code, visual_check_code, visual_dispatch_code)
     from .site_popups import SITE_ORIGINS, guarded_code, popup_result
 else:
-    from file_controls import chooser_upload_code, direct_upload_code, upload_parameters, upload_result
+    from file_controls import UPLOAD_HELP, chooser_upload_code, direct_upload_code, upload_parameters, upload_result
     from native_actions import NATIVE_ACTIONS, browser_url, key_target, native_action_code, read_dom_code, screenshot_code
     from site_learning import (LEARNED_ACTIONS, cached_action, fallback, valid_point,
                                visual_capture_code, visual_check_code, visual_dispatch_code)
@@ -72,8 +72,7 @@ CONTROL_SCHEMA = {
                    'Use scroll with dx and dy, press_key with key and modifiers, '
                    'wait with mode load, element, network_idle or seconds, and '
                    'tabs with mode list, current, open, switch, close or ensure. '
-                   'Use upload with params.path or params.paths to select explicit local files. '
-                   'Pass params.target with the visible file-picker label when the input opens after a click. '
+                   f'{UPLOAD_HELP} '
                    'With a page open, use {"action":"click","params":{"target":"Model picker"}} for a named control. '
                    'When the click returns a screenshot_id, repeat the same target in the same session '
                    'with that ID and point [x,y], each a fraction of the displayed image from 0 to less than 1. '
@@ -101,6 +100,8 @@ def site_request(args):
         raise ValueError('Use action, app, operation, params, job, target_profile or session in the site request.')
     command = {key: value for key, value in command.items() if value is not None and value != ''}
     action = command.get('action', 'run' if 'operation' in command else 'list')
+    if action == 'set_file_input':
+        raise ValueError(UPLOAD_HELP)
     if (action not in CONTROL_ACTIONS
             or (action == 'run' and command.get('operation') == 'click')):
         raise ValueError(PUBLIC_BROWSER_ERROR)
