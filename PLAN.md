@@ -333,6 +333,30 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   sebelum diklik. Kedua versi lulus uji enam agen pada satu dan dua profil,
   Stop, dan cleanup. Jumlah jendela kembali ke kondisi awal.
 
+### Popup situs
+
+- Kebutuhan pengguna. Popup sambutan, pengumuman, dan promosi yang muncul
+  ditangani sebelum interaksi halaman diteruskan, termasuk saat kontrol
+  halaman di belakangnya masih dapat diklik. Popup dapat muncul setelah
+  pembukaan proyek, saat halaman baru selesai dimuat, atau setelah suatu aksi.
+- Audit Google Flow menemukan **Yang baru** atau **What's new** setelah
+  proyek dibuka. Audit ElevenLabs menemukan onboarding layar penuh, lalu
+  modal **Introducing Eleven v4**, saran **Try Studio**, dan dua banner
+  berurutan. Modal utama terlihat di screenshot saat pemeriksaan
+  `role=dialog` tidak menemukannya. Penutupan banner pertama memunculkan
+  banner berikutnya. Panel opsional **What is this audio for?** muncul
+  setelah satu permintaan Text to Speech.
+- Usulan. Periksa popup setelah navigasi dan sebelum aksi UI melalui
+  `browser_exec`. Gunakan ciri dan kontrol yang terbukti dari situs.
+  Setelah penutupan, verifikasi popup hilang, periksa lapisan berikutnya,
+  lalu identifikasi ulang target tugas di jendela yang sama. Gunakan DOM
+  atau screenshot jika kontrol penutup belum dikenal. Tampilkan pilihan
+  pengguna jika halaman meminta keputusan.
+- Uji Flow lebih dulu pada dialog changelog yang sudah diamati. Lanjutkan
+  dengan ElevenLabs pada modal dan banner beruntun. Sertakan popup yang
+  muncul terlambat, popup yang tidak menutupi target, dan menu yang dibuka
+  atas kebutuhan tugas.
+
 ### Tujuan produk
 
 Hermes memakai Google Chrome asli lewat CDP untuk membuka situs apa pun yang
