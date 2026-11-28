@@ -4,7 +4,7 @@ Revisi PRD 31, 22 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-Host 0.17.1 menyediakan browsing umum, kontrol situs, dan tindakan jendela
+Host 0.18.0 menyediakan browsing umum, kontrol situs, dan tindakan jendela
 lintas giliran melalui satu `browser_exec`. Jalur distribusi publik memakai
 [URL Git](README.md#install). Pilih dan pulihkan browser secara manual melalui
 Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
@@ -234,6 +234,34 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
 
 ### Katalog klik otomatis di Mac
 
+- Keputusan pengguna, 28 November 2026. Ekstensi adalah katalog tombol siap pakai
+  untuk satu situs. Gemini, Google Flow, dan situs yang pertama kali dibuka
+  mengikuti aturan yang sama. Kunjungan pertama mendaftarkan situs meskipun
+  belum ada klik. Klik yang terbukti berhasil memperkaya katalog. Permintaan
+  berikutnya memakai nama target yang sama. Jika tampilan berubah, plugin
+  mencari tombol di halaman dan memperbarui pemetaannya setelah hasil teramati.
+  Hermes cukup menyebut target melalui satu aksi klik di jendela tugasnya.
+- `list` dan `describe` mencakup situs yang diamati dan pemetaan awal maupun
+  hasil pemakaian. Nonaktifkan, aktifkan kembali, dan hapus melalui ID yang
+  dikembalikan katalog. Pembaruan plugin mempertahankan data hasil belajar
+  dan menghormati pilihan situs yang sebelumnya dinonaktifkan atau dihapus.
+- Bukti pembanding 0.18.0, macOS 27.2.1, Google Chrome 158.0.8127.38,
+  Hermes `ae2a81ccc0`, Browser Harness 0.1.13. Pada `951ed44`, keempat
+  regresi katalog gagal: penemuan situs, status setelah pembaruan, penggunaan
+  ulang nama target yang berbeda dari label layar, dan kelanjutan setelah
+  pemetaan lama tidak menemukan tombol. Pada kandidat (blob `browser_apps.py`
+  `cb1feae6`, `site_learning.py` `3dbfc885`), keempatnya lulus. Suite
+  sebelumnya berisi 480 uji dan kandidat 484. Kedua revisi menjalani 13
+  skenario Chrome asli pada halaman uji lokal. Kandidat juga membuktikan
+  situs baru muncul sebelum klik, pemakaian ulang tombol menu Gemini dan Flow,
+  serta tombol Gemini yang markup dan ID-nya berubah. Pada halaman identik,
+  baseline mengembalikan `create_image: missing`. Kandidat menemukan tombol
+  menurut teksnya dan menyimpan ID yang terverifikasi setelah berubah. Klik yang hasilnya
+  belum terkonfirmasi tidak dikirim dua kali. Pada pengulangan awal, dua uji
+  terganggu oleh perubahan metadata Chrome dan inventori jendela. Pengulangan
+  lengkap secara berurutan lulus 13/13. Di profil Hermes terisolasi, pembaruan
+  dari 0.17.1 dan disable/enable mempertahankan tombol uji. Uninstall bersih
+  menghapus katalog dan instalasi baru mulai kosong.
 - Penyatuan eksekusi aksi browser dimulai di `AppHost.execute`. Satu aksi
   klik membawa target UI. Dalam jendela yang sudah dimiliki tugas, plugin
   memilih kontrol, menjalankan fallback jika target lama tidak cocok, dan

@@ -502,11 +502,74 @@ class AppHost:
             return self.bundled_source
         return self.root
 
-    def package_ids(self):
+    def package_ids(self, *, include_removed=False):
         roots = (self.root,) if self.bundled_source is None else (self.root, self.bundled_source)
         identifiers = {path.name for root in roots if root.is_dir() for path in root.iterdir()
                        if path.is_dir() and not path.name.startswith('.') and path.name != '__pycache__'}
-        return sorted(name for name in identifiers if self.get_setting('apps_disabled.' + name) != 'removed')
+        return sorted(name for name in identifiers if include_removed or self.get_setting('apps_disabled.' + name) != 'removed')
+
+    @staticmethod
+    def site_origin(metadata):
+        mapping = metadata.get('click_targets')
+        origin = mapping.get('origin') if isinstance(mapping, dict) else None
+        return origin if isinstance(origin, str) else None
+
+    def restore_site_preferences(self):
+        """Apply an existing installation's disable/remove choices before its first browser session."""
+        for identifier in self.package_ids(include_removed=True):
+            state = self.get_setting('apps_disabled.' + identifier)
+            if not state:
+                continue
+            try:
+                _, metadata, _ = read_package(self.package_root(identifier), identifier)
+            except (OSError, ValueError, RuntimeError):
+                continue
+            origin = self.site_origin(metadata)
+            catalog = self.provider.learning_catalog()
+            if origin and catalog is not None:
+                catalog.set_site_state(origin, 'remove' if state == 'removed' else 'disable')
+
+    def site_catalog(self, catalog):
+        sites = catalog.sites() if catalog is not None else {}
+        entries = []
+        for identifier in self.package_ids():
+            try:
+                _, metadata, _ = self.package(identifier)
+                origin = self.site_origin(metadata)
+                sites.pop(origin, None)
+                entries.append({'id': identifier, 'origin': origin, 'available': True,
+                                'enabled': not bool(self.get_setting('apps_disabled.' + identifier)),
+                                'name': metadata.get('name', identifier),
+                                'operations': [name for name in metadata['operations'] if name != 'click']})
+            except (OSError, ValueError, RuntimeError) as error:
+                entries.append({'id': identifier, 'available': False, 'error': str(error)})
+        for origin, state in sites.items():
+            if state != 'removed':
+                entries.append({'id': origin, 'origin': origin, 'available': True, 'enabled': state == 'enabled',
+                                'name': urlsplit(origin).hostname, 'operations': []})
+        return entries
+
+    def visited_site(self, action, origin, catalog):
+        sites = catalog.sites() if catalog is not None else {}
+        if origin not in sites or (sites[origin] == 'removed' and action != 'enable'):
+            raise ValueError('Choose a site from the site control catalog.')
+        # A supplied origin identifies the same extension as its installed ID.
+        for identifier in self.package_ids(include_removed=True):
+            try:
+                _, metadata, _ = read_package(self.package_root(identifier), identifier)
+            except (OSError, ValueError, RuntimeError):
+                continue
+            if self.site_origin(metadata) == origin:
+                return json.loads(self.handle({'action': action, 'app': identifier}))
+        if action == 'describe':
+            return {'success': True, 'status': 'ok', 'enabled': sites[origin] == 'enabled', 'guide': '',
+                    'app': {'id': origin, 'origin': origin, 'name': urlsplit(origin).hostname,
+                            'named_clicks': catalog.labels(origin), 'operations': {}}}
+        if self.provider.unloading:
+            raise RuntimeError('Original Chrome provider is unloading.')
+        catalog.set_site_state(origin, action)
+        return {'success': True, 'status': 'ok', 'app': origin, 'enabled': action == 'enable',
+                'removed': action == 'remove', 'cleanup_pending': False}
 
     def package(self, identifier):
         if self.get_setting('apps_disabled.' + identifier) == 'removed':
@@ -705,12 +768,12 @@ class AppHost:
             catalog = self.provider.learning_catalog()
             if command['action'] == 'click' and isinstance(params, dict) and 'screenshot_id' in params:
                 return json.dumps(self.continue_visual_click(params, args, native, context), ensure_ascii=False)
-            def run_package_click(origin, target):
+            def run_package_click(origin, target, hint, path):
                 if files:
                     if self.site_click_mapping(origin, target, commands=True):
                         return fallback('Choose the visible control that opens the file picker.', dispatched=False)
                     return None
-                return self.execute_package_click(origin, target, args['session'], context)
+                return self.execute_package_click(origin, target, args['session'], context, hint, path)
 
             result = cached_action(catalog, command, run_expression, package_control=self.click_mapping,
                                    package_action=run_package_click)
@@ -824,14 +887,15 @@ class AppHost:
             pass  # The native handler may have sent the input before failing.
         return {**fallback('check_visible_result', dispatched=True), 'source': 'screenshot'}
 
-    def execute_package_click(self, origin, target, session, context):
+    def execute_package_click(self, origin, target, session, context, hint, path):
         command = self.site_click_mapping(origin, target, commands=True)
         if command is None:
             return None
+        command['_click_target'] = {'target': target, 'path': path, 'hint': hint}
         result = self.run_package_click(command, session, context)
         if result.pop('_visual_fallback', False):
             result['_guarded_visual'] = command
-        return {**result, 'source': 'package'}
+        return {**result, 'source': 'catalog'}
 
     def run_package_click(self, command, session, context, *, visual=None):
         with self.provider.lock:
@@ -913,9 +977,17 @@ class AppHost:
                 except Exception:
                     self.changing.discard(identifier)
                     raise
+            try:
+                _, metadata, _ = read_package(root, identifier)
+                origin = self.site_origin(metadata)
+            except (ValueError, OSError, RuntimeError):
+                origin = None
             names = [choice.browser_name or base for base, choice in self.provider.profile_choices.items()
                      if choice.app_id == identifier]
         try:
+            catalog = self.provider.learning_catalog() if origin else None
+            if catalog is not None and action != 'enable':
+                catalog.set_site_state(origin, 'disable')
             for name in names:
                 self.provider.finish(session_name=name, interrupted=True)
             with self.provider.lock:
@@ -927,10 +999,14 @@ class AppHost:
                 if pending:
                     return result
                 if action == 'enable':
-                    self.provider.app_instances[identifier] = uuid.uuid4().hex
+                    if catalog is not None:
+                        catalog.set_site_state(origin, 'enable')
                     self.provider.set_setting('apps_disabled.' + identifier, False)
+                    self.provider.app_instances[identifier] = uuid.uuid4().hex
                     result['enabled'] = True
             if action == 'remove':
+                if catalog is not None:
+                    catalog.set_site_state(origin, 'remove')
                 if root == self.bundled_source:
                     self.provider.set_setting('apps_disabled.' + identifier, 'removed')
                 elif directory.is_symlink():
@@ -970,18 +1046,15 @@ class AppHost:
                 result = self.provider.window_control(action, args.get('session'), task_id, session_id,
                                                       session_key=kwargs.get('session_key', ''))
                 return json.dumps(result, ensure_ascii=False)
+            if action in {'list', 'describe', 'enable', 'disable', 'remove'}:
+                catalog = self.provider.learning_catalog()
+                app = args.get('app')
+                if action != 'list' and isinstance(app, str) and app.startswith(('https://', 'http://')):
+                    result = self.visited_site(action, app, catalog)
+                    return json.dumps(result, ensure_ascii=False)
             if action == 'list':
-                entries = []
-                for identifier in self.package_ids():
-                    try:
-                        _, metadata, _ = self.package(identifier)
-                        entries.append({'id': identifier, 'available': True,
-                                        'enabled': not bool(self.get_setting('apps_disabled.' + identifier)),
-                                        'name': metadata.get('name', identifier),
-                                        'operations': [name for name in metadata['operations'] if name != 'click']})
-                    except (OSError, ValueError, RuntimeError) as error:
-                        entries.append({'id': identifier, 'available': False, 'error': str(error)})
-                result = {'success': True, 'status': 'ok', 'directory': str(self.root), 'apps': entries}
+                result = {'success': True, 'status': 'ok', 'directory': str(self.root),
+                          'apps': self.site_catalog(catalog)}
             elif action in {'enable', 'disable', 'remove'}:
                 result = self.manage(action, app_identifier(args.get('app')))
             elif action == 'record_missing_control':
@@ -991,11 +1064,17 @@ class AppHost:
                 directory, metadata, source = self.package(identifier)
                 if action == 'describe':
                     guide = directory / 'SKILL.md'
-                    public = {key: value for key, value in metadata.items() if key != 'click_commands'}
+                    public = {key: value for key, value in metadata.items()
+                              if key not in {'click_commands', 'click_targets', 'titled_link'}}
                     public['operations'] = {name: description for name, description in metadata['operations'].items()
                                             if name != 'click'}
-                    if isinstance(metadata.get('click_commands'), dict):
-                        public['named_clicks'] = list(metadata['click_commands'])
+                    origin = self.site_origin(metadata)
+                    public['origin'] = origin
+                    labels = set(metadata.get('click_commands') or {})
+                    labels.update((metadata.get('click_targets') or {}).get('controls') or {})
+                    if origin and catalog is not None:
+                        labels.update(catalog.labels(origin))
+                    public['named_clicks'] = sorted(labels)
                     result = {'success': True, 'status': 'ok', 'app': public,
                               'enabled': not bool(self.get_setting('apps_disabled.' + identifier)),
                               'data_directory': str(self.data_dir() / 'browser-apps' / identifier),
@@ -1031,6 +1110,7 @@ class AppHost:
                             raise RuntimeError('This extension is changing lifecycle state.')
                         context = AppContext(self, identifier, args.get('session', ''), task_id, session_id)
                         context.visual_click = args.get('_visual_click')
+                        context.click_target = args.get('_click_target')
                         context._binding = context._choice()
                         if action == 'observe':
                             # Hermes supplies the turn in pre_tool_call; its native handler can omit it.

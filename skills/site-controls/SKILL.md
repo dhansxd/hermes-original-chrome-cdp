@@ -7,8 +7,11 @@ description: Browse websites in Original Chrome with browser_exec, use mapped si
 
 Use `browser_exec.site_control` for structured browser actions and site
 operations in Original Chrome. Pass each request as JSON text and keep the task's session.
-For Gemini Web, use its
-`open_chat` operation and the controls listed in the Gemini guide.
+On the Mac, the plugin registers each visited HTTP(S) site. Use the same named
+click for Gemini, Google Flow and a site you are opening for the first time.
+The plugin records and repairs verified buttons automatically. Use `list`
+to find a site and `describe` with its ID to read its available button names.
+For an existing Gemini chat, `open_chat` can navigate to the requested chat.
 
 Use these actions in `site_control` to open a known address and fill a field
 that can be identified by one CSS selector on the current page:

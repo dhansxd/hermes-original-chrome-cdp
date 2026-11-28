@@ -529,6 +529,24 @@ plugins:
                 if click_only:
                     verify_guarded_click_fallback(call, url)
                     verify_guarded_click_fallback(call, url, visual=True)
+                    session = call('child', action='navigate', params={'url': url + '/app/updated'})['session']
+                    for element in ('old-button', 'new-button', 'new-button'):
+                        markup = f'<button id="{element}" aria-pressed="false">Create image</button>'
+                        setup = ('document.body.innerHTML=' + json.dumps(markup) +
+                                 ";document.querySelector('button').onclick=e=>e.target.setAttribute('aria-pressed','true')")
+                        call('child', session=session, code=f'js({setup!r})')
+                        result = call('child', session=session, action='click', params={'target': 'Create image'})
+                        assert result['data']['clicked'], result
+                        state = "document.querySelector('button').getAttribute('aria-pressed')"
+                        value = call('child', session=session, code=f'print(js({state!r}))')
+                        assert value['output'].strip() == 'true', value
+                        catalog = provider.learning_catalog()
+                        from site_learning import page_key
+                        _, page = page_key([url, '/app/updated'])
+                        stored = catalog.list(url, page, 'Create image')
+                        assert len(stored) == 1 and stored[0]['element_id'] == element, stored
+                    assert 'Create image' in call('child', action='describe', app='gemini')['app']['named_clicks']
+                    report['named_click_on_changed_button'] = True
                     report['guarded_dom_and_screenshot_clicks'] = True
                     return report
                 if research_only:

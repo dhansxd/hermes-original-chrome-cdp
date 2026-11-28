@@ -836,6 +836,8 @@ def register(ctx):
     apps.controls_enabled = bool(ctx.has_capability('tools.override'))
     if apps.controls_enabled:
         provider.learning_directory = lambda: ctx.state.data_dir
+        if root.resolve() == (get_hermes_home() / 'plugins' / NAME).resolve():
+            apps.restore_site_preferences()
         register_site_controls(ctx, apps)
     if hasattr(ctx, 'register_skill'):
         ctx.register_skill('site-controls', root / 'skills' / 'site-controls' / 'SKILL.md',

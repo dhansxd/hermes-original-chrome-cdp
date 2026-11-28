@@ -386,6 +386,58 @@ class BrowserAppTests(unittest.TestCase):
         self.dispatch.assert_not_called()
         self.assertFalse(self.provider.owners)
 
+    def test_one_site_catalog_for_new_sites_gemini_and_flow(self):
+        from site_learning import page_key
+        self.host.bundled_source = Path(browser_apps.__file__).parent / 'site_apps'
+        self.provider.learning_directory = lambda: self.root / 'learned'
+        catalog = self.provider.learning_catalog()
+        def call(action, app=None):
+            result = json.loads(self.host.handle({'action': action, 'app': app}))
+            self.assertTrue(result['success'], result)
+            return result
+        sites = [('https://example.org', 'https://example.org'),
+                 ('gemini', 'https://gemini.google.com'), ('flow', 'https://flow.google.com')]
+        for _, origin in sites:
+            _, page = page_key([origin, '/private-path'])
+            catalog.record([(origin, page, None)])
+        for identifier, origin in sites:
+            self.assertIn(identifier, {entry['id'] for entry in call('list')['apps']})
+            before = call('describe', identifier)['app']
+            self.assertEqual(before['origin'], origin)
+            self.assertNotIn('Example menu', before['named_clicks'])
+            catalog.record([(origin, page, ('Example menu', 'b', 'aria-expanded', 'true'))])
+            after = call('describe', identifier)['app']
+            self.assertIn('Example menu', after['named_clicks'])
+            self.assertNotIn('/private-path', json.dumps(after))
+        self.assertIn('Tools', call('describe', 'gemini')['app']['named_clicks'])
+        self.assertIn('Settings', call('describe', 'flow')['app']['named_clicks'])
+        self.assertEqual(len(call('list')['apps']), 3)
+        for identifier, origin in sites:
+            call('disable', identifier)
+            self.assertFalse(call('describe', identifier)['enabled'])
+            self.assertFalse(catalog.list(origin, page))
+            call('enable', identifier)
+            self.assertTrue(catalog.list(origin, page))
+            call('remove', identifier)
+            catalog.record([(origin, page, ('Hidden', 'x', 'aria-expanded', 'true'))])
+            self.assertFalse(catalog.list(origin, page))
+        self.assertEqual(call('list')['apps'], [])
+
+    def test_upgrade_respects_removed_site_until_enabled_by_its_catalog_id(self):
+        self.host.bundled_source = Path(browser_apps.__file__).parent / 'site_apps'
+        self.provider.learning_directory = lambda: self.root / 'learned'
+        catalog = self.provider.learning_catalog()
+        origin = 'https://gemini.google.com'
+        catalog.record([(origin, 'page', ('Old button', 'id', 'aria-expanded', 'true'))])
+        self.settings['apps_disabled.gemini'] = 'removed'
+        self.host.restore_site_preferences()
+        self.assertEqual({row['id'] for row in json.loads(self.host.handle({}))['apps']}, {'flow'})
+        self.assertFalse(catalog.list(origin, 'page'))
+        result = json.loads(self.host.handle({'action': 'enable', 'app': origin}))
+        self.assertEqual(result['app'], 'gemini')
+        self.assertTrue(result['enabled'])
+        self.assertEqual({row['id'] for row in json.loads(self.host.handle({}))['apps']}, {'flow', 'gemini'})
+
     def test_missing_directory_is_an_empty_catalog(self):
         result = json.loads(self.host.handle({'action': 'list'}))
         self.assertEqual(result['apps'], [])

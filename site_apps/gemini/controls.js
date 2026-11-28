@@ -1,4 +1,4 @@
-async (origin, selectors, kind, name, label, researchState = null, savedSubmission = null, dispatchSend = false, visualPoint = null) => {
+async (origin, selectors, kind, name, label, researchState = null, savedSubmission = null, dispatchSend = false, visualPoint = null, clickTarget = null) => {
     const route = location.pathname.match(/^(\/(?:u\/\d+\/)?app)(?:\/([a-zA-Z0-9-]+))?\/?$/);
     const chatId = route?.[2] ? 'c_' + route[2] : null;
     if (location.origin !== origin || !/^\/(?:u\/\d+\/)?app(?:\/|$)/.test(location.pathname)) {
@@ -229,6 +229,19 @@ async (origin, selectors, kind, name, label, researchState = null, savedSubmissi
             .filter((node) => matchesLabel(node, 'More tools') || matchesLabel(node, 'Alat lainnya'));
     } else {
         nodes = all(selectors[name]);
+        // Keep research and delivery checks in this operation when a site's button markup changes.
+        if (kind === 'control' && name !== 'send' && clickTarget?.path === location.pathname &&
+                !['tools_menu', 'composer', 'model_picker'].includes(name)) {
+            const hint = clickTarget.hint;
+            const matches = hint?.element_id ? all('#' + CSS.escape(hint.element_id)) : [];
+            const element = matches.length === 1 ? matches[0] : null;
+            const types = buttonSelector + ',[role="menuitem"],[role="menuitemradio"],gem-menu-item';
+            if (element && visible(element) && element.matches(types) && hasName(element, [hint.label])) {
+                nodes = [element];
+            } else if (!nodes.length) {
+                nodes = all(types).filter(node => hasName(node, [clickTarget.target]));
+            }
+        }
         if (name === 'send' && (!nodes.length || visualPoint)) {
             const editors = composer();
             const area = editors.length === 1 && composerArea(editors[0]);
@@ -238,7 +251,8 @@ async (origin, selectors, kind, name, label, researchState = null, savedSubmissi
                 .filter(node => visible(node) && (node.matches(selectors.send) || hasName(node, sendNames)));
         }
     }
-    if (visualPoint && ['send', 'start_research'].includes(name)) {
+    if (visualPoint && (['send', 'start_research', 'open_research_report'].includes(name) ||
+            (kind === 'control' && clickTarget && ['create_image', 'create_video', 'create_music', 'deep_research'].includes(name)))) {
         const viewport = window.visualViewport;
         const hit = document.elementFromPoint(visualPoint[0] + (viewport?.offsetLeft ?? 0),
                                               visualPoint[1] + (viewport?.offsetTop ?? 0));

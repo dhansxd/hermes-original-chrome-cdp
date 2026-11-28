@@ -36,7 +36,7 @@ receipt = None
 def read(kind, name=None, label=None):
     global receipt
     inputs = ','.join(json.dumps(value) for value in (
-        origin, selectors, kind, name, label, research_state, saved_submission, dispatch_send, visual_point))
+        origin, selectors, kind, name, label, research_state, saved_submission, dispatch_send, visual_point, click_target))
     state = js('(' + ui + ')(' + inputs + ')')
     if state.get('_research_receipt'):
         receipt = state['_research_receipt']
@@ -55,7 +55,7 @@ def wait_for(kind, name=None, label=None, *, seconds=2, retry=('missing', 'outsi
 def blocked(control, state):
     result = {'status': 'needs_inspection', 'data': {'control': control, 'reason': state['reason']},
               'message': 'Inspect this browser session before continuing.'}
-    if control in {'send', 'start_research'}:
+    if control in {'send', 'start_research', 'open_research_report', *tool_items}:
         if state['reason'] in {'missing', 'ambiguous', 'obscured'} and visual_point is None:
             result.update(_visual_fallback=True, dispatched=False)
         elif state['reason'] in {'stale_screenshot', 'visual_target_mismatch'}:
@@ -253,6 +253,7 @@ def execute(context, origin, operation, argument=None, *, navigation=''):
         research_state = 'submitted'
     values = {
         'origin': origin, 'selectors': SELECTORS, 'ui': CONTROL_UI, 'op': operation,
+        'click_target': getattr(context, 'click_target', None),
         'argument': argument, 'tool_items': sorted(TOOL_ITEMS), 'marker': MARKER,
         'research_state': research_state, 'saved_submission': saved_submission, 'dispatch_send': False,
         'visual_point': context.visual_click['point'] if getattr(context, 'visual_click', None) else None,

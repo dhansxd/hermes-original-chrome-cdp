@@ -12,10 +12,17 @@ and verification evidence before calling a checklist item complete.
   adds Chrome profile selection and task window ownership to that path. Preserve
   the native browser harness capabilities for the task's Chrome targets.
   Site controls extend the native tool and provide shortcuts for repeated UI work.
-- Site extensions add ready-to-use UI controls for repeated actions. Gemini
-  and Google Flow are the first packages. A control acts on the current page
-  through the same `browser_exec`. Any site Chrome can reach can use ordinary
-  navigation, DOM, and screenshots regardless of its extension coverage.
+- A site extension is a reusable catalog of that site's UI buttons. Apply the
+  same contract to Gemini, Google Flow, and every newly visited HTTP(S) origin.
+  Register the site on the first observed visit. A verified click adds or
+  repairs its button. Reuse it when Hermes next names the target, including
+  when the visible label differs from the requested name. Lookup, repair and
+  screenshot continuation all belong to the original named click in the
+  agent's owned window. The agent supplies the target; the plugin resolves it.
+- Expose one catalog entry for each visited origin with its initial and learned
+  buttons together. Keep private page paths out of the directory. Clicking a
+  named control may require checking the current composer or a previous
+  submission. Preserve those checks when a site's markup changes.
 - Check general browsing on a site without an extension. Judge each mapped
   control by what it does in the site UI. A site's service behavior or the
   completion of one example task does not define general browser acceptance.

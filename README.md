@@ -8,8 +8,12 @@ records the target for native helper access and the current release's gaps.
 
 Use `browser_exec.site_control` for structured actions and site operations.
 Name the UI target for a click, for example `{"action":"click","params":{"target":"Model picker"}}`.
-The plugin picks the installed control, learned mapping, DOM, or screenshot
-fallback on the task's current page. A screenshot position can continue an
+On the Mac, visiting a site registers it in the local catalog. Gemini, Google
+Flow and newly visited sites use the same named click. The plugin reuses a
+verified button, locates it on the current page if it moves, and saves the
+new mapping once the click has a verified effect. Use `list` to see sites
+and `describe` with the returned ID to see their named buttons. A mapped
+click reports `source: catalog` whether the button was supplied or learned. A screenshot position can continue an
 existing click only when the plugin returns a screenshot ID.
 
 Use `upload` with an explicit file `path` or `paths` in the same session.
@@ -35,7 +39,7 @@ The [Windows setup guide](docs/WINDOWS.md) covers selecting the single Chrome
 device used by the plugin. Windows connects through OpenSSH over LAN or Tailscale.
 
 Use `site_control` in `browser_exec` to discover and run website controls for
-Gemini, Google Flow, and independently installed extensions. Read a site's
+any site in the catalog, including Gemini and Google Flow. Read a site's
 current guide with `{"action":"describe","app":"flow"}`.
 
 Gemini and Flow ship inside the plugin. Hermes updates their code, manifests,

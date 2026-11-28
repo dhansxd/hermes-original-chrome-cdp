@@ -309,7 +309,7 @@ def exercise_automatic_click(stage, script, learned, url, catalog):
     script(f'goto_url({url!r}); wait_for_element("button", timeout=8)')
     payload = {'target': 'Show details'}
     result = learned('click', **payload)
-    expected = {'learn': 'package', 'refresh': 'dom'}.get(stage, 'catalog')
+    expected = 'dom' if stage == 'refresh' else 'catalog'
     assert result.get('success') and result.get('dispatched') and result.get('source') == expected, result
     assert result.get('repaired', False) == (stage == 'refresh'), result
     script(f'assert js("document.body.dataset.clicked")=={("details-" + str(Fixture.version))!r}')
@@ -323,7 +323,7 @@ def exercise_automatic_click(stage, script, learned, url, catalog):
         script(f'goto_url({mapped!r}); wait_for_element("button", timeout=8)')
         for target, panel in (('Tools', '#tools'), ('Settings', 'flow-prompt-box-settings')):
             picked = learned('click', target=target)
-            assert picked.get('success') and picked.get('dispatched') and picked.get('source') == 'package', picked
+            assert picked.get('success') and picked.get('dispatched') and picked.get('source') == 'catalog', picked
             script(f'assert js("!document.querySelector({panel!r}).hidden")')
             print('NATIVE_PACKAGE_ACTION_PASS', target, flush=True)
         for target, panel in (
@@ -333,7 +333,7 @@ def exercise_automatic_click(stage, script, learned, url, catalog):
             ('Video defaults', 'flow-generation-defaults-view'),
         ):
             picked = learned('click', target=target)
-            assert picked.get('success') and picked.get('source') == 'package', picked
+            assert picked.get('success') and picked.get('source') == 'catalog', picked
             script(f'assert js("!document.querySelector({panel!r}).hidden")')
             if target == 'Image defaults':
                 close_defaults = "document.querySelector('flow-generation-defaults-view').hidden=true"
@@ -342,6 +342,10 @@ def exercise_automatic_click(stage, script, learned, url, catalog):
         repeat = learned('click', target='Model picker')
         assert not repeat.get('dispatched'), repeat
         script('assert js("document.body.dataset.modelClicks") == "1"')
+        script(f'goto_url({mapped!r}); wait_for_element("button", timeout=8)')
+        for target in ('Model picker', 'Settings'):
+            reused = learned('click', target=target)
+            assert reused.get('source') == 'catalog' and reused.get('success'), reused
         acted = learned('click', target='Submit')
         assert acted['dispatched'] and acted['status'] == 'needs_inspection', acted
         script('assert js("document.body.dataset.submits") == "1"')
@@ -361,10 +365,10 @@ def exercise_flow_project_title(script, learned, origin, provider):
     })()"""
     script(f'js({loading!r})')
     result = learned('click', target='Existing project')
-    assert result.get('success') and result.get('source') == 'package' and result.get('dispatched'), result
+    assert result.get('success') and result.get('source') == 'catalog' and result.get('dispatched'), result
     script('assert js("location.pathname") == "/project/existing"')
     settings = learned('click', target='Settings')
-    assert settings.get('success') and settings.get('source') == 'package', settings
+    assert settings.get('success') and settings.get('source') == 'catalog', settings
     script('assert js("!document.querySelector(\'flow-prompt-box-settings\').hidden")')
     assert learned('navigate', url=origin + '/')['success']
     for title in ('Other project', 'Invalid project'):
@@ -418,10 +422,14 @@ def exercise_site_popups(script, learned, origin):
     print('NATIVE_SITE_POPUP_ORDER_PASS', flush=True)
 
 
-def exercise_dynamic_clicks(script, learned, origin):
+def exercise_dynamic_clicks(script, learned, origin, call):
     url = origin + '/dynamic-clicks'
     assert learned('navigate', url=url)['success']
     script('assert wait_for_element("#welcome button", timeout=8)')
+    def metadata(action, **args):
+        return call(site_control=json.dumps({'action': action, **args}))
+    assert origin in {row['id'] for row in metadata('list')['apps']}
+    assert metadata('describe', app=origin)['app']['named_clicks'] == []
     dismissed = learned('click', target='Lanjutkan')
     assert dismissed.get('success') and dismissed.get('source') == 'dom', dismissed
     opened = learned('click', target='Buat')
@@ -453,6 +461,8 @@ def exercise_dynamic_clicks(script, learned, origin):
 click_at_xy(x, y)""")
     assert learned('list_learned_controls', label='Buat')['controls']
     script('assert js("document.body.dataset.opened") == "1"')
+    names = metadata('describe', app=origin)['app']['named_clicks']
+    assert {'Buat', 'Lanjutkan'} <= set(names) and 'Cek saja' not in names, names
     print('NATIVE_DYNAMIC_MENU_AND_DISMISS_PASS', flush=True)
 
 
@@ -745,7 +755,7 @@ plugins:
                                 exercise_flow_project_title(script, learned, origin, provider)
                                 continue
                             if basic == 'dynamic-clicks':
-                                exercise_dynamic_clicks(script, learned, origin)
+                                exercise_dynamic_clicks(script, learned, origin, call)
                                 continue
                             if basic == 'file-actions':
                                 exercise_upload(script, learned, origin, home)

@@ -70,6 +70,34 @@ class SiteLearningTests(unittest.TestCase):
         self.assertFalse(result.get('suggestions'))
         self.assertFalse(result['controls'])
 
+    def test_named_target_reuses_the_verified_visible_label_and_repairs_it(self):
+        command = {'action': 'click', 'params': {'target': 'Model picker'}}
+        mapping = Mock(return_value={'selector': '#old-model', 'opens': '#menu'})
+        def candidate(element):
+            return {'label': 'Pro', 'element_id': element, 'state': 'selector-visible', 'value': '#menu'}
+        run = Mock(side_effect=[self.url, candidate('a'), 'verified'])
+        self.assertTrue(cached_action(self.catalog, command, run, package_control=mapping)['success'])
+        mapping.reset_mock()
+        run = Mock(side_effect=[self.url, 'verified'])
+        self.assertEqual(cached_action(self.catalog, command, run, package_control=mapping)['source'], 'catalog')
+        mapping.assert_not_called()
+        mapping.return_value = None
+        run = Mock(side_effect=[self.url, 'unmatched', candidate('b'), 'verified'])
+        self.assertTrue(cached_action(self.catalog, command, run, package_control=mapping)['repaired'])
+        run = Mock(side_effect=[self.url, 'verified'])
+        self.assertEqual(cached_action(self.catalog, command, run)['source'], 'catalog')
+
+    def test_stale_command_rejoins_same_click_without_repeating_uncertain_dispatch(self):
+        target = {'action': 'click', 'params': {'target': 'Show details'}}
+        package = Mock(return_value={'status':'needs_inspection','reason':'unmatched','dispatched':False})
+        candidate = {'label':'Show details','element_id':'b','state':'aria-expanded','value':'true'}
+        run = Mock(side_effect=[self.url, candidate, 'verified'])
+        self.assertTrue(cached_action(self.catalog, target, run, package_action=package)['success'])
+        uncertain = {'status':'needs_inspection', 'reason':'unconfirmed','dispatched':True}
+        fresh = ClickCatalog(self.catalog.path.with_name('other.sqlite3'))
+        run = Mock(side_effect=[self.url])
+        self.assertEqual(cached_action(fresh, target, run, package_action=lambda *_: uncertain), uncertain)
+
     def test_gemini_picker_waits_for_its_button_before_falling_back(self):
         url = ['https://gemini.google.com', '/app']
         target = {'action': 'click', 'params': {'target': 'Model picker'}}
@@ -78,7 +106,7 @@ class SiteLearningTests(unittest.TestCase):
         run = Mock(side_effect=[url, {'reason': 'unmatched'}, True, candidate, 'verified'])
         result = cached_action(None, target, run, package_control=lambda *_: mapping)
         self.assertTrue(result['success'])
-        self.assertEqual(result['source'], 'package')
+        self.assertEqual(result['source'], 'catalog')
         self.assertTrue(run.call_args_list[2].kwargs['until'])
         self.assertEqual(sum(call.kwargs.get('click', False) for call in run.call_args_list), 1)
 

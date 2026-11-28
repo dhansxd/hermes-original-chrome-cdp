@@ -439,13 +439,46 @@ class ClickCatalog:
                 id TEXT PRIMARY KEY, origin TEXT, page TEXT, label TEXT, element_id TEXT,
                 state TEXT, value TEXT, revision TEXT, active INTEGER
             )''')
+            db.execute('''CREATE TABLE IF NOT EXISTS control_targets (
+                origin TEXT, page TEXT, target TEXT, control_id TEXT, PRIMARY KEY(origin, page, target)
+            )''')
+            db.execute('CREATE TABLE IF NOT EXISTS site_preferences (origin TEXT PRIMARY KEY, state TEXT)')
             yield db
 
-    def record(self, observations):
+    def sites(self):
+        if not self.path.is_file():
+            return {}
+        with self.open() as db:
+            return {row['origin']: row['state'] or 'enabled' for row in db.execute(
+                "SELECT origin, state FROM sites LEFT JOIN site_preferences USING(origin) ORDER BY origin")}
+
+    def labels(self, origin):
+        if not self.path.is_file():
+            return []
+        with self.open() as db:
+            return [row[0] for row in db.execute('''SELECT label FROM controls WHERE origin=? AND active=1
+                UNION SELECT target FROM control_targets JOIN controls ON controls.id=control_targets.control_id
+                WHERE controls.origin=? AND active=1 ORDER BY 1''', (origin, origin))]
+
+    def set_site_state(self, origin, action):
+        with self.open() as db:
+            if action == 'enable':
+                db.execute('DELETE FROM site_preferences WHERE origin=?', (origin,))
+                db.execute('INSERT OR IGNORE INTO sites VALUES (?, ?)', (origin, urlsplit(origin).hostname))
+            else:
+                state = 'disabled' if action == 'disable' else 'removed'
+                db.execute('INSERT OR REPLACE INTO site_preferences VALUES (?, ?)', (origin, state))
+                if action == 'remove':
+                    db.execute('DELETE FROM control_targets WHERE origin=?', (origin,))
+                    db.execute('DELETE FROM controls WHERE origin=?', (origin,))
+
+    def record(self, observations, *, target=None):
         if not observations:
             return
         with self.open() as db:
             for origin, page, control in observations:
+                if db.execute('SELECT 1 FROM site_preferences WHERE origin=?', (origin,)).fetchone():
+                    continue
                 db.execute('INSERT OR IGNORE INTO sites VALUES (?, ?)', (origin, urlsplit(origin).hostname))
                 if control is None:
                     continue
@@ -457,15 +490,25 @@ class ClickCatalog:
                     WHERE excluded.active=1''',
                            (key, origin, page, label, element, state, value, secrets.token_hex(8), bool(state)))
 
+                if target and state and target != label:
+                    db.execute('INSERT OR REPLACE INTO control_targets VALUES (?, ?, ?, ?)',
+                               (origin, page, target, key))
+                if target and state:
+                    return key
+
     def list(self, origin, page, label=None):
         with self.open() as db:
             return [dict(row) for row in db.execute(
                 '''SELECT id, label, element_id, state, value FROM controls WHERE origin=? AND page=? AND active=1
-                AND (? IS NULL OR label=?) ORDER BY label LIMIT 25''', (origin, page, label, label))]
+                AND NOT EXISTS (SELECT 1 FROM site_preferences WHERE origin=controls.origin)
+                AND (? IS NULL OR label=? OR id IN (SELECT control_id FROM control_targets
+                WHERE origin=controls.origin AND page=controls.page AND target=?)) ORDER BY label LIMIT 25''',
+                (origin, page, label, label, label))]
 
     def get(self, control_id, origin, page):
         with self.open() as db:
-            row = db.execute('SELECT * FROM controls WHERE id=? AND origin=? AND page=? AND active=1',
+            row = db.execute('''SELECT * FROM controls WHERE id=? AND origin=? AND page=? AND active=1
+                AND NOT EXISTS (SELECT 1 FROM site_preferences WHERE origin=controls.origin)''',
                              (control_id, origin, page)).fetchone()
             return dict(row) if row is not None else None
 
@@ -766,9 +809,8 @@ def attempt_dom_control(url, target, run_expression, *, mapping=None, opens=None
         request['opens'] = opens
     expression = page_expression(_FIND_DOM_CONTROL, request, url)
     candidate = run_expression(expression)
-    if (mapping and url[0] == 'https://gemini.google.com' and target.casefold() == 'model picker'
-            and isinstance(candidate, dict) and candidate.get('reason') == 'unmatched'):
-        # The Gemini shell can load before its composer and model picker mount.
+    if mapping and isinstance(candidate, dict) and candidate.get('reason') == 'unmatched':
+        # A site can render its shell before a mapped control mounts.
         if run_expression(f'Boolean(({expression})?.state)', until=True) is True:
             candidate = run_expression(expression)
     if not isinstance(candidate, dict):
@@ -798,18 +840,30 @@ def click_titled_link(url, target, mapping, run_expression):
     if reason in CLICK_NOT_SENT:
         return None
     if reason == 'ambiguous':
-        return {**fallback('Multiple controls have this title.', dispatched=False), 'source': 'package'}
+        return {**fallback('Multiple controls have this title.', dispatched=False), 'source': 'catalog'}
     expected = [url[0], result['destination']]
     reached = run_expression('[location.origin, location.pathname]', until=expected)
     if reached != expected:
-        return {**fallback('unconfirmed', dispatched=True), 'source': 'package'}
-    return {'success': True, 'status': 'ok', 'source': 'package', 'dispatched': True}
+        return {**fallback('unconfirmed', dispatched=True), 'source': 'catalog'}
+    return {'success': True, 'status': 'ok', 'source': 'catalog', 'dispatched': True}
 
 
-def click_by_target(catalog, url, page, target, run_expression, package_control):
+def click_by_target(catalog, url, page, target, run_expression, package_control, package_action):
     """Prefer a verified mapping, then inspect for the same target in the owned tab."""
     origin = url[0]
     controls = catalog.list(origin, page, target) if catalog is not None else []
+    if package_action:
+        hint = None
+        if len(controls) == 1:
+            hint = {key: controls[0][key] for key in ('label', 'element_id')}
+        result = package_action(origin, target, hint, url[1])
+        if result is not None:
+            # Some buttons must verify the active editor, task or delivery after locating the target.
+            # Only rediscover a command outside its handler if it explicitly reports a missing target.
+            missing = (result.get('dispatched') is False and result.get('reason') in
+                       {'unmatched', 'obscured'} and not result.get('_guarded_visual'))
+            if not missing:
+                return result
     if catalog is not None and not controls:
         controls = controls_on_page(catalog, url, page, target, run_expression)['controls']
     entry = catalog.get(controls[0]['id'], origin, page) if len(controls) == 1 else None
@@ -827,17 +881,18 @@ def click_by_target(catalog, url, page, target, run_expression, package_control)
             catalog.stale(entry)
 
     # Use the original label for lookups after the display name of a cached link was resolved.
+    requested_target = target
     target = entry['label'] if entry else target
-    mapped = package_control(origin, target, url[1]) if package_control else None
+    mapped = package_control(origin, requested_target, url[1]) if package_control else None
     if mapped and 'card' in mapped:
         outcome = click_titled_link(url, target, mapped, run_expression)
         if outcome is not None:
             return outcome
         mapped = None
     opens = entry['value'] if entry and entry['state'] == 'selector-visible' else None
-    source = 'package'
+    source = 'catalog'
     candidate, status = None, 'unmatched'
-    if mapped and not entry:
+    if mapped and (not entry or requested_target != target):
         candidate, status = attempt_dom_control(url, target, run_expression, mapping=mapped)
         opens = mapped.get('opens')
     if status in ('unmatched', 'obscured'):
@@ -851,9 +906,10 @@ def click_by_target(catalog, url, page, target, run_expression, package_control)
     if catalog is None or not label or len(label) > 100 or not label.isprintable():
         return result
     proof = (candidate['label'], candidate['element_id'], candidate['state'], candidate['value'])
-    catalog.record([(origin, page, proof)])
-    learned, = catalog.list(origin, page, candidate['label'])
-    return {**result, 'control': learned['id'], 'repaired': entry is not None and source == 'dom'}
+    control_id = catalog.record([(origin, page, proof)], target=requested_target)
+    if control_id is not None:
+        result.update(control=control_id, repaired=entry is not None)
+    return result
 
 
 def cached_action(catalog, command, run_expression, *, package_control=None, package_action=None):
@@ -869,11 +925,7 @@ def cached_action(catalog, command, run_expression, *, package_control=None, pac
         url = run_expression('[location.origin, location.pathname]')
         _, page = page_key(url)
         target = target.strip()
-        if package_action:
-            result = package_action(url[0], target)
-            if result is not None:
-                return result
-        return click_by_target(catalog, url, page, target, run_expression, package_control)
+        return click_by_target(catalog, url, page, target, run_expression, package_control, package_action)
     if (action != 'list_learned_controls' or set(params) - {'label'} or
             ('label' in params and (not isinstance(params['label'], str) or not 0 < len(params['label']) <= 100))):
         raise ValueError('Pass an optional exact label to list_learned_controls.')
