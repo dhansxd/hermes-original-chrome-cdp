@@ -173,9 +173,8 @@ site can therefore affect the other agent and manual browsing on that profile.
 
 ## Use Google Flow
 
-Set `browser_exec.site_control` to `{"action":"describe","app":"flow"}`. First discovery
-installs the bundled template in the user package directory. Existing package
-source and persistent disable/remove choices are preserved. Install FFmpeg for
+Set `browser_exec.site_control` to `{"action":"describe","app":"flow"}`. The guide and UI controls load from the installed plugin revision.
+Package disable and remove choices persist across updates. Install FFmpeg for
 the original-file decode checks, for example with `brew install ffmpeg` on macOS.
 
 Choose the Flow profile with `chrome_profiles` and `app: "flow"`. Keep a stable
@@ -192,9 +191,8 @@ Generation is submitted once. Continue a running or uncertain result by passing
 the returned `job` at the tool's top level, using the same operation and session.
 The guide returned by `describe` includes complete call arguments.
 
-For an existing installation, merge updated files from the plugin's
-`site_apps/flow` template into your user-owned Flow package. Preserve local
-customizations. Use `describe` to check the installed package version and guide.
+Update the host through the Hermes plugin manager to update Flow and Gemini.
+Use `describe` to inspect the guide in the current installation.
 
 `upload` accepts a local media path and returns a portable copy, content hash and
 unique asset title. `bind_reference` selects that exact title in the native picker
@@ -385,10 +383,10 @@ An already-running Python callback can still be returning. While that callback o
 native cleanup remains, the result contains `cleanup_pending` and source removal
 waits. Retry the management action when it settles. Other processes check the
 saved flag on their next call and own their in-flight command lifecycle.
-Re-enabling uses fresh native names. Remove deletes its source after cleanup,
-retaining plugin-data artifacts, checkpoints and receipts. Linked packages are
-removed by unlinking the directory entry. A saved disabled flag also records
-removal for future template installation.
+Re-enabling uses fresh native names. Remove unlinks a linked external package
+or deletes the external source directory after cleanup. For Gemini and Flow it
+removes the catalog entry until you explicitly enable it. Artifacts, checkpoints
+and receipts persist in the plugin data directory.
 
 ## Automatically learned controls on Mac
 
@@ -467,19 +465,31 @@ hermes plugins enable original-chrome-default
 hermes tools
 ```
 
-For removal, restore the previous browser settings and run the following command.
+For a full uninstall, finish active browser tasks, restore the previous browser
+settings, then disable as above. Apply the reload requested by Hermes and close
+any CLI sessions still using Original Chrome. Copy out any artifacts you want
+to keep. Run this for the current profile:
 
 ```sh
-hermes plugins remove original-chrome-default
+config=$(hermes config path)
+python3 "$(dirname "$config")/plugins/original-chrome-default/package_lifecycle.py" uninstall
 ```
 
-In the tested Hermes build, CLI disable asks the gateway to reload plugins.
-Dashboard disable and removal need a supported plugin reload to release the loaded
-provider. Follow the lifecycle status shown by the Hermes surface you use.
-`remove` deletes the install tree and plugin settings. Hermes preserves its
-`plugin-data` directory. Host 0.17.0 also leaves older copies under `browser-apps/`.
-The [lifecycle checklist](../PLAN.md#prioritas-berikutnya--lifecycle-instalasi-plugin)
-tracks a clean uninstall for those plugin-owned files.
+For a named profile, pass the same `--profile NAME` to both `hermes config path`
+and the cleanup command. Append `--last-installation` when removing the final
+installation and every process that uses the shared Mac cache is stopped. The
+cleanup command checks standard profile locations for other installations.
+This cache contains cross-profile Chrome attachment locks and peer records.
+
+Full uninstall calls the upstream manager to remove the installed tree and
+settings, then purges only this plugin's profile data. A later install starts with
+a fresh learned catalog. The manager's standalone `hermes plugins remove
+original-chrome-default` preserves durable plugin data. Use the same cleanup
+command from a checkout of this release to finish a previously interrupted
+purge. User-created site packages, personal Chrome profiles and downloads saved
+outside the plugin's data directory keep their existing locations. Hermes owns
+the manager's per-plugin update lock and shared dependency caches across
+installs.
 
 ## Understand cleanup limits
 

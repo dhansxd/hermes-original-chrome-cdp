@@ -496,30 +496,22 @@ class AppHost:
                 stream.write(json.dumps(finding, ensure_ascii=False) + '\n')
         return {'success': True, 'status': 'ok', 'finding': finding, 'path': str(path)}
 
-    def seed_packages(self, source):
-        """Install missing bundled packages, preserving user source and lifecycle choices."""
-        import fcntl
-        source = Path(source)
-        if not source.is_dir() or source.resolve() == self.root.resolve():
-            return
-        self.root.mkdir(parents=True, exist_ok=True)
-        with (self.root / '.install.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            for directory in sorted(source.iterdir()):
-                if not directory.is_dir() or directory.name.startswith('.'):
-                    continue
-                identifier = app_identifier(directory.name)
-                destination = self.root / identifier
-                if os.path.lexists(destination) or self.get_setting('apps_disabled.' + identifier):
-                    continue
-                read_package(source, identifier)
-                temporary = Path(tempfile.mkdtemp(prefix='.install-', dir=self.root))
-                try:
-                    shutil.copytree(directory, temporary, dirs_exist_ok=True,
-                                    ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-                    temporary.rename(destination)
-                finally:
-                    shutil.rmtree(temporary, ignore_errors=True)
+    def package_root(self, identifier):
+        if self.bundled_source is not None and (
+                identifier in ('gemini', 'flow') or (self.bundled_source / identifier).is_dir()):
+            return self.bundled_source
+        return self.root
+
+    def package_ids(self):
+        roots = (self.root,) if self.bundled_source is None else (self.root, self.bundled_source)
+        identifiers = {path.name for root in roots if root.is_dir() for path in root.iterdir()
+                       if path.is_dir() and not path.name.startswith('.') and path.name != '__pycache__'}
+        return sorted(name for name in identifiers if self.get_setting('apps_disabled.' + name) != 'removed')
+
+    def package(self, identifier):
+        if self.get_setting('apps_disabled.' + identifier) == 'removed':
+            raise ValueError('This site package has been removed.')
+        return read_package(self.package_root(identifier), identifier)
 
     def prepare_call(self, tool_name, args, task_id, **context):
         if tool_name != 'browser_exec':
@@ -559,9 +551,7 @@ class AppHost:
             return {'action': 'modify', 'args': {'session': args.get('session') or 'default'}}
         if command['action'] == 'run':
             try:
-                if self.bundled_source:
-                    self.seed_packages(self.bundled_source)
-                _, metadata, _ = read_package(self.root, app_identifier(command.get('app')))
+                _, metadata, _ = self.package(app_identifier(command.get('app')))
                 context['defer_profile'] = uses_rolling(metadata, command)
             except (OSError, ValueError, RuntimeError):
                 pass  # handle() returns the package error to Hermes.
@@ -857,40 +847,20 @@ class AppHost:
             return fallback(message, dispatched=False)
         return json.loads(self.handle({**command, 'session': session, '_visual_click': visual}, **context))
 
-    def click_metadata(self, metadata):
-        if self.bundled_source is None:
-            return metadata
-        fields = ('click_targets', 'click_commands')
-        if all(key in metadata for key in fields):
-            return metadata
-        # Apply mapping defaults to matching templates already seeded in older profiles.
-        try:
-            path = self.bundled_source / metadata['id'] / 'app.json'
-            bundled = json.loads(path.read_text())
-        except (KeyError, OSError, ValueError):
-            return metadata
-        if not all(metadata.get(key) == bundled.get(key) for key in ('api_version', 'id', 'version', 'operations')):
-            return metadata
-        return {**{key: bundled[key] for key in (*fields, 'titled_link') if key in bundled}, **metadata}
-
     def click_mapping(self, origin, target, path):
         return self.site_click_mapping(origin, target, path=path)
 
     def site_click_mapping(self, origin, target, *, commands=False, path=None):
 
         """Find the enabled package for the current site without executing it."""
-        if self.bundled_source:
-            self.seed_packages(self.bundled_source)
         matches = []
-        for manifest in sorted(self.root.glob('*/app.json')):
-            identifier = manifest.parent.name
+        for identifier in self.package_ids():
             if identifier in self.changing or self.get_setting('apps_disabled.' + identifier):
                 continue
             try:
-                _, metadata, _ = read_package(self.root, identifier)
+                _, metadata, _ = self.package(identifier)
             except (OSError, RuntimeError, ValueError):
                 continue
-            metadata = self.click_metadata(metadata)
             mapping = metadata.get('click_targets')
             if not isinstance(mapping, dict) or mapping.get('origin') != origin:
                 continue
@@ -919,7 +889,8 @@ class AppHost:
         return matches[0] if len(matches) == 1 else None
 
     def manage(self, action, identifier):
-        directory = self.root / identifier
+        root = self.package_root(identifier)
+        directory = root / identifier
         with self.provider.lock:
             if self.provider.unloading:
                 raise RuntimeError('Original Chrome provider is unloading.')
@@ -927,7 +898,7 @@ class AppHost:
                 return {'status': 'running', 'success': True, 'app': identifier,
                         'cleanup_pending': True}
             if action == 'enable':
-                read_package(self.root, identifier)
+                read_package(root, identifier)
                 if not self.get_setting('apps_disabled.' + identifier):
                     return {'status': 'ok', 'success': True, 'app': identifier, 'enabled': True}
             elif not directory.is_dir() and not self.get_setting('apps_disabled.' + identifier):
@@ -937,7 +908,8 @@ class AppHost:
             self.changing.add(identifier)
             if action != 'enable':
                 try:
-                    self.provider.set_setting('apps_disabled.' + identifier, True)
+                    if self.get_setting('apps_disabled.' + identifier) != 'removed':
+                        self.provider.set_setting('apps_disabled.' + identifier, True)
                 except Exception:
                     self.changing.discard(identifier)
                     raise
@@ -959,7 +931,9 @@ class AppHost:
                     self.provider.set_setting('apps_disabled.' + identifier, False)
                     result['enabled'] = True
             if action == 'remove':
-                if directory.is_symlink():
+                if root == self.bundled_source:
+                    self.provider.set_setting('apps_disabled.' + identifier, 'removed')
+                elif directory.is_symlink():
                     directory.unlink()
                 elif directory.exists():
                     shutil.rmtree(directory)
@@ -976,7 +950,7 @@ class AppHost:
             return get_hermes_home() / 'browser-apps'
         if not isinstance(configured, str):
             raise ValueError('apps_directory must name the user extension directory.')
-        return Path(configured).expanduser().resolve()
+        return Path(configured).expanduser().absolute()
 
     def running_work(self, task_id, session_id, turn_id=None):
         if not (task_id and session_id):
@@ -996,23 +970,17 @@ class AppHost:
                 result = self.provider.window_control(action, args.get('session'), task_id, session_id,
                                                       session_key=kwargs.get('session_key', ''))
                 return json.dumps(result, ensure_ascii=False)
-            if self.bundled_source:
-                self.seed_packages(self.bundled_source)
             if action == 'list':
                 entries = []
-                directories = sorted(self.root.iterdir()) if self.root.exists() else []
-                for directory in directories:
-                    if not directory.is_dir() or directory.name.startswith('.'):
-                        continue
+                for identifier in self.package_ids():
                     try:
-                        _, metadata, _ = read_package(self.root, directory.name)
-                        entries.append({'id': directory.name, 'available': True,
-                                        'enabled': not bool(self.get_setting('apps_disabled.' + directory.name)),
-                                        'name': metadata.get('name', directory.name),
+                        _, metadata, _ = self.package(identifier)
+                        entries.append({'id': identifier, 'available': True,
+                                        'enabled': not bool(self.get_setting('apps_disabled.' + identifier)),
+                                        'name': metadata.get('name', identifier),
                                         'operations': [name for name in metadata['operations'] if name != 'click']})
                     except (OSError, ValueError, RuntimeError) as error:
-                        entries.append({'id': directory.name, 'available': False,
-                                        'error': str(error)})
+                        entries.append({'id': identifier, 'available': False, 'error': str(error)})
                 result = {'success': True, 'status': 'ok', 'directory': str(self.root), 'apps': entries}
             elif action in {'enable', 'disable', 'remove'}:
                 result = self.manage(action, app_identifier(args.get('app')))
@@ -1020,8 +988,7 @@ class AppHost:
                 result = self.record_missing_control(args, task_id, session_id)
             elif action in {'describe', 'run', 'observe'}:
                 identifier = app_identifier(args.get('app'))
-                directory, metadata, source = read_package(self.root, identifier)
-                metadata = self.click_metadata(metadata)
+                directory, metadata, source = self.package(identifier)
                 if action == 'describe':
                     guide = directory / 'SKILL.md'
                     public = {key: value for key, value in metadata.items() if key != 'click_commands'}

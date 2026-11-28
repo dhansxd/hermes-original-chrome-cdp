@@ -44,7 +44,9 @@ and verification evidence before calling a checklist item complete.
   an isolated Hermes profile. Disable keeps the installed code and settings
   for re-enable. Remove must leave no active tools, provider, skill, or bundled
   package source. Treat full removal of plugin-owned data as an explicit
-  uninstall step. Keep all other Hermes data and Chrome profiles out of that
+  uninstall step using the shipped cleanup command and the upstream manager.
+  A full reinstall starts with an empty learned catalog. Update and disable keep
+  the catalog. Keep all other Hermes data and Chrome profiles out of that
   step. Follow the active lifecycle checklist in PLAN.md.
 - Keep a single public click path in `browser_exec.site_control`. The agent
   names the UI target. The plugin chooses the installed controls, learned

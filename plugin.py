@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent.browser_provider import BrowserProvider
+from hermes_constants import get_hermes_home
 
 if __package__:
     from .input_guard import prepare_code
@@ -22,6 +23,7 @@ if __package__:
     from .profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
     from .browser_apps import AppHost, CONTROL_SCHEMA, app_identifier
     from .file_controls import UPLOAD_HELP
+    from .package_lifecycle import retire_legacy_packages
     from .profile_rules import ProfileRules
     from .site_learning import ClickCatalog
     from .windows_chrome import WindowsChrome
@@ -32,6 +34,7 @@ else:
     from profiles import ChromeProfile, get_profile, list_profiles, profile_directory, verify_profile
     from browser_apps import AppHost, CONTROL_SCHEMA, app_identifier
     from file_controls import UPLOAD_HELP
+    from package_lifecycle import retire_legacy_packages
     from profile_rules import ProfileRules
     from site_learning import ClickCatalog
     from windows_chrome import WindowsChrome
@@ -823,6 +826,13 @@ def register(ctx):
     root = Path(__file__).parent
     apps = AppHost(provider, ctx.get_config, ctx.dispatch_tool, prepare_code,
                    lambda: ctx.state.data_dir, bundled_source=root / 'site_apps')
+    if root.resolve() == (get_hermes_home() / 'plugins' / NAME).resolve():
+        try:
+            external = apps.root
+            if not external.resolve().is_relative_to(root.resolve()):
+                retire_legacy_packages(external, ctx.get_config, ctx.set_config)
+        except (OSError, ValueError, RuntimeError) as error:
+            logging.getLogger(__name__).warning('Could not migrate legacy site packages: %s', error)
     apps.controls_enabled = bool(ctx.has_capability('tools.override'))
     if apps.controls_enabled:
         provider.learning_directory = lambda: ctx.state.data_dir

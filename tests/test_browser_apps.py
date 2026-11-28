@@ -1,6 +1,7 @@
 import concurrent.futures
 import json
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -188,38 +189,28 @@ class BrowserAppTests(unittest.TestCase):
         self.assertIn('innerText', native.call_args.args[0]['code'])
         self.dispatch.assert_not_called()
 
-    def test_seeded_package_inherits_click_names_without_replacing_its_files(self):
-        self.host.bundled_source = Path(browser_apps.__file__).parent / 'site_apps'
-        self.host.seed_packages(self.host.bundled_source)
-        path = self.host.root / 'gemini' / 'app.json'
-        previous = json.loads(path.read_text())
-        previous.pop('click_targets')
-        previous.pop('click_commands')
-        path.write_text(json.dumps(previous))
-        origin = 'https://gemini.google.com'
-        chosen = self.host.site_click_mapping(origin, 'Send', commands=True)
-        self.assertEqual(chosen['params'], {'control': 'send'})
-        self.assertEqual(json.loads(path.read_text()), previous)
-
-        edited = {**previous, 'click_commands': {}}
-        path.write_text(json.dumps(edited))
-        self.assertIsNone(self.host.site_click_mapping(origin, 'Send', commands=True))
-        self.assertEqual(json.loads(path.read_text()), edited)
-
-    def test_seeded_flow_inherits_project_cards_without_replacing_its_manifest(self):
-        self.host.bundled_source = Path(browser_apps.__file__).parent / 'site_apps'
-        self.host.seed_packages(self.host.bundled_source)
-        path = self.host.root / 'flow' / 'app.json'
-        previous = json.loads(path.read_text())
-        previous.pop('titled_link', None)
-        path.write_text(json.dumps(previous))
-
-        origin = 'https://flow.google.com'
-        chosen = self.host.site_click_mapping(origin, 'Existing project', path='/')
-        self.assertIsNotNone(chosen)
-        self.assertEqual(chosen['card'], 'flow-project-card')
-        self.assertIsNone(self.host.site_click_mapping(origin, 'Existing project', path='/project/existing'))
-        self.assertEqual(json.loads(path.read_text()), previous)
+    def test_update_uses_installed_code_guide_and_clicks_even_at_same_version(self):
+        directory = self.package('gemini', version='1', name='Old')
+        (directory / 'SKILL.md').write_text('Old guide')
+        self.host.bundled_source = self.root / 'installed' / 'site_apps'
+        installed = self.host.bundled_source / 'gemini'
+        shutil.copytree(directory, installed)
+        for revision in ('First', 'Second'):
+            metadata = json.loads((installed / 'app.json').read_text())
+            metadata.update(name=revision, click_targets={
+                'origin': 'https://example.org', 'controls': {'Send': {'selector': '#' + revision}}})
+            (installed / 'app.json').write_text(json.dumps(metadata))
+            (installed / 'SKILL.md').write_text(revision + ' guide')
+            (installed / 'app.py').write_text('def run(context, operation, params): return {"revision": ' + repr(revision) + '}')
+            details = json.loads(self.host.handle({'action': 'describe', 'app': 'gemini'}))
+            self.assertEqual(details['guide'], revision + ' guide')
+            catalog = json.loads(self.host.handle({'action': 'list'}))['apps']
+            self.assertEqual([app['name'] for app in catalog if app['id'] == 'gemini'], [revision])
+            self.assertEqual(self.host.click_mapping('https://example.org', 'Send', '/'), {'selector': '#' + revision})
+            self.assertEqual(self.invoke('gemini')['data'], {'revision': revision})
+        (installed / 'app.py').unlink()
+        self.assertFalse(json.loads(self.host.handle({'action': 'describe', 'app': 'gemini'}))['success'])
+        self.assertIsNone(self.host.click_mapping('https://example.org', 'Send', '/'))
 
     def test_public_tool_schema_exposes_only_structured_browser_execution(self):
         native = {'description': 'Run Python', 'parameters': {'type': 'object',
@@ -381,8 +372,8 @@ class BrowserAppTests(unittest.TestCase):
                 reset_hermes_home_override(token)
             self.assertTrue(result['success'], result)
             self.assertEqual(Path(result['directory']), profile / 'browser-apps')
-            self.assertTrue((profile / 'browser-apps' / 'gemini' / 'app.json').is_file())
-            self.assertTrue((profile / 'browser-apps' / 'flow' / 'app.json').is_file())
+            self.assertEqual({entry['id'] for entry in result['apps']}, {'gemini', 'flow'})
+            self.assertFalse((profile / 'browser-apps').exists())
 
     def test_catalog_and_guide_do_not_execute_package(self):
         directory = self.package(source='raise RuntimeError("must not execute on discovery")')
@@ -399,41 +390,26 @@ class BrowserAppTests(unittest.TestCase):
         result = json.loads(self.host.handle({'action': 'list'}))
         self.assertEqual(result['apps'], [])
 
-    def test_bundled_packages_install_once_and_preserve_user_edits(self):
-        source = self.root / 'bundled'
-        package = source / 'sample'
-        package.mkdir(parents=True)
-        (package / 'app.json').write_text(json.dumps({
-            'api_version': 1, 'id': 'sample', 'operations': {'inspect': {}}}))
-        (package / 'app.py').write_text('def run(context, operation, params): return params\n')
-        self.host.seed_packages(source)
-        installed = self.host.root / 'sample' / 'app.py'
-        installed.write_text('user-owned source\n')
-        (package / 'app.py').write_text('updated bundle\n')
-        self.host.seed_packages(source)
-        self.assertEqual(installed.read_text(), 'user-owned source\n')
-        self.assertEqual([entry['id'] for entry in json.loads(self.host.handle({}))['apps']], ['sample'])
-
-    def test_bundled_removed_package_stays_removed_and_disabled_stays_disabled(self):
-        source = self.package()
-        self.settings['apps_disabled.fixture'] = True
-        self.settings['apps_directory'] = str(self.root / 'fresh')
-        self.host.seed_packages(source.parent)
-        self.assertFalse((self.host.root / 'fixture').exists())
-        self.settings['apps_disabled.fixture'] = False
-        self.host.seed_packages(source.parent)
-        self.assertTrue((self.host.root / 'fixture').is_dir())
-        self.settings['apps_disabled.fixture'] = True
-        self.host.seed_packages(source.parent)
-        self.assertTrue(self.settings['apps_disabled.fixture'])
-
-    def test_bundled_install_preserves_an_existing_user_symlink(self):
-        source = self.package()
-        self.settings['apps_directory'] = str(self.root / 'fresh')
-        self.host.root.mkdir()
-        (self.host.root / 'fixture').symlink_to(self.root / 'missing')
-        self.host.seed_packages(source.parent)
-        self.assertTrue((self.host.root / 'fixture').is_symlink())
+    def test_remove_and_restore_bundled_control_without_modifying_either_source(self):
+        self.host.bundled_source = Path(browser_apps.__file__).parent / 'site_apps'
+        stale = self.package('gemini')
+        (stale / 'local.txt').write_text('user')
+        self.package('my-site')
+        def ids():
+            return {entry['id'] for entry in json.loads(self.host.handle({}))['apps']}
+        def manage(action):
+            return json.loads(self.host.handle({'action': action, 'app': 'gemini'}))
+        self.assertFalse(manage('disable')['enabled'])
+        self.assertIn('gemini', ids())
+        self.assertTrue(manage('remove')['removed'])
+        self.assertEqual(ids(), {'my-site', 'flow'})
+        self.assertFalse(manage('describe')['success'])
+        self.assertIsNone(self.host.site_click_mapping('https://gemini.google.com', 'Send', commands=True))
+        self.assertEqual((stale / 'local.txt').read_text(), 'user')
+        self.assertTrue(manage('enable')['enabled'])
+        self.assertEqual(ids(), {'gemini', 'my-site', 'flow'})
+        self.assertEqual(self.host.site_click_mapping(
+            'https://gemini.google.com', 'Send', commands=True)['params'], {'control': 'send'})
 
     def test_bad_package_does_not_hide_healthy_packages(self):
         self.package('healthy')

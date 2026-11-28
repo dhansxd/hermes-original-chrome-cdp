@@ -38,10 +38,10 @@ Use `site_control` in `browser_exec` to discover and run website controls for
 Gemini, Google Flow, and independently installed extensions. Read a site's
 current guide with `{"action":"describe","app":"flow"}`.
 
-Host 0.17.0 copies bundled site packages to `browser-apps/` during first
-discovery. Existing copies can keep running older code after a host update.
-The [lifecycle checklist](PLAN.md#prioritas-berikutnya--lifecycle-instalasi-plugin)
-tracks the fix so bundled Gemini and Flow follow the installed host revision.
+Gemini and Flow ship inside the plugin. Hermes updates their code, manifests,
+and guides with the host in one Git revision. On activation, 0.17.1 retires
+unchanged copies seeded by older versions. Edited copies stay on disk for their
+owner. Give a custom extension its own directory and manifest ID to use it.
 
 Flow uses native UI actions in the extension's owned Chrome window. Settings and
 progress are read through targeted DOM queries. Downloads use Chrome's original
@@ -331,9 +331,10 @@ serving Hermes process. Every bound browser call checks availability. Other
 Hermes processes observe the saved flag on their next call. An in-flight command
 in another process follows that process's own lifecycle. `cleanup_pending` means
 an active invocation or unconfirmed cleanup remains. Retry the action after it
-settles. Re-enabling starts a fresh owned session. Remove deletes the source
-folder after cleanup, preserving checkpoints and artifacts under plugin data.
-For a linked package, removal unlinks its package entry.
+settles. Re-enabling starts a fresh owned session. Removing an external
+extension deletes its source directory or unlinks its package symlink. Removing a
+bundled extension hides it from the catalog until explicitly enabled again.
+Checkpoints and artifacts remain in the plugin's profile data.
 
 See the [extension package tutorial](docs/TUTORIAL.md#create-a-website-extension)
 for a complete example and the context/result contract.
@@ -459,18 +460,21 @@ hermes plugins enable original-chrome-default
 hermes tools
 ```
 
-To uninstall it, restore the previous browser settings, then run the native
-removal command.
+For a **full uninstall**, finish active browser tasks, restore the previous
+browser settings, and disable the plugin as above. Run the included cleanup
+command for the selected profile:
 
 ```sh
-hermes plugins remove original-chrome-default
+config=$(hermes config path)
+python3 "$(dirname "$config")/plugins/original-chrome-default/package_lifecycle.py" uninstall
 ```
 
-In the tested Hermes build, CLI disable requests a gateway plugin reload. Dashboard
-disable reports a reload requirement, and removal deletes the installed files while
-the running process still needs a plugin reload. Apply the supported reload action
-on that Hermes surface. Ordinary reload preserves the selected browser setting.
-Hermes-managed plugin data can survive removal.
+The command uses the official `hermes plugins remove` and deletes this
+plugin's profile data, including learned controls, checkpoints and artifacts.
+For the last installation on the Mac, append `--last-installation` to also
+delete its shared coordination cache. Close Hermes processes that still have
+the plugin loaded before purging. The [uninstall guide](docs/TUTORIAL.md#switch-back-disable-and-uninstall)
+covers named profiles and the upstream source-only removal option.
 
 Unload closes admission before collecting sessions for cleanup. A late native call
 to a retired provider receives a failing CDP endpoint, which keeps it on the CDP

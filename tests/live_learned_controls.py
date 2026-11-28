@@ -1,6 +1,7 @@
 """Original Chrome learns DOM and screenshot clicks through native Hermes browser_exec."""
 import json
 import sqlite3
+import shutil
 import sys
 import tempfile
 import threading
@@ -683,11 +684,11 @@ def exercise(*, visual=False, extension=None, automatic=False, basic=None, visua
                                   'controls': {'Show details': {'selector': '#details-1'}}},
             }))
             (package / 'app.py').write_text('def run(context, operation, params):\n    raise RuntimeError("Unexpected package operation")\n')
+            source = shutil.copytree(source, home / 'plugin', ignore=shutil.ignore_patterns('.git', '__pycache__'))
             for app in ('gemini', 'flow'):
                 bundled = json.loads((source / 'site_apps' / app / 'app.json').read_text())
                 bundled['click_targets']['origin'] = origin
-                fixture = package.parent / app
-                fixture.mkdir()
+                fixture = source / 'site_apps' / app
                 (fixture / 'app.json').write_text(json.dumps(bundled))
                 (fixture / 'app.py').write_text('def run(context, operation, params):\n    raise RuntimeError("Unexpected package operation")\n')
         (home / 'config.yaml').write_text('''browser:

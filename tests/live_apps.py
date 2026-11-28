@@ -461,15 +461,11 @@ def verify(*, research_only=False, click_only=False):
         packages = home / 'apps'
         directory = package(packages, 'fixture')
         (directory / 'SKILL.md').write_text('Local fixture guide')
-        local_gemini = packages / 'gemini'
-        shutil.copytree(source / 'site_apps/gemini', local_gemini,
-                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-        gemini_app = local_gemini / 'app.py'
-        gemini_app.write_text(gemini_app.read_text().replace('https://gemini.google.com', url))
-        manifest = local_gemini / 'app.json'
-        existing = json.loads(manifest.read_text().replace('https://gemini.google.com', url))
-        existing.pop('click_commands')  # Exercise the template already installed before the new host.
-        manifest.write_text(json.dumps(existing))
+        # Point the installed fixture bundle at the local page, just as a new Git revision would.
+        source = shutil.copytree(source, home / 'plugin', ignore=shutil.ignore_patterns('.git', '__pycache__'))
+        local_gemini = source / 'site_apps/gemini'
+        for path in (local_gemini / 'app.py', local_gemini / 'app.json'):
+            path.write_text(path.read_text().replace('https://gemini.google.com', url))
         (home / 'config.yaml').write_text('''browser:
   cloud_provider: original-chrome-default
   auto_local_for_private_urls: false

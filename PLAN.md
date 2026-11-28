@@ -4,7 +4,7 @@ Revisi PRD 31, 22 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-Host 0.17.0 menyediakan browsing umum, kontrol situs, dan tindakan jendela
+Host 0.17.1 menyediakan browsing umum, kontrol situs, dan tindakan jendela
 lintas giliran melalui satu `browser_exec`. Jalur distribusi publik memakai
 [URL Git](README.md#install). Pilih dan pulihkan browser secara manual melalui
 Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
@@ -31,24 +31,35 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   lama di `browser-apps/`, dan marker di `plugin-data` tetap ada. Install
   ulang mengembalikan folder instalasi dalam keadaan nonaktif, dan kedua
   marker tetap ada. Uji dilakukan di macOS 27.2.1 dengan profil sementara.
-- [ ] Jadikan direktori instalasi plugin sumber tunggal Gemini dan Flow.
-  Paket lama dengan ID bawaan harus berhenti dipilih. Uji update dua revisi
-  dengan perubahan source dan panduan pada versi paket yang sama. Uji bahwa
-  katalog, pemetaan klik, dan eksekusi memakai revisi baru dalam sesi baru.
-- [ ] Uji enable, disable, re-enable, remove, dan install ulang lewat
-  pengelola resmi pada profil uji. Disable melepas provider, tool, skill,
-  dan sesi yang dimiliki plugin sambil menyimpan konfigurasi untuk enable.
-  Remove melepas registrasi dan menghapus semua source serta pengaturan
-  milik plugin. Ikuti pemulihan pilihan browser manual yang telah disetujui.
-  Uji update di atas instalasi lama dan instalasi dari profil bersih.
-- [ ] Tuntaskan prosedur uninstall bersih untuk salinan lama dan data milik
-  plugin. Hermes resmi mempertahankan direktori `plugin-data` dan tidak
-  menyediakan `remove --purge-data` di versi yang diuji. Cleanup data
-  memerlukan tindakan uninstall eksplisit. `on_unload` dipakai untuk resource
-  yang hidup karena callback yang sama juga berjalan saat reload. Batasi
-  penghapusan ke file milik plugin. Pelihara profil Chrome, unduhan dan paket
-  eksternal milik pengguna. Uji install ulang tanpa state plugin lama setelah
-  menjalankan prosedur uninstall bersih.
+- [x] Host 0.17.1 membaca kode, panduan, metadata dan pemetaan klik Gemini dan
+  Flow langsung dari direktori instalasi. Salinan lama dengan ID yang sama
+  tidak dapat menjadi sumber eksekusi. Registrasi memigrasikan salinan lama
+  yang identik dengan distribusi Git. File tambahan, symlink dan modifikasi
+  pengguna tetap milik pengguna. ID lain tetap tersedia untuk paket eksternal.
+- [x] Uji CLI resmi pada profil terisolasi dengan Git URL lokal. Install,
+  update dua revisi, disable, enable ulang, uninstall bersih dan install
+  ulang diperiksa melalui registri Hermes dalam proses baru. Disable dan
+  remove mengembalikan handler upstream setelah pemilihan browser dipulihkan.
+  Provider, skill dan alat pemilih profil hanya terdaftar saat plugin aktif.
+  Marker data katalog bertahan saat update dan disable. Setelah uninstall
+  bersih, install ulang mulai tanpa state lama. Marker plugin lain tetap ada.
+- [x] Full uninstall menggunakan perintah remove resmi dan pembersihan data
+  profil dari paket yang sama. Cache koordinasi lintas profil dibersihkan
+  pada penghapusan instalasi terakhir melalui `--last-installation`.
+  Hermes sendiri menyimpan lock pengelola update di `cache/plugin-update-locks`
+  serta cache dependensi bersama. Keduanya dikelola upstream.
+  Langkah pengguna ada di [tutorial](docs/TUTORIAL.md#switch-back-disable-and-uninstall).
+- Pembanding `bca5769` memuat source dari `0ea5b39`. Pada regresi versi paket
+  yang sama, panduan yang dibaca masih “Old guide” setelah bundel diubah.
+  Kandidat 0.17.1 (blob `browser_apps.py` `e34bc8c5`,
+  `package_lifecycle.py` `90f3942b`) mengikuti source, pemetaan klik,
+  panduan dan eksekusi baru. Fixture migrasi memakai Gemini `bf46256`
+  dan Flow `ac1ca2e`. Pada Hermes `ae2a81ccc0`, macOS 27.2.1,
+  Chrome 158.0.8127.38, pembanding lulus 477 unit test, kandidat lulus
+  480. Keduanya lulus 13 skenario Chrome untuk katalog dan kontrol serta
+  fixture klik Gemini via DOM dan screenshot di jendela yang sama. Uji
+  tidak membuat konten situs. Supervisor upstream masih mencatat percobaan
+  sambung ulang saat relay uji ditutup, sesuai catatan di bawah.
 
 ### Akses browser harness bawaan
 

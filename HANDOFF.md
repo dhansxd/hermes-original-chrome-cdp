@@ -176,9 +176,8 @@ ekspresi mengikuti pemicu adegan dan karakter memperhatikan lawan bicara.
 
 Paket pengguna default berada di `~/.hermes/browser-apps/<id>`. Setiap paket memakai
 `app.json`, `app.py`, dan panduan opsional `SKILL.md`. Source dimuat pada panggilan
-berikutnya dan terikat context agen pemiliknya. Penemuan awal menyalin template
-Flow apabila paket tersebut belum tersedia, dengan menghormati pilihan lifecycle
-serta source pengguna yang sudah ada.
+berikutnya dan terikat context agen pemiliknya. Versi lama menyalin template ke direktori tersebut. Sejak 0.17.1,
+Gemini dan Flow dibaca langsung dari revisi plugin yang terpasang.
 
 Artifact, checkpoint, hasil dan jurnal rolling berada di direktori data plugin
 yang disediakan Hermes, terpisah dari source paket. Pada baseline lama, `browser_app describe`
