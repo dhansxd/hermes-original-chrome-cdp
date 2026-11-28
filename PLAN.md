@@ -80,6 +80,16 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   meminta `set_file_input`. Aksi itu ditolak sebelum file dipilih. Contoh
   `upload` ditampilkan di deskripsi tool dan pesan koreksi untuk permintaan
   tersebut. Jalur eksekusi upload tetap memakai aksi `upload` yang sama.
+- Pada 28 November 2026, fixture Chrome pada `e7bb6cb` membaca isi file dan
+  segera mengosongkan input. Plugin mengembalikan `file_selection_unconfirmed`.
+  Kandidat mencatat nama dan ukuran dari event pada input yang dipilih sebelum
+  halaman mengosongkannya. Fixture lulus untuk input langsung dan pemilih
+  dinamis, masing-masing dengan isi file terverifikasi. Progres unggah tetap
+  diperiksa melalui UI situs. Penyebab pratinjau Facebook yang kosong masih
+  belum terkonfirmasi. Uji pemilih file biasa, helper native, kelanjutan klik
+  screenshot dan popup lulus di baseline dan kandidat. Kandidat lulus 477
+  tes lokal. Uji memakai Hermes `ae2a81ccc0`, macOS 27.2.1, Chrome
+  158.0.8127.38, dan browser-harness `0.1.13`.
 
 ### Chrome di perangkat lain
 

@@ -43,31 +43,72 @@ def _input_state(remote):
         functionDeclaration="function() { return this.type === 'file' && !this.matches(':disabled') ? {multiple:this.multiple, files:[...this.files].map(f=>[f.name,f.size])} : null; }")
     return value.get('result', {}).get('value')
 
+def _observe_selection(remote, expected):
+    # A page can consume and clear the input in its event handler.
+    value = cdp('Runtime.callFunctionOn', objectId=remote, arguments=[{'value': expected}],
+        functionDeclaration="""function(expected) {
+            const input = this;
+            const targets = [input.ownerDocument.defaultView, input];
+            const events = ['input', 'change'];
+            const expectedFiles = JSON.stringify(expected);
+            let matched = false;
+            const observe = event => {
+                if (event.composedPath()[0] !== input) return;
+                const files = Array.from(input.files, file => [file.name, file.size]);
+                if (JSON.stringify(files) === expectedFiles) matched = true;
+            };
+            for (const target of targets) {
+                for (const event of events) target.addEventListener(event, observe, true);
+            }
+            return {take() {
+                for (const target of targets) {
+                    for (const event of events) target.removeEventListener(event, observe, true);
+                }
+                return matched;
+            }};
+        }""")
+    return value.get('result', {}).get('objectId')
+
 def _select_files(node, backend, files, expected, *, selector=None):
-    remote = None
+    remote = receipt = None
     dispatched = backend
+    selected = False
     try:
         remote = cdp('DOM.resolveNode', **node)['object']['objectId']
         state = _input_state(remote)
         if not state or (len(files) > 1 and not state['multiple']):
             _file_result('file_input_unavailable', backend)
             return
+        try:
+            receipt = _observe_selection(remote, expected)
+        except Exception:
+            pass  # FileList verification can still work on this input.
         dispatched = True
         if selector is None:
             cdp('DOM.setFileInputFiles', files=files, **node)
         else:
             upload_file(selector, files)
-        selected = _input_state(remote)
-        _file_result('file_selected' if selected and selected['files'] == expected
-                     else 'file_selection_unconfirmed', True)
+        state = _input_state(remote)
+        selected = bool(state and state['files'] == expected)
     except Exception:
-        _file_result('file_selection_unconfirmed' if dispatched else 'file_input_unavailable', dispatched)
+        pass
     finally:
-        if remote:
+        if receipt:
             try:
-                cdp('Runtime.releaseObject', objectId=remote)
+                value = cdp('Runtime.callFunctionOn', objectId=receipt, returnByValue=True,
+                            functionDeclaration='function() { return this.take(); }')
+                selected = selected or value.get('result', {}).get('value') is True
             except Exception:
                 pass
+        for object_id in filter(None, (receipt, remote)):
+            try:
+                cdp('Runtime.releaseObject', objectId=object_id)
+            except Exception:
+                pass
+    if selected:
+        _file_result('file_selected', True)
+    else:
+        _file_result('file_selection_unconfirmed' if dispatched else 'file_input_unavailable', dispatched)
 '''
 
 

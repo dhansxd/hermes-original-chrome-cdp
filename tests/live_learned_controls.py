@@ -204,6 +204,7 @@ function choose() {
 }
 async function report(input) {
   const file = input.files[0];
+  if (location.search === '?reset') input.value = '';
   document.querySelector('#result').textContent = file.name + ':' + await file.text();
 }
 </script>'''
@@ -491,6 +492,17 @@ def exercise_upload(script, learned, origin, home):
     assert result.get('success') and result.get('status') == 'file_selected', result
     assert not learned('click', **args).get('dispatched')
     script('assert js("document.body.dataset.clicks") == "1"')
+
+    for params in ({}, {'target': 'Pick a file'}):
+        assert learned('navigate', url=url + '?reset')['success']
+        script('assert wait_for_element("#direct", timeout=8)')
+        result = learned('upload', path=str(sample), **params)
+        script('''assert wait_for_element("output:not(:empty)", timeout=8)
+assert js("document.querySelector('output').textContent") == "sample.txt:fixture file"
+assert js("Array.from(document.querySelectorAll('input')).every(input => input.files.length === 0)")''')
+        if params:
+            script('assert js("document.body.dataset.clicks") == "1"')
+        assert result.get('success') and result.get('status') == 'file_selected', result
     print('NATIVE_GENERIC_FILE_CHOOSER_PASS', flush=True)
 
 
