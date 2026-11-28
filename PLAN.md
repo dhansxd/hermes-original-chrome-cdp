@@ -213,6 +213,22 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   untuk Gemini, Flow, dan satu situs hasil belajar. Gunakan paket Gemini
   dari commit kandidat pada profil uji karena folder paket yang sudah ada
   dipertahankan oleh host.
+- Penerimaan commit `1cf3eb9` lewat sesi baru di profil Hermes uji memakai
+  Hermes `ae2a81ccc0`, macOS 27.2.1, dan Chrome 158.0.8127.38.
+  Di Gemini, klik awal `Model picker` beralih ke screenshot. Hermes
+  membuka menu melalui satu klik visual dan membaca pilihan. Pada uji
+  lanjutan, setelah tombol terlihat, aksi dengan target yang sama berhasil
+  lewat paket. Uji sesi baru belum membuktikan klik langsung lewat paket.
+- Di Flow, Hermes membaca daftar proyek, tetapi gagal membuka proyek yang
+  sudah ada. Judul yang diminta tampil di kartu tanpa tautan atau peran
+  tombol pada judul dan elemen induknya. Aksi berdasarkan judul kembali ke
+  screenshot. Percobaan visual ditolak saat gambar sudah berubah, sehingga
+  menu pengaturan di dalam proyek belum terverifikasi.
+- Pada situs fixture tanpa paket, dua sesi Hermes baru membuka panel
+  melalui `browser_exec.site_control`. Sesi pertama memakai DOM dan merekam
+  kontrol. Sesi kedua berhasil memakai kembali ID yang sama dari katalog
+  dan membaca hasilnya. Tiap sesi penerimaan membuka paling banyak satu
+  jendela dan mengembalikan jumlah jendela ke kondisi awal.
 - Di 0.16.1, katalog membaca nama UI dan petunjuk tujuan dari tautan pada
   halaman aktif. Petunjuk hanya tampil jika path masih cocok dengan hash
   yang sudah diverifikasi. Pencarian label persis yang kosong dapat
