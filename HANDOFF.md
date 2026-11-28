@@ -87,18 +87,17 @@ agen dan extension berjalan dengan izin proses Hermes.
   Integrasi memakai kontrak plugin Hermes yang didukung. Core Hermes dan source
   dependency yang dikelola Hermes dipertahankan.
 - Plugin mendukung install, enable, disable, update dan remove melalui pengelola
-  resmi Hermes. Pada versi 0.11.1 pengguna masih memilih browser melalui picker
-  Hermes. [Kontrak aktif](PLAN.md#kontrak-browser-dan-ekstensi) mewajibkan
-  enable memilih Chrome asli serta disable atau remove memulihkan pilihan
-  browser sebelumnya secara otomatis. Pekerjaan ini masih terbuka di PLAN.
+  resmi Hermes. [Kontrak aktif](PLAN.md#kontrak-browser-dan-ekstensi) memakai
+  browser picker untuk memilih Chrome asli setelah enable dan memulihkan
+  konfigurasi awal sebelum disable atau remove.
 - Pada baseline sebelum reset, `browser_exec` adalah tool browser native Hermes,
   `chrome_profiles` mengatur profil, dan `browser_app` memuat paket situs.
   [Kontrak aktif](PLAN.md#kontrak-browser-dan-ekstensi) menempatkan kontrol
   situs di halaman aktif `browser_exec`.
-- Extension situs berada di direktori pengguna di luar instalasi plugin.
-  Pengguna bersama agennya dapat menambah atau memperbarui paket situs tanpa
-  mengubah instalasi host. Paket awal yang direncanakan adalah Gemini dan Flow.
-  Situs lain dapat ditambahkan melalui kontrak paket yang sama ketika diminta.
+- Pada baseline ini, template extension disalin ke direktori pengguna.
+  [Keputusan lifecycle terbaru](PLAN.md#prioritas-berikutnya--lifecycle-instalasi-plugin)
+  menetapkan Gemini dan Flow sebagai bagian dari revisi host yang dipasang.
+  Direktori pengguna dipakai untuk extension yang ditambahkan secara mandiri.
 - Flow dan Gemini memakai browser context dari host. Lifecycle Chrome serta
   pemilihan profil tetap menjadi tanggung jawab plugin.
 - Perilaku UI Gemini custom menjadi acuan operasi situs. Gunakan interaksi UI

@@ -36,6 +36,16 @@ and verification evidence before calling a checklist item complete.
   Chrome manually after enable, and restore the previous browser settings
   manually before disable or remove. The Git URL is the supported install
   source for this plugin.
+- The installed Original Chrome revision owns all bundled Gemini and Flow
+  code, manifests, and guides. Install and update must resolve those files
+  from the same revision. Keep independently installed extensions under
+  their own IDs. Never use an old copied bundle as the active source.
+- Verify install, update, disable, re-enable, remove, and clean reinstall in
+  an isolated Hermes profile. Disable keeps the installed code and settings
+  for re-enable. Remove must leave no active tools, provider, skill, or bundled
+  package source. Treat full removal of plugin-owned data as an explicit
+  uninstall step. Keep all other Hermes data and Chrome profiles out of that
+  step. Follow the active lifecycle checklist in PLAN.md.
 - Keep a single public click path in `browser_exec.site_control`. The agent
   names the UI target. The plugin chooses the installed controls, learned
   catalog, DOM and screenshot fallback for that target. A screenshot position

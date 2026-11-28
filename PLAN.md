@@ -4,11 +4,51 @@ Revisi PRD 31, 22 November 2026.
 
 ## 1. Status dan langkah berikutnya
 
-Host 0.13.1 menyediakan browsing umum, kontrol situs, dan tindakan jendela
+Host 0.17.0 menyediakan browsing umum, kontrol situs, dan tindakan jendela
 lintas giliran melalui satu `browser_exec`. Jalur distribusi publik memakai
 [URL Git](README.md#install). Pilih dan pulihkan browser secara manual melalui
 Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
 [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
+
+### Prioritas berikutnya — lifecycle instalasi plugin
+
+- Keputusan pengguna pada 28 November 2026. Original Chrome, Gemini, dan
+  Google Flow adalah satu instalasi. Source, manifest, dan panduan Gemini
+  serta Flow harus dibaca dari revisi yang dipasang Hermes. Update resmi
+  mengganti revisi ketiganya sekaligus. Paket eksternal milik pengguna tetap
+  memakai ID sendiri. Aturan ini menggantikan desain salinan template lama.
+- Reproduksi pada `0ea5b39` dan Hermes `ae2a81ccc0`. `seed_packages` menyalin
+  paket bawaan jika folder tujuan kosong. Saat folder sudah ada, host memakai
+  source lama walaupun commit host baru sudah terpasang. Gemini aktif dan
+  bundel sama-sama menyatakan versi `0.4.13` tetapi berbeda di `controls.py`
+  dan `controls.js`. Fixture tombol Send berlabel `title` gagal dengan
+  `missing` pada paket aktif dan lulus pada bundel dari revisi host.
+- Pada profil uji kosong, CLI resmi Hermes `ae2a81ccc0` memasang `0ea5b39`
+  dengan `--ref` dan menolak `plugins update` karena pin. Setelah enable,
+  disable mempertahankan folder dan konfigurasi plugin. Remove menghapus
+  folder instalasi, `plugins.enabled`, `plugins.disabled`, dan entri
+  konfigurasi untuk plugin ini. `browser.cloud_provider`, marker salinan
+  lama di `browser-apps/`, dan marker di `plugin-data` tetap ada. Install
+  ulang mengembalikan folder instalasi dalam keadaan nonaktif, dan kedua
+  marker tetap ada. Uji dilakukan di macOS 27.2.1 dengan profil sementara.
+- [ ] Jadikan direktori instalasi plugin sumber tunggal Gemini dan Flow.
+  Paket lama dengan ID bawaan harus berhenti dipilih. Uji update dua revisi
+  dengan perubahan source dan panduan pada versi paket yang sama. Uji bahwa
+  katalog, pemetaan klik, dan eksekusi memakai revisi baru dalam sesi baru.
+- [ ] Uji enable, disable, re-enable, remove, dan install ulang lewat
+  pengelola resmi pada profil uji. Disable melepas provider, tool, skill,
+  dan sesi yang dimiliki plugin sambil menyimpan konfigurasi untuk enable.
+  Remove melepas registrasi dan menghapus semua source serta pengaturan
+  milik plugin. Ikuti pemulihan pilihan browser manual yang telah disetujui.
+  Uji update di atas instalasi lama dan instalasi dari profil bersih.
+- [ ] Tuntaskan prosedur uninstall bersih untuk salinan lama dan data milik
+  plugin. Hermes resmi mempertahankan direktori `plugin-data` dan tidak
+  menyediakan `remove --purge-data` di versi yang diuji. Cleanup data
+  memerlukan tindakan uninstall eksplisit. `on_unload` dipakai untuk resource
+  yang hidup karena callback yang sama juga berjalan saat reload. Batasi
+  penghapusan ke file milik plugin. Pelihara profil Chrome, unduhan dan paket
+  eksternal milik pengguna. Uji install ulang tanpa state plugin lama setelah
+  menjalankan prosedur uninstall bersih.
 
 ### Akses browser harness bawaan
 

@@ -419,10 +419,17 @@ Chrome connection are running.
 
 ## Update
 
+Use the official update command for a tracked Git installation.
+
 ```sh
 hermes plugins update original-chrome-default
 hermes plugins list
 ```
+
+An installation pinned with `--ref` stays on that commit. To advance it,
+reinstall from the same Git URL with `--force --ref` and the new full commit
+hash. Check capability grants, provider selection, and the reload guidance
+after the replacement.
 
 Review the update result and apply the reload or dependency-environment action
 requested by Hermes. Check the provider selection in `hermes tools` afterward.
@@ -469,7 +476,10 @@ hermes plugins remove original-chrome-default
 In the tested Hermes build, CLI disable asks the gateway to reload plugins.
 Dashboard disable and removal need a supported plugin reload to release the loaded
 provider. Follow the lifecycle status shown by the Hermes surface you use.
-Hermes-managed plugin data can remain after removal.
+`remove` deletes the install tree and plugin settings. Hermes preserves its
+`plugin-data` directory. Host 0.17.0 also leaves older copies under `browser-apps/`.
+The [lifecycle checklist](../PLAN.md#prioritas-berikutnya--lifecycle-instalasi-plugin)
+tracks a clean uninstall for those plugin-owned files.
 
 ## Understand cleanup limits
 

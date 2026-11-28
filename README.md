@@ -34,20 +34,14 @@ choose the same profile or different profiles, each with their own windows.
 The [Windows setup guide](docs/WINDOWS.md) covers selecting the single Chrome
 device used by the plugin. Windows connects through OpenSSH over LAN or Tailscale.
 
-Use `site_control` in `browser_exec` to discover and run user-owned website extension packages.
-Their Python code and guides live outside the plugin installation and can be
-updated independently. Version 0.10.3 bundles Flow 0.3.0 with real-account rolling,
-portable reference files and destination character/voice preparation. Classic and
-Agent rolling both produced original MP4 files, with the Agent test run by Hermes.
-Provider quota-reset acceptance and the Gemini package follow the open checklist in
-[PLAN.md](PLAN.md).
+Use `site_control` in `browser_exec` to discover and run website controls for
+Gemini, Google Flow, and independently installed extensions. Read a site's
+current guide with `{"action":"describe","app":"flow"}`.
 
-On first package discovery, bundled site packages are copied to `browser-apps/`
-in the active Hermes profile, or the configured `apps_directory`. The default
-profile uses `~/.hermes/browser-apps`. Existing user
-packages and persistent disable/remove choices are preserved during host updates.
-The installed copy is editable independently of this plugin. Read its current
-operations and guide by passing `{"action":"describe","app":"flow"}` in `browser_exec.site_control`.
+Host 0.17.0 copies bundled site packages to `browser-apps/` during first
+discovery. Existing copies can keep running older code after a host update.
+The [lifecycle checklist](PLAN.md#prioritas-berikutnya--lifecycle-instalasi-plugin)
+tracks the fix so bundled Gemini and Flow follow the installed host revision.
 
 Flow uses native UI actions in the extension's owned Chrome window. Settings and
 progress are read through targeted DOM queries. Downloads use Chrome's original
@@ -443,6 +437,8 @@ hermes plugins update original-chrome-default
 hermes plugins list
 ```
 
+The update command advances a tracked Git install. For an install pinned
+with `--ref`, use the [pinned-update instructions](docs/TUTORIAL.md#update).
 Apply any activation or dependency-environment action reported by your Hermes build.
 
 Hermes keeps its browser selection when a plugin is disabled or removed. Restore
