@@ -206,6 +206,21 @@ class BrowserAppTests(unittest.TestCase):
         self.assertIsNone(self.host.site_click_mapping(origin, 'Send', commands=True))
         self.assertEqual(json.loads(path.read_text()), edited)
 
+    def test_seeded_flow_inherits_project_cards_without_replacing_its_manifest(self):
+        self.host.bundled_source = Path(browser_apps.__file__).parent / 'site_apps'
+        self.host.seed_packages(self.host.bundled_source)
+        path = self.host.root / 'flow' / 'app.json'
+        previous = json.loads(path.read_text())
+        previous.pop('titled_link', None)
+        path.write_text(json.dumps(previous))
+
+        origin = 'https://flow.google.com'
+        chosen = self.host.site_click_mapping(origin, 'Existing project', path='/')
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen['card'], 'flow-project-card')
+        self.assertIsNone(self.host.site_click_mapping(origin, 'Existing project', path='/project/existing'))
+        self.assertEqual(json.loads(path.read_text()), previous)
+
     def test_public_tool_schema_exposes_only_structured_browser_execution(self):
         native = {'description': 'Run Python', 'parameters': {'type': 'object',
                   'properties': {'code': {'type': 'string'}, 'local': {'type': 'boolean'},

@@ -30,6 +30,13 @@
       }
     }
   },
+  "titled_link": {
+    "path": "/",
+    "card": "flow-project-card",
+    "title": ".project-title-text",
+    "selector": "a.project-thumbnail-container[href]",
+    "destination_prefix": "/project/"
+  },
   "operations": {
     "inspect": {
       "description": "Confirm the project, active mode and visible controls. Use configure in the same session to read the complete model options.",

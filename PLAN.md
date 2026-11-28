@@ -224,6 +224,20 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   tombol pada judul dan elemen induknya. Aksi berdasarkan judul kembali ke
   screenshot. Percobaan visual ditolak saat gambar sudah berubah, sehingga
   menu pengaturan di dalam proyek belum terverifikasi.
+- Pada pembanding `05784d6`, klik berdasarkan judul masih beralih ke
+  screenshot. Pemetaan Flow menghubungkan judul yang unik dengan tautan
+  thumbnail di kartu yang sama dan memeriksa URL proyek setelah klik.
+  Jika layar pemuatan masih menutupi tautan, plugin menunggu sebentar
+  dan memeriksa target lagi sebelum mengirim klik.
+- Pada Hermes `ae2a81ccc0`, macOS 27.2.1 dan Chrome 158.0.8127.38,
+  fixture dengan layar pemuatan lulus. Judul ganda dan tujuan di luar
+  proyek ditolak. Satu klik yang tidak berujung navigasi dilaporkan belum
+  terkonfirmasi. Sesi Hermes CLI baru di profil uji membuka satu proyek
+  Flow yang sudah ada lewat aksi paket dan membaca opsi Frame dan Bahan
+  di pengaturan Klasik. Semua operasi halaman memakai satu sesi browser.
+  Jendela tugas tertutup setelah jawaban akhir. Regresi menu Gemini dan
+  Flow serta perbaikan dan pemakaian ulang katalog lulus pada pembanding
+  dan kandidat. Sebanyak 475 tes unit lulus.
 - Pada situs fixture tanpa paket, dua sesi Hermes baru membuka panel
   melalui `browser_exec.site_control`. Sesi pertama memakai DOM dan merekam
   kontrol. Sesi kedua berhasil memakai kembali ID yang sama dari katalog

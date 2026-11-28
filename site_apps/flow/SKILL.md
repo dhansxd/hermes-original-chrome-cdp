@@ -9,6 +9,10 @@ mapped controls.
    the same session alias used for the operations below.
 2. Run `create_project` with a title, or pass an existing canonical `project` ID
    or URL to an operation. Project selection is kept per Chrome profile.
+   To open a project from the Flow home page by title, use
+   `{"action":"click","params":{"target":"Exact visible project title"}}` in the
+   same session. If two cards have the same title, identify the project by its
+   canonical URL instead.
 3. Run `inspect` to confirm the project ID, active mode, and visible controls.
    If the requested project is already open, inspection reuses the page.
    `mode` indicates an expected mode and `kind` filters visible model controls.

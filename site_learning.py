@@ -217,6 +217,27 @@ _CHECK_OPEN_EFFECT = r"""
     visibleMatching(target))(ENTRY, ORIGIN, ROUTE)
 """
 
+_CLICK_TITLED_LINK = r"""
+((request, origin, path) => {
+    if (location.origin !== origin || location.pathname !== path) return {reason:'wrong_page'};
+    const cards = [...document.querySelectorAll(request.card)].filter(card => {
+        const title = card.querySelector(request.title);
+        return title && visible(title) && title.textContent.trim().replace(/\s+/g, ' ') === request.target;
+    });
+    if (cards.length !== 1) return {reason:cards.length ? 'ambiguous' : 'unmatched'};
+    const links = [...cards[0].querySelectorAll(request.selector)].filter(usable);
+    if (links.length !== 1) return {reason:links.length ? 'ambiguous' : 'unmatched'};
+    const link = links[0];
+    const destination = linkPath(link);
+    if (!destination?.startsWith(request.destination_prefix)) return {reason:'unmatched'};
+    link.scrollIntoView({block:'nearest', inline:'nearest', behavior:'instant'});
+    if (!unobscured(link)) return {reason:'obscured'};
+    if (request.probe) return true;
+    link.click();
+    return {destination};
+})(ENTRY, ORIGIN, ROUTE)
+"""
+
 
 _FIND_DOM_CONTROL = r"""
 ((request, origin, path) => {
@@ -671,6 +692,27 @@ def attempt_dom_control(url, target, run_expression, *, mapping=None, opens=None
     return candidate, replay_control(candidate, url, run_expression)
 
 
+def click_titled_link(url, target, mapping, run_expression):
+    request = {**mapping, 'target': ' '.join(target.split())}
+    expression = page_expression(_CLICK_TITLED_LINK, request, url)
+    result = run_expression(expression, click=True)
+    if result.get('reason') == 'obscured':
+        # Flow can render its cards while the loading layer still covers the link.
+        probe = page_expression(_CLICK_TITLED_LINK, {**request, 'probe': True}, url)
+        if run_expression(probe, until=True) is True:
+            result = run_expression(expression, click=True)
+    reason = result.get('reason')
+    if reason in CLICK_NOT_SENT:
+        return None
+    if reason == 'ambiguous':
+        return {**fallback('Multiple controls have this title.', dispatched=False), 'source': 'package'}
+    expected = [url[0], result['destination']]
+    reached = run_expression('[location.origin, location.pathname]', until=expected)
+    if reached != expected:
+        return {**fallback('unconfirmed', dispatched=True), 'source': 'package'}
+    return {'success': True, 'status': 'ok', 'source': 'package', 'dispatched': True}
+
+
 def click_by_target(catalog, url, page, target, run_expression, package_control):
     """Prefer a verified mapping, then inspect for the same target in the owned tab."""
     origin = url[0]
@@ -687,11 +729,16 @@ def click_by_target(catalog, url, page, target, run_expression, package_control)
 
     # Use the original label for lookups after the display name of a cached link was resolved.
     target = entry['label'] if entry else target
-    mapped = package_control(origin, target) if not entry and package_control else None
+    mapped = package_control(origin, target, url[1]) if package_control else None
+    if mapped and 'card' in mapped:
+        outcome = click_titled_link(url, target, mapped, run_expression)
+        if outcome is not None:
+            return outcome
+        mapped = None
     opens = entry['value'] if entry and entry['state'] == 'selector-visible' else None
     source = 'package'
     candidate, status = None, 'unmatched'
-    if mapped:
+    if mapped and not entry:
         candidate, status = attempt_dom_control(url, target, run_expression, mapping=mapped)
         opens = mapped.get('opens')
     if status in ('unmatched', 'obscured'):

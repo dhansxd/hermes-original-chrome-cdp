@@ -740,12 +740,12 @@ class AppHost:
             return metadata
         if not all(metadata.get(key) == bundled.get(key) for key in ('api_version', 'id', 'version', 'operations')):
             return metadata
-        return {**{key: bundled[key] for key in fields if key in bundled}, **metadata}
+        return {**{key: bundled[key] for key in (*fields, 'titled_link') if key in bundled}, **metadata}
 
-    def click_mapping(self, origin, target):
-        return self.site_click_mapping(origin, target)
+    def click_mapping(self, origin, target, path):
+        return self.site_click_mapping(origin, target, path=path)
 
-    def site_click_mapping(self, origin, target, *, commands=False):
+    def site_click_mapping(self, origin, target, *, commands=False, path=None):
 
         """Find the enabled package for the current site without executing it."""
         if self.bundled_source:
@@ -770,6 +770,13 @@ class AppHost:
                 if isinstance(control, str) and 'click' in metadata['operations']:
                     matches.append({'action': 'run', 'app': identifier, 'operation': 'click',
                                     'params': {'control': control}})
+                continue
+            titled_link = metadata.get('titled_link')
+            if (isinstance(titled_link, dict) and titled_link.get('path') == path
+                    and set(titled_link) == {'path', 'card', 'title', 'selector', 'destination_prefix'}
+                    and all(isinstance(value, str) and 0 < len(value) <= 512
+                            and value.isprintable() for value in titled_link.values())):
+                matches.append(titled_link)
                 continue
             controls = mapping.get('controls')
             spec = controls.get(target) if isinstance(controls, dict) else None

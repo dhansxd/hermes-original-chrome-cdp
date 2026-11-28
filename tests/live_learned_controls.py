@@ -82,7 +82,31 @@ note.addEventListener('change', () => document.body.dataset.changed = 'yes');
 </script>'''.encode()
         elif self.path == '/basic-next':
             body = b'<!doctype html><title>Next browser page</title><main id="next"></main>'
-        elif self.path.startswith('/mapped-controls'):
+        elif self.path == '/':
+            body = b"""<!doctype html><title>Flow project list</title>
+<flow-project-card style="display:block">
+  <a class="project-thumbnail-container" aria-label="Open project" href="/project/other">Other thumbnail</a>
+  <span class="project-title-text">Other project</span>
+</flow-project-card>
+<flow-project-card style="display:block">
+  <a class="project-thumbnail-container" aria-label="Open project" href="/project/existing">Project thumbnail</a>
+  <span class="project-title-text">Existing project</span>
+  <button onclick="document.body.dataset.edited='yes'">Edit</button>
+</flow-project-card>
+<flow-project-card style="display:block">
+  <a class="project-thumbnail-container" aria-label="Open project" href="/project/duplicate">Duplicate thumbnail</a>
+  <span class="project-title-text">Other project</span>
+</flow-project-card>
+<flow-project-card style="display:block">
+  <a class="project-thumbnail-container" aria-label="Open project" href="/not-a-project">Invalid thumbnail</a>
+  <span class="project-title-text">Invalid project</span>
+</flow-project-card>
+<flow-project-card style="display:block">
+  <a class="project-thumbnail-container" aria-label="Open project" href="/project/canceled"
+     onclick="event.preventDefault(); document.body.dataset.canceled=String(1+Number(document.body.dataset.canceled||0))">Canceled thumbnail</a>
+  <span class="project-title-text">Canceled project</span>
+</flow-project-card>"""
+        elif self.path.startswith('/mapped-controls') or self.path == '/project/existing':
             body = b"""<!doctype html><title>Packaged controls</title>
 <button aria-label="Tools" onclick="document.querySelector('#tools').hidden=false">Tools</button>
 <div id="tools" role="menu" hidden><span aria-label="Create image">Create image</span></div>
@@ -261,6 +285,35 @@ def exercise_automatic_click(stage, script, learned, url, catalog):
     print('NATIVE_AUTOMATIC_CLICK_PASS', stage, expected, flush=True)
 
 
+def exercise_flow_project_title(script, learned, origin, provider):
+    assert learned('navigate', url=origin + '/')['success']
+    script('assert wait_for_element("flow-project-card", timeout=8)')
+    owned, = provider.sessions.values()
+    loading = """(() => {
+      const veil = document.createElement('flow-loading-page');
+      veil.style.cssText = 'position:fixed;inset:0;z-index:10';
+      document.body.append(veil);
+      setTimeout(() => veil.remove(), 950);
+    })()"""
+    script(f'js({loading!r})')
+    result = learned('click', target='Existing project')
+    assert result.get('success') and result.get('source') == 'package' and result.get('dispatched'), result
+    script('assert js("location.pathname") == "/project/existing"')
+    settings = learned('click', target='Settings')
+    assert settings.get('success') and settings.get('source') == 'package', settings
+    script('assert js("!document.querySelector(\'flow-prompt-box-settings\').hidden")')
+    assert learned('navigate', url=origin + '/')['success']
+    for title in ('Other project', 'Invalid project'):
+        rejected = learned('click', target=title)
+        assert not rejected.get('success') and not rejected.get('dispatched'), rejected
+        script('assert js(\'location.pathname === "/" && !document.body.dataset.edited\')')
+    pending = learned('click', target='Canceled project')
+    assert pending.get('dispatched') and not pending.get('success') and not pending.get('screenshot_id'), pending
+    script('assert js("document.body.dataset.canceled") == "1"')
+    assert list(provider.sessions.values()) == [owned]
+    print('NATIVE_FLOW_PROJECT_TITLE_PASS', flush=True)
+
+
 def exercise_basic_actions(mode, script, learned, origin, provider):
     url = origin + '/basic-actions'
     next_url = origin + '/basic-next'
@@ -382,7 +435,7 @@ def exercise(*, visual=False, extension=None, automatic=False, basic=None, visua
         origin = f'http://127.0.0.1:{server.server_port}'
         url = origin + ('/new-controls' if extension else '/settings?private=must-not-be-persisted')
         home = Path(temp).resolve()
-        if automatic:
+        if automatic or basic == 'flow-project-title':
             package = home / 'browser-apps' / 'fixture'
             package.mkdir(parents=True)
             (package / 'app.json').write_text(json.dumps({
@@ -448,6 +501,9 @@ plugins:
                             exercise_visual_continuation(script, learned, url, provider)
                             continue
                         if basic:
+                            if basic == 'flow-project-title':
+                                exercise_flow_project_title(script, learned, origin, provider)
+                                continue
                             if basic == 'structured':
                                 direct = call(code='click_at_xy(10, 10)')
                                 assert not direct.get('success'), direct
@@ -537,6 +593,9 @@ if __name__ == '__main__':
 
 
 class NativeLearnedControls(unittest.TestCase):
+    def test_browser_opens_a_flow_project_by_title(self):
+        exercise(basic='flow-project-title')
+
     def test_named_click_continues_from_a_fresh_screenshot(self):
         exercise(visual_continuation=True)
 
