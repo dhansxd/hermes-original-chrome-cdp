@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 import unittest
+from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -106,7 +107,8 @@ note.addEventListener('change', () => document.body.dataset.changed = 'yes');
      onclick="event.preventDefault(); document.body.dataset.canceled=String(1+Number(document.body.dataset.canceled||0))">Canceled thumbnail</a>
   <span class="project-title-text">Canceled project</span>
 </flow-project-card>"""
-        elif self.path.startswith('/mapped-controls') or self.path == '/project/existing':
+        elif self.path.startswith('/mapped-controls') or self.path.split('?', 1)[0] in (
+                '/project/existing', '/app/speech-synthesis/text-to-speech'):
             body = b"""<!doctype html><title>Packaged controls</title>
 <button aria-label="Tools" onclick="document.querySelector('#tools').hidden=false">Tools</button>
 <div id="tools" role="menu" hidden><span aria-label="Create image">Create image</span></div>
@@ -147,6 +149,8 @@ function openGeminiModels() {
 </script>
 <button onclick="document.body.dataset.submits=String(Number(document.body.dataset.submits || 0) + 1)">Submit</button>
 """
+        if self.path == '/project/existing?late-popup':
+            body += f'<script>setTimeout(() => {{ {FLOW_POPUP} }}, 160)</script>'.encode()
         self.send_response(200)
         self.send_header('Content-Type', 'text/html')
         self.end_headers()
@@ -314,6 +318,46 @@ def exercise_flow_project_title(script, learned, origin, provider):
     print('NATIVE_FLOW_PROJECT_TITLE_PASS', flush=True)
 
 
+FLOW_POPUP = """document.body.insertAdjacentHTML('beforeend', `
+      <mat-dialog-container role="dialog"><h2>Yang baru</h2>
+        <a href="/changelogs/example">Lihat semua log perubahan</a>
+        <button onclick="document.body.dataset.dismissed='flow';this.closest('mat-dialog-container').remove()">Mulai</button>
+      </mat-dialog-container>`)"""
+
+
+def exercise_site_popups(script, learned, origin):
+    assert learned('navigate', url=origin + '/project/existing?late-popup')['success']
+    script('assert js("document.body.dataset.dismissed") == "flow", "navigation left the changelog popup open"')
+    assert learned('navigate', url=origin + '/project/existing')['success']
+    script('assert wait_for_element(".settings-trigger-button", timeout=8)')
+    script(f'js({FLOW_POPUP!r})')
+    script('js("document.querySelector(\'mat-dialog-container\').append(document.querySelector(\'mat-dialog-container button\').cloneNode(true))")')
+    blocked = learned('click', target='Settings')
+    assert blocked['status'] == 'needs_inspection' and blocked['source'] == 'popup' and not blocked['dispatched'], blocked
+    script('assert js("!document.body.dataset.dismissed && document.querySelector(\'flow-prompt-box-settings\').hidden")')
+    script('js("document.querySelector(\'mat-dialog-container button:last-child\').remove()")')
+    assert learned('click', target='Settings')['success']
+    script('assert js("document.body.dataset.dismissed") == "flow"')
+    script('assert js("!document.querySelector(\'flow-prompt-box-settings\').hidden")')
+
+    eleven = """document.body.insertAdjacentHTML('beforeend', `
+      <section><h2>Introducing Eleven v4</h2>
+        <button onclick="document.body.dataset.order='intro';this.parentElement.remove()">Got it</button></section>
+      <aside><button>Try Studio</button>
+        <button aria-label="Close popup" onclick="document.body.dataset.order+=',studio';this.parentElement.remove()">×</button></aside>
+      <div id="first-promo">Black Friday <a href="/offer">Get the offer</a>
+        <button aria-label="Dismiss" onclick="document.body.dataset.order+=',black-friday';document.querySelector('#next-promo').hidden=false;this.parentElement.remove()">×</button></div>
+      <div id="next-promo" hidden>Eleven v4 is here <a href="/intro">Try it out</a>
+        <button aria-label="Dismiss" onclick="document.body.dataset.order+=',v4';this.parentElement.remove()">×</button></div>`)"""
+    assert learned('navigate', url=origin + '/app/speech-synthesis/text-to-speech')['success']
+    script('assert wait_for_element(".settings-trigger-button", timeout=8)')
+    script(f'js({eleven!r})')
+    assert learned('click', target='Settings')['success']
+    script('assert js("document.body.dataset.order") == "intro,studio,black-friday,v4"')
+    script('assert js("!document.querySelector(\'flow-prompt-box-settings\').hidden")')
+    print('NATIVE_SITE_POPUP_ORDER_PASS', flush=True)
+
+
 def exercise_basic_actions(mode, script, learned, origin, provider):
     url = origin + '/basic-actions'
     next_url = origin + '/basic-next'
@@ -435,7 +479,7 @@ def exercise(*, visual=False, extension=None, automatic=False, basic=None, visua
         origin = f'http://127.0.0.1:{server.server_port}'
         url = origin + ('/new-controls' if extension else '/settings?private=must-not-be-persisted')
         home = Path(temp).resolve()
-        if automatic or basic == 'flow-project-title':
+        if automatic or basic in ('flow-project-title', 'site-popups'):
             package = home / 'browser-apps' / 'fixture'
             package.mkdir(parents=True)
             (package / 'app.json').write_text(json.dumps({
@@ -503,6 +547,14 @@ plugins:
                         if basic:
                             if basic == 'flow-project-title':
                                 exercise_flow_project_title(script, learned, origin, provider)
+                                continue
+                            if basic == 'site-popups':
+                                module = sys.modules.get(type(provider).__module__.rsplit('.', 1)[0] + '.site_popups')
+                                if module:
+                                    with patch.dict(module.SITE_ORIGINS, flow=origin, elevenlabs=origin):
+                                        exercise_site_popups(script, learned, origin)
+                                else:
+                                    exercise_site_popups(script, learned, origin)
                                 continue
                             if basic == 'structured':
                                 direct = call(code='click_at_xy(10, 10)')
@@ -593,6 +645,9 @@ if __name__ == '__main__':
 
 
 class NativeLearnedControls(unittest.TestCase):
+    def test_browser_handles_site_popups_before_page_controls(self):
+        exercise(basic='site-popups')
+
     def test_browser_opens_a_flow_project_by_title(self):
         exercise(basic='flow-project-title')
 

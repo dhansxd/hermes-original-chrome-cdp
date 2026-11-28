@@ -228,8 +228,12 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   dengan selector paket. Aksi menawarkan screenshot sebelum mengirim klik.
   Setelah tombol terlihat, aksi yang sama berhasil lewat paket di jendela
   yang sama. Uji memakai Hermes `ae2a81ccc0`, macOS 27.2.1, dan Chrome
-  158.0.8127.38. Titik perbaikan tersisa ada pada penantian singkat untuk
-  pemilih model Gemini setelah navigasi biasa, sebelum fallback.
+  158.0.8127.38.
+- Pada 28 November 2026, skenario `navigate /app` lalu `click Model picker`
+  dijalankan ulang pada `ab80fa3` dan kandidat di lingkungan yang sama.
+  Acuan menawarkan screenshot tanpa klik. Kandidat menunggu pemilih model
+  muncul lalu klik awal berhasil lewat paket. Kedua uji membersihkan satu
+  jendela tugas. Penantian hanya berlaku untuk kontrol terpetakan ini.
 - Di Flow, Hermes membaca daftar proyek, tetapi gagal membuka proyek yang
   sudah ada. Judul yang diminta tampil di kartu tanpa tautan atau peran
   tombol pada judul dan elemen induknya. Aksi berdasarkan judul kembali ke
@@ -346,16 +350,29 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   `role=dialog` tidak menemukannya. Penutupan banner pertama memunculkan
   banner berikutnya. Panel opsional **What is this audio for?** muncul
   setelah satu permintaan Text to Speech.
-- Usulan. Periksa popup setelah navigasi dan sebelum aksi UI melalui
-  `browser_exec`. Gunakan ciri dan kontrol yang terbukti dari situs.
-  Setelah penutupan, verifikasi popup hilang, periksa lapisan berikutnya,
-  lalu identifikasi ulang target tugas di jendela yang sama. Gunakan DOM
-  atau screenshot jika kontrol penutup belum dikenal. Tampilkan pilihan
-  pengguna jika halaman meminta keputusan.
+- Pemeriksaan berjalan melalui `browser_exec` setelah navigasi dan sebelum
+  aksi UI di situs yang memiliki pemetaan. Penutupan otomatis terbatas pada
+  dialog changelog Flow dan empat popup informasi atau promosi ElevenLabs
+  yang diamati. Plugin memastikan popup hilang sebelum melanjutkan target
+  tugas di jendela yang sama. Tombol penutup yang ambigu meminta inspeksi.
+  Panel pascagenerasi dan layar yang meminta keputusan pengguna masih
+  memakai pemeriksaan halaman biasa.
 - Uji Flow lebih dulu pada dialog changelog yang sudah diamati. Lanjutkan
   dengan ElevenLabs pada modal dan banner beruntun. Sertakan popup yang
   muncul terlambat, popup yang tidak menutupi target, dan menu yang dibuka
   atas kebutuhan tugas.
+- Pada 28 November 2026, `test_browser_handles_site_popups_before_page_controls`
+  gagal pada `ab80fa3` karena dialog tetap terbuka, lalu lulus pada kandidat
+  di Chrome 158.0.8127.38, macOS 27.2.1, Hermes `ae2a81ccc0`. Fixturenya
+  memeriksa dialog Flow yang muncul terlambat, dua tombol penutup yang
+  ambigu, menu Settings yang tetap bekerja, dan empat popup ElevenLabs
+  yang ditutup berurutan. Uji pembanding katalog, buka proyek Flow dari
+  judul, dan kelanjutan klik screenshot lulus di kedua versi.
+- Uji ulang situs asli membuka proyek Flow dan halaman Text to Speech
+  ElevenLabs. Dialog changelog dan tombol Settings yang dipetakan tidak
+  muncul pada proyek Flow yang dipilih di dua versi. Penutupan popup dan
+  kelanjutan klik Settings terverifikasi lewat fixture Chrome. Rangkaian lokal
+  `unittest discover -s tests` lulus 476 tes pada kandidat.
 
 ### Tujuan produk
 

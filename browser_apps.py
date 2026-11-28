@@ -38,9 +38,16 @@ OBSERVATION_INTERVAL = 15
 if __package__:
     from .site_learning import (LEARNED_ACTIONS, cached_action, fallback, valid_point,
                                 visual_capture_code, visual_check_code, visual_dispatch_code)
+    from .site_popups import SITE_ORIGINS, guarded_code, popup_result
 else:
     from site_learning import (LEARNED_ACTIONS, cached_action, fallback, valid_point,
                                visual_capture_code, visual_check_code, visual_dispatch_code)
+    from site_popups import SITE_ORIGINS, guarded_code, popup_result
+
+
+class PopupOutcome(Exception):
+    def __init__(self, outcome):
+        self.outcome = outcome
 
 
 BROWSER_ACTIONS = ('navigate', 'type', 'read', 'screenshot')
@@ -421,11 +428,16 @@ class AppContext:
 
     def browser_exec(self, code, *, timeout_s=120):
         self._choice()
+        if self.app == 'flow':
+            code = guarded_code(code)
         result = self.host.dispatch('browser_exec', {
             'session': self.session, 'code': self.host.prepare_code(code),
             'timeout_s': timeout_s,
         }, task_id=self.task_id, session_id=self.session_id, parent_agent=None)
-        return json.loads(result) if isinstance(result, str) else result
+        data = json.loads(result) if isinstance(result, str) else result
+        if self.app == 'flow' and (popup := popup_result(data)):
+            return {**data, **popup, 'error': popup['next']}
+        return data
 
 
 class AppHost:
@@ -564,7 +576,21 @@ class AppHost:
             return json.dumps({'success': False, 'error': str(error)})
         if command['action'] in BROWSER_ACTIONS:
             route = {key: value for key, value in args.items() if key != 'site_control'}
-            return native({**route, 'code': self.prepare_code(code)}, **context)
+            guarded = False
+            if command['action'] == 'type':
+                code = guarded_code(code)
+                guarded = True
+            elif command['action'] == 'navigate':
+                parsed = urlsplit(command['params']['url'])
+                if f'{parsed.scheme}://{parsed.netloc}' in SITE_ORIGINS.values():
+                    code = guarded_code(code, after=True)
+                    guarded = True
+            result = native({**route, 'code': self.prepare_code(code)}, **context)
+            if guarded:
+                data = json.loads(result) if isinstance(result, str) else result
+                if popup := popup_result(data):
+                    return json.dumps(popup)
+            return result
         if command['action'] in LEARNED_ACTIONS:
             return self.execute_learned(command, args, native, context)
         return self.handle({**command, 'session': args.get('session')}, **context)
@@ -572,10 +598,13 @@ class AppHost:
     def execute_learned(self, command, args, native, context):
         import sqlite3
         attempted = False
+        first = True
+        params = command.get('params')
+        target = params.get('target') if isinstance(params, dict) else None
+        target = ' '.join(target.casefold().split()) if isinstance(target, str) else ''
 
         def run_expression(expression, *, click=False, until=None):
-            nonlocal attempted
-            attempted |= click
+            nonlocal attempted, first
             code = 'import json\n'
             if until is None:
                 code += 'print(json.dumps(js(' + repr(expression) + ')))'
@@ -591,15 +620,25 @@ class AppHost:
                     '    wait(.1)\n'
                     'print(json.dumps(_observed))'
                 )
+            if command['action'] == 'click':
+                if first or click:
+                    code = guarded_code(code, target=target)
+                elif attempted and isinstance(until, list) and until[0] in SITE_ORIGINS.values():
+                    code = guarded_code(code, after=True)
+            first = False
+            already_attempted = attempted
+            attempted |= click
             result = native({'session': args['session'], 'code': code}, **context)
             data = json.loads(result) if isinstance(result, str) else result
+            if popup := popup_result(data):
+                attempted = already_attempted
+                raise PopupOutcome(popup)
             if not isinstance(data, dict) or not data.get('success'):
                 raise RuntimeError('Could not verify the current page.')
             return json.loads(data['output'].strip())
 
         try:
             catalog = self.provider.learning_catalog()
-            params = command.get('params')
             if command['action'] == 'click' and isinstance(params, dict) and 'screenshot_id' in params:
                 return json.dumps(self.continue_visual_click(params, args, native, context), ensure_ascii=False)
             def run_package_click(origin, target):
@@ -614,6 +653,9 @@ class AppHost:
                                                  package_command=guarded)
                 if result.get('_multimodal'):
                     return result
+        except PopupOutcome as error:
+            result = error.outcome
+            result['dispatched'] |= attempted
         except (KeyError, TypeError, OSError, sqlite3.Error, ValueError, RuntimeError) as error:
             result = fallback(str(error), dispatched=attempted)
         return json.dumps(result, ensure_ascii=False)
@@ -691,10 +733,13 @@ class AppHost:
                       'point': [ratio * span for ratio, span in zip(point, frame['viewport'])]}
             result = self.run_package_click(saved['package_command'], session, context, visual=visual)
             return {**result, 'source': 'screenshot'}
-        code = visual_dispatch_code(saved['frame'], point)
+        target = ' '.join(saved['target'].casefold().split())
+        code = guarded_code(visual_dispatch_code(saved['frame'], point), target=target)
         try:
             result = native({'session': session, 'code': code}, **context)
             result = json.loads(result) if isinstance(result, str) else result
+            if popup := popup_result(result):
+                return popup
             if isinstance(result, dict) and result.get('success'):
                 output = result.get('output')
                 if isinstance(output, str) and 'VISUAL_CLICK=stale_screenshot' in output.splitlines():

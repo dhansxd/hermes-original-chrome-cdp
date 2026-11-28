@@ -677,7 +677,13 @@ def attempt_dom_control(url, target, run_expression, *, mapping=None, opens=None
     request = {'target': target, **(mapping or {})}
     if opens:
         request['opens'] = opens
-    candidate = run_expression(page_expression(_FIND_DOM_CONTROL, request, url))
+    expression = page_expression(_FIND_DOM_CONTROL, request, url)
+    candidate = run_expression(expression)
+    if (mapping and url[0] == 'https://gemini.google.com' and target.casefold() == 'model picker'
+            and isinstance(candidate, dict) and candidate.get('reason') == 'unmatched'):
+        # The Gemini shell can load before its composer and model picker mount.
+        if run_expression(f'Boolean(({expression})?.state)', until=True) is True:
+            candidate = run_expression(expression)
     if not isinstance(candidate, dict):
         return None, 'unmatched'
     if candidate.get('reason'):

@@ -70,6 +70,18 @@ class SiteLearningTests(unittest.TestCase):
         self.assertFalse(result.get('suggestions'))
         self.assertFalse(result['controls'])
 
+    def test_gemini_picker_waits_for_its_button_before_falling_back(self):
+        url = ['https://gemini.google.com', '/app']
+        target = {'action': 'click', 'params': {'target': 'Model picker'}}
+        mapping = {'selector': '#model', 'opens': '#menu'}
+        candidate = {'label': 'Pro', 'element_id': 'model', 'state': 'selector-visible', 'value': '#menu'}
+        run = Mock(side_effect=[url, {'reason': 'unmatched'}, True, candidate, 'verified'])
+        result = cached_action(None, target, run, package_control=lambda *_: mapping)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['source'], 'package')
+        self.assertTrue(run.call_args_list[2].kwargs['until'])
+        self.assertEqual(sum(call.kwargs.get('click', False) for call in run.call_args_list), 1)
+
     def test_recorder_ignores_clicks_outside_native_evaluation(self):
         learner = PageLearning(self.catalog)
         wire = Mock()
