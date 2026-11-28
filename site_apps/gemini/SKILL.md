@@ -54,10 +54,12 @@ For example, select a mapped tool in the open chat using:
 {"action":"click","session":"work","params":{"target":"Create image"}}
 ```
 
-The action returns only its result. If a control is unmapped, hidden behind a
-banner, or otherwise unavailable, the result is `needs_inspection`. Use its returned `session` to inspect the result with `read` or `screenshot`. After Send,
-verify that the new response has appeared and finish any requested download
-before ending the turn. If Send is unconfirmed, check the chat before retrying.
+For Send and Start research, the plugin looks for the requested button in
+the composer or research turn. Continue any returned `screenshot_id` with
+the same click target and a point on the image in that session. The package
+rechecks the button and the submission state before clicking. If a result
+is unconfirmed, check progress in the chat before retrying. Verify the new
+result and finish any requested download before ending the turn.
 For an existing or newly generated video, call `click` with `target: Download video`
 on the requested response. Follow `read_result` while Chrome finishes its download.
 Use the verified `data.file.path` for the current channel's requested attachment.

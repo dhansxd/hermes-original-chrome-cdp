@@ -37,10 +37,10 @@ OBSERVATION_INTERVAL = 15
 
 if __package__:
     from .site_learning import (LEARNED_ACTIONS, cached_action, fallback, valid_point,
-                                visual_capture_code, visual_dispatch_code)
+                                visual_capture_code, visual_check_code, visual_dispatch_code)
 else:
     from site_learning import (LEARNED_ACTIONS, cached_action, fallback, valid_point,
-                               visual_capture_code, visual_dispatch_code)
+                               visual_capture_code, visual_check_code, visual_dispatch_code)
 
 
 BROWSER_ACTIONS = ('navigate', 'type', 'read', 'screenshot')
@@ -607,9 +607,11 @@ class AppHost:
 
             result = cached_action(catalog, command, run_expression, package_control=self.click_mapping,
                                    package_action=run_package_click)
+            guarded = result.pop('_guarded_visual', None)
             if (command['action'] == 'click' and not result.get('dispatched')
-                    and result.get('reason') in {'unmatched', 'obscured'}):
-                result = self.offer_visual_click(result, params['target'].strip(), args, native, context)
+                    and (guarded or result.get('reason') in {'unmatched', 'obscured'})):
+                result = self.offer_visual_click(result, params['target'].strip(), args, native, context,
+                                                 package_command=guarded)
                 if result.get('_multimodal'):
                     return result
         except (KeyError, TypeError, OSError, sqlite3.Error, ValueError, RuntimeError) as error:
@@ -627,7 +629,7 @@ class AppHost:
             return None
         return choice
 
-    def offer_visual_click(self, result, target, args, native, context):
+    def offer_visual_click(self, result, target, args, native, context, *, package_command=None):
         session = args['session']
         with self.provider.lock:
             choice = self.owned_browser_choice(session, context)
@@ -655,7 +657,8 @@ class AppHost:
         with self.provider.lock:
             if self.owned_browser_choice(session, context) is not choice or choice.turn_id != turn:
                 return result
-            choice.visual_click = {'id': identifier, 'target': target, 'frame': capture['frame'], 'turn': turn}
+            choice.visual_click = {'id': identifier, 'target': target, 'frame': capture['frame'],
+                                   'turn': turn, 'package_command': package_command}
         result.update(source='screenshot', screenshot_path=capture['path'], screenshot_id=identifier,
                       next='Use click with the same target and screenshot_id in this session. '
                            'Pass point [x,y] as fractions of the displayed image.')
@@ -682,6 +685,12 @@ class AppHost:
                     or saved['target'] != params['target'].strip() or saved['turn'] != choice.turn_id):
                 return expired
             choice.visual_click = None  # Consume the screenshot before any input can be sent.
+        if saved.get('package_command'):
+            frame = saved['frame']
+            visual = {'check_code': visual_check_code(frame),
+                      'point': [ratio * span for ratio, span in zip(point, frame['viewport'])]}
+            result = self.run_package_click(saved['package_command'], session, context, visual=visual)
+            return {**result, 'source': 'screenshot'}
         code = visual_dispatch_code(saved['frame'], point)
         try:
             result = native({'session': session, 'code': code}, **context)
@@ -698,6 +707,12 @@ class AppHost:
         command = self.site_click_mapping(origin, target, commands=True)
         if command is None:
             return None
+        result = self.run_package_click(command, session, context)
+        if result.pop('_visual_fallback', False):
+            result['_guarded_visual'] = command
+        return {**result, 'source': 'package'}
+
+    def run_package_click(self, command, session, context, *, visual=None):
         with self.provider.lock:
             choice = self.owned_browser_choice(session, context)
             if choice is None:
@@ -709,8 +724,7 @@ class AppHost:
         if not prepared or prepared.get('args', {}).get('session') != session:
             message = (prepared or {}).get('message', 'The selected site control requires the current window.')
             return fallback(message, dispatched=False)
-        result = json.loads(self.handle({**command, 'session': session}, **context))
-        return {**result, 'source': 'package'}
+        return json.loads(self.handle({**command, 'session': session, '_visual_click': visual}, **context))
 
     def click_metadata(self, metadata):
         if self.bundled_source is None:
@@ -911,6 +925,7 @@ class AppHost:
                         if identifier in self.changing:
                             raise RuntimeError('This extension is changing lifecycle state.')
                         context = AppContext(self, identifier, args.get('session', ''), task_id, session_id)
+                        context.visual_click = args.get('_visual_click')
                         context._binding = context._choice()
                         if action == 'observe':
                             # Hermes supplies the turn in pre_tool_call; its native handler can omit it.

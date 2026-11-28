@@ -288,13 +288,19 @@ def visual_capture_code(identifier):
     )
 
 
-def visual_dispatch_code(frame, point):
-    x, y = (ratio * span for ratio, span in zip(point, frame['viewport']))
+def visual_check_code(frame):
     return VISUAL_FRAME + (
         'from tempfile import TemporaryDirectory\n'
-        'with TemporaryDirectory() as scratch:\n'
-        '    current = visual_frame(Path(scratch) / "check.png")\n'
-        f'if current != {frame!r}:\n'
+        'def visual_matches():\n'
+        '    with TemporaryDirectory() as scratch:\n'
+        f'        return visual_frame(Path(scratch) / "check.png") == {frame!r}\n'
+    )
+
+
+def visual_dispatch_code(frame, point):
+    x, y = (ratio * span for ratio, span in zip(point, frame['viewport']))
+    return visual_check_code(frame) + (
+        'if not visual_matches():\n'
         '    print("VISUAL_CLICK=stale_screenshot")\n'
         'else:\n'
         f'    click_at_xy({x!r}, {y!r})\n'

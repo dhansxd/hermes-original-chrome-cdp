@@ -298,6 +298,88 @@ def verify_research_fallback(call, url):
     return name
 
 
+def fixture_control_point(result):
+    from PIL import Image
+
+    if result.get('_multimodal'):
+        result = json.loads(result['text_summary'])
+    assert result.get('screenshot_id') and not result.get('dispatched'), result
+    with Image.open(result['screenshot_path']) as image:
+        width, height = image.size
+        green = [(position % width, position // width)
+                 for position, (r, g, b) in enumerate(image.convert('RGB').get_flattened_data())
+                 if g > 130 and g - max(r, b) > 75]
+    assert green, 'Fixture control is missing in the screenshot.'
+    xs, ys = zip(*green)
+    point = [(min(xs) + max(xs)) / (2 * width), (min(ys) + max(ys)) / (2 * height)]
+    return result['screenshot_id'], point
+
+
+def verify_guarded_click_fallback(call, url, visual=False):
+    task = 'guarded-visual' if visual else 'guarded-dom'
+    session = call(task, action='navigate', params={'url': url + '/app/guarded'})['session']
+
+    def fixture(expression):
+        return call(task, session=session, code=f'print(js({expression!r}))')['output'].strip()
+
+    def click(target, **params):
+        return call(task, session=session, action='click', params={'target': target, **params}, require_success=False)
+
+    def send(target):
+        result = click(target)
+        if visual:
+            identifier, point = fixture_control_point(result)
+            fixture("document.documentElement.style.backgroundColor = '#ffe0e0'")
+            stale = click(target, screenshot_id=identifier, point=point)
+            assert stale.get('reason') == 'stale_screenshot' and not stale.get('dispatched'), stale
+            fixture("document.documentElement.style.backgroundColor = ''")
+            identifier, point = fixture_control_point(click(target))
+            wrong = click(target, screenshot_id=identifier, point=[.85, .85])
+            assert not wrong.get('dispatched'), wrong
+            identifier, point = fixture_control_point(click(target))
+            result = click(target, screenshot_id=identifier, point=point)
+            old = click(target, screenshot_id=identifier, point=point)
+            assert old.get('reason') == 'stale_screenshot' and not old.get('dispatched'), old
+        assert result.get('status') == 'running' and result.get('session') == session, result
+
+    reference_button = '<button type="button" aria-label="Send message">Send</button>' if visual else ''
+    send_button = f"""<button style="background:#08b02a" type="button" id="fallback-send"
+                         {'aria-label="Send message"' if visual else 'title="Send"'}>➤</button>"""
+    fixture(f"""document.body.innerHTML = `
+        <style>button {{margin:16px;min-width:80px;min-height:36px}}</style>
+        <fieldset><div role="textbox" contenteditable="true">Fallback topic</div>
+        {reference_button}{send_button}
+        <gem-button data-test-id="deselect-drawer-item-gem-button">
+        <button type="button">Deep Research</button></gem-button>
+        </fieldset>`;
+        window.sends = 0;
+        window.starts = 0;
+        document.getElementById('fallback-send').onclick = () => {{
+          window.sends++;
+          document.querySelector('[role=textbox]').textContent = '';
+        }};""")
+    send('Send')
+    retry = click('Send')
+    assert retry.get('data', {}).get('reason') == 'research_submission_pending', retry
+    assert fixture('window.sends') == '1'
+
+    reference_plan = '<button>Start research</button>' if visual else ''
+    start_label = 'aria-label="Start research"' if visual else 'title="Start research"'
+    fixture(f"""document.body.innerHTML = `
+        <style>button {{margin:16px;min-width:80px;min-height:36px}}</style>
+        <div class="conversation-container" id="bound-fallback-turn">
+        <user-query><p class="query-text-line">Fallback topic</p></user-query>
+        <model-response><deep-research-confirmation-widget>
+        {reference_plan}<button style="background:#08b02a" id="fallback-start" {start_label}>➤</button>
+        </deep-research-confirmation-widget></model-response></div>`;
+        document.getElementById('fallback-start').onclick = () => {{window.starts++}};""")
+    send('Start research')
+    retry = click('Start research')
+    assert retry.get('data', {}).get('clicked') is False, retry
+    assert fixture('window.starts') == '1'
+    print('GEMINI_GUARDED_FALLBACK_PASS', 'screenshot' if visual else 'dom', flush=True)
+
+
 def verify_research_wait_and_stop(call, provider, name):
     def observation():
         return call('research', session=name, app='gemini', operation='read_result', require_success=False)
@@ -400,7 +482,7 @@ plugins:
       granted_capabilities: [tools.override]
       settings:
         apps_directory: ''' + str(packages) + '\n')
-        turns = {task: uuid.uuid4().hex for task in ('parent', 'child', 'channel', 'research')}
+        turns = {task: uuid.uuid4().hex for task in ('parent', 'child', 'channel', 'research', 'guarded-dom', 'guarded-visual')}
         with set_hermes_home_override(home):
             manager = get_plugin_manager()
             native_entry = registry.get_entry('browser_exec')
@@ -449,6 +531,9 @@ plugins:
                 research_session = verify_research_fallback(call, url)
                 report['mapped_send_and_native_fallback_share_one_window'] = True
                 if click_only:
+                    verify_guarded_click_fallback(call, url)
+                    verify_guarded_click_fallback(call, url, visual=True)
+                    report['guarded_dom_and_screenshot_clicks'] = True
                     return report
                 if research_only:
                     verify_research_wait_and_stop(call, provider, research_session)

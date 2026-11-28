@@ -36,7 +36,7 @@ receipt = None
 def read(kind, name=None, label=None):
     global receipt
     inputs = ','.join(json.dumps(value) for value in (
-        origin, selectors, kind, name, label, research_state, saved_submission, dispatch_send))
+        origin, selectors, kind, name, label, research_state, saved_submission, dispatch_send, visual_point))
     state = js('(' + ui + ')(' + inputs + ')')
     if state.get('_research_receipt'):
         receipt = state['_research_receipt']
@@ -53,8 +53,14 @@ def wait_for(kind, name=None, label=None, *, seconds=2, retry=('missing', 'outsi
 
 
 def blocked(control, state):
-    return {'status': 'needs_inspection', 'data': {'control': control, 'reason': state['reason']},
-            'message': 'Inspect this browser session before continuing.'}
+    result = {'status': 'needs_inspection', 'data': {'control': control, 'reason': state['reason']},
+              'message': 'Inspect this browser session before continuing.'}
+    if control in {'send', 'start_research'}:
+        if state['reason'] in {'missing', 'ambiguous', 'obscured'} and visual_point is None:
+            result.update(_visual_fallback=True, dispatched=False)
+        elif state['reason'] in {'stale_screenshot', 'visual_target_mismatch'}:
+            result.update(reason=state['reason'], dispatched=False)
+    return result
 
 
 def click(state):
@@ -177,7 +183,12 @@ def run():
             'data': {'control': argument, 'clicked': True}}
 
 
-result = run()
+if visual_point is not None and not visual_matches():
+    result = blocked(argument, {'reason': 'stale_screenshot'})
+    if dispatch_send:
+        result['_send_not_dispatched'] = True
+else:
+    result = run()
 if receipt:
     result['_research_receipt'] = receipt
 print(marker + json.dumps(result, ensure_ascii=False))
@@ -192,6 +203,9 @@ def load_submission(checkpoint):
 
 
 def run_native(context, values, navigation=''):
+    visual = getattr(context, 'visual_click', None)
+    if visual is not None:
+        navigation += visual['check_code']
     code = navigation + ''.join(f'{key} = {value!r}\n' for key, value in values.items()) + NATIVE
     result = context.browser_exec(code, timeout_s=25)
     if result.get('success') and not result.get('exit_code', 0):
@@ -241,6 +255,7 @@ def execute(context, origin, operation, argument=None, *, navigation=''):
         'origin': origin, 'selectors': SELECTORS, 'ui': CONTROL_UI, 'op': operation,
         'argument': argument, 'tool_items': sorted(TOOL_ITEMS), 'marker': MARKER,
         'research_state': research_state, 'saved_submission': saved_submission, 'dispatch_send': False,
+        'visual_point': context.visual_click['point'] if getattr(context, 'visual_click', None) else None,
     }
     result = run_native(context, values, navigation)
     intent = result.pop('_research_intent', None)

@@ -195,9 +195,24 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   sama. Pengulangan Send tidak mengirim ulang. Uji progres terpisah
   memverifikasi jendela yang sama melewati batas idle dan Stop
   menghentikan pengamatan. Uji ini memakai fixture tanpa menghasilkan konten.
+- Fallback `Send` dan `Start research` berjalan lewat aksi `click` yang
+  sama. Pencarian DOM tetap dalam composer yang sesuai atau panel
+  konfirmasi pada giliran riset yang sesuai. Jika perlu screenshot, ID
+  menyimpan operasi paket asal. Paket mencocokkan kembali tampilan, target,
+  dan status pengiriman sebelum mengeksekusi klik. Status pending
+  diteruskan ke pemeriksaan hasil.
+- Pada pembanding `65b9a07`, tombol Send berlabel melalui atribut title
+  berhenti dengan status `missing`. Pada kandidat, fixture Chrome menguji
+  Send dan Start research melalui DOM dan screenshot pada sesi yang sama.
+  Screenshot berubah, posisi di luar tombol, dan pengulangan ID ditolak.
+  Setiap kontrol teruji terkirim sekali. Pada Hermes `ae2a81ccc0`,
+  macOS 27.2.1, dan Chrome 158.0.8127.38, 474 tes unit dan delapan uji
+  regresi Chrome lulus. Uji paket Gemini terpisah lulus tanpa menghasilkan
+  konten.
 - Uji penerimaan sebelum mengganti versi produksi memakai sesi Hermes baru
-  untuk Gemini, Flow, dan satu situs hasil belajar. Pastikan paket pada
-  profil uji memuat pemetaan nama terbaru.
+  untuk Gemini, Flow, dan satu situs hasil belajar. Gunakan paket Gemini
+  dari commit kandidat pada profil uji karena folder paket yang sudah ada
+  dipertahankan oleh host.
 - Di 0.16.1, katalog membaca nama UI dan petunjuk tujuan dari tautan pada
   halaman aktif. Petunjuk hanya tampil jika path masih cocok dengan hash
   yang sudah diverifikasi. Pencarian label persis yang kosong dapat

@@ -1,4 +1,4 @@
-async (origin, selectors, kind, name, label, researchState = null, savedSubmission = null, dispatchSend = false) => {
+async (origin, selectors, kind, name, label, researchState = null, savedSubmission = null, dispatchSend = false, visualPoint = null) => {
     const route = location.pathname.match(/^(\/(?:u\/\d+\/)?app)(?:\/([a-zA-Z0-9-]+))?\/?$/);
     const chatId = route?.[2] ? 'c_' + route[2] : null;
     if (location.origin !== origin || !/^\/(?:u\/\d+\/)?app(?:\/|$)/.test(location.pathname)) {
@@ -18,14 +18,23 @@ async (origin, selectors, kind, name, label, researchState = null, savedSubmissi
         return clean(copy.textContent) === value || clean(node.getAttribute('aria-label')) === value;
     };
 
+    const buttonSelector = 'button, [role="button"], input[type="button"], input[type="submit"]';
+    const hasName = (node, names) => {
+        const idRefs = clean(node.getAttribute('aria-labelledby')).split(' ').filter(Boolean);
+        const labelled = clean(idRefs.map(id => document.getElementById(id)?.textContent ?? '').join(' '));
+        return names.some(name => matchesLabel(node, name) || clean(node.getAttribute('title')) === name ||
+            labelled === name || (node instanceof HTMLInputElement && clean(node.value) === name));
+    };
+
     if (kind === 'page') {
         return {reason: label && label !== chatId ? 'missing' : 'ready', chat_id: chatId};
     }
     const composer = () => all(selectors.composer);
+    const composerArea = editor => editor.closest('fieldset, input-area-v2, input-area, form');
     function researchActive() {
         const editors = composer();
         if (editors.length !== 1) return false;
-        const area = editors[0].closest('fieldset, input-area-v2, input-area, form');
+        const area = composerArea(editors[0]);
         return !!area && [...area.querySelectorAll('[data-test-id="deselect-drawer-item-gem-button"] button')]
             .some(b => visible(b) && (matchesLabel(b, 'Deep Research') ||
                 /^(?:Deselect|Batalkan pilihan) Deep Research$/i.test(b.getAttribute('aria-label') || '')));
@@ -47,9 +56,14 @@ async (origin, selectors, kind, name, label, researchState = null, savedSubmissi
     const clicked = Symbol.for('hermes.gemini.researchActions');
     const cardSelector = 'immersive-entry-chip gem-processing-card';
     let turn = all('model-response').at(-1);
-    const researchButtons = (control, response = turn) =>
-        [...response?.querySelectorAll('button, [role="button"]') || []]
+    const researchButtons = (control, response = turn) => {
+        const mapped = [...response?.querySelectorAll('button, [role="button"]') || []]
             .filter(node => visible(node) && labels[control].some(text => matchesLabel(node, text)));
+        if (control !== 'start_research' || mapped.length) return mapped;
+        return [...response?.querySelectorAll('deep-research-confirmation-widget') || []]
+            .filter(visible).flatMap(panel => [...panel.querySelectorAll(buttonSelector)])
+            .filter(node => visible(node) && hasName(node, labels[control]));
+    };
     const queryText = group =>
         clean([...group?.querySelectorAll('user-query .query-text-line') || []].map(node => node.innerText).join('\n'));
     function submittedPlan(response) {
@@ -189,6 +203,17 @@ async (origin, selectors, kind, name, label, researchState = null, savedSubmissi
             truncated: text.length > 4000});
     }
 
+    const activeResearch = name === 'send' && researchActive();
+    const guardedSend = name === 'send' && (researchState || activeResearch || dispatchSend);
+    if (guardedSend) {
+        if (!activeResearch) return {reason: 'deep_research_not_active'};
+        const held = window[submission] || savedSubmission;
+        if ((held && !held.finished && !(dispatchSend && held === intent)) ||
+            (researchState === 'submitted' && !held)) {
+            return {reason: 'research_submission_pending'};
+        }
+    }
+
     let nodes;
     if (Object.hasOwn(labels, name)) {
         nodes = name === 'open_research_report' ? reportButtons : researchButtons(name);
@@ -204,6 +229,21 @@ async (origin, selectors, kind, name, label, researchState = null, savedSubmissi
             .filter((node) => matchesLabel(node, 'More tools') || matchesLabel(node, 'Alat lainnya'));
     } else {
         nodes = all(selectors[name]);
+        if (name === 'send' && (!nodes.length || visualPoint)) {
+            const editors = composer();
+            const area = editors.length === 1 && composerArea(editors[0]);
+            if (!area || !clean(editors[0].innerText)) return {reason: 'send_composer_unconfirmed'};
+            const sendNames = ['Send', 'Send message', 'Kirim', 'Kirim pesan'];
+            nodes = [...area.querySelectorAll(buttonSelector)]
+                .filter(node => visible(node) && (node.matches(selectors.send) || hasName(node, sendNames)));
+        }
+    }
+    if (visualPoint && ['send', 'start_research'].includes(name)) {
+        const viewport = window.visualViewport;
+        const hit = document.elementFromPoint(visualPoint[0] + (viewport?.offsetLeft ?? 0),
+                                              visualPoint[1] + (viewport?.offsetTop ?? 0));
+        nodes = nodes.filter(node => node.contains(hit));
+        if (nodes.length !== 1) return {reason: 'visual_target_mismatch'};
     }
     if (!nodes.length) return {reason: 'missing'};
     if (nodes.length !== 1) return {reason: 'ambiguous'};
@@ -225,14 +265,7 @@ async (origin, selectors, kind, name, label, researchState = null, savedSubmissi
     }
     const state = {reason: 'ready', point: [x, y], expanded: node.getAttribute('aria-expanded') === 'true',
         document: performance.timeOrigin, chat_id: chatId};
-    const activeResearch = name === 'send' && researchActive();
-    if (name === 'send' && (researchState || activeResearch || dispatchSend)) {
-        if (!activeResearch) return {reason: 'deep_research_not_active'};
-        const held = window[submission] || savedSubmission;
-        if ((held && !held.finished && !(dispatchSend && held === intent)) ||
-            (researchState === 'submitted' && !held)) {
-            return {reason: 'research_submission_pending'};
-        }
+    if (guardedSend) {
         const editor = composer()[0];
         const draft = clean(editor.innerText);
         if (!draft) return {reason: 'research_draft_missing'};
