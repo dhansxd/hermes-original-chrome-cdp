@@ -6,7 +6,8 @@ For Chrome on a second device, see [Windows setup](WINDOWS.md).
 
 Use `browser_exec` for both ordinary browsing and site controls. Pass each
 request below as JSON text in its `site_control` parameter. Pass the same
-session to subsequent browser calls.
+session to subsequent browser calls. See the [native harness contract](../PLAN.md#akses-browser-harness-bawaan)
+for current helper availability and the planned native request path.
 
 ## Prepare Chrome and macOS
 
@@ -270,9 +271,9 @@ Pass each dictionary below to `site_control` in `browser_exec`.
 
 The final call reads the current document. Navigating depends on the code in
 `run`. Reusing an alias keeps the owned browser session for related calls within
-the caller's turn. Each task owns its window for both site controls and ordinary browser calls.
-The app's returned private `session` can be used with native `browser_exec` by
-the same caller in that turn when further DOM inspection is needed.
+the caller's turn. Each task owns its window for site controls and browsing.
+The same caller can use the app's returned private `session` for structured
+`read` and `screenshot` calls when further inspection is needed.
 
 Add an optional `SKILL.md` in the package to explain its operations. `describe`
 reads its latest content. New packages and operations appear on the next tool

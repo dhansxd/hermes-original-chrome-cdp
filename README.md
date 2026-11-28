@@ -2,10 +2,12 @@
 
 Use your installed, signed-in Google Chrome as the browser backend for Hermes Agent.
 Choose **Original Chrome · CDP** in Hermes's Browser Automation picker, then use the
-native `browser_exec` tool and browser helpers.
+native `browser_exec` tool. Original Chrome supplies profile and window ownership
+and mapped site controls. The [native harness contract](PLAN.md#akses-browser-harness-bawaan)
+records the target for native helper access and the current release's gaps.
 
-Use `browser_exec.site_control` for actions and site operations. For a click,
-name its UI target, for example `{"action":"click","params":{"target":"Model picker"}}`.
+Use `browser_exec.site_control` for structured actions and site operations.
+Name the UI target for a click, for example `{"action":"click","params":{"target":"Model picker"}}`.
 The plugin picks the installed control, learned mapping, DOM, or screenshot
 fallback on the task's current page. A screenshot position can continue an
 existing click only when the plugin returns a screenshot ID.
@@ -232,8 +234,8 @@ A plan is ready for confirmation when Gemini displays its Start research button.
 
 The `site_control` request accepts `list`, `describe`, `run`, `enable`, `disable`,
 `remove`, and `record_missing_control`. Discovery and help read package metadata. Pass each request below as JSON text in
-`browser_exec.site_control`. Reuse the task's session
-for the mapped actions and ordinary browser helpers. Distinct agent tasks own
+`browser_exec.site_control`. Reuse the task's session for mapped actions and
+structured browsing. Distinct agent tasks own
 independent windows even when they use the same Chrome profile.
 
 ```json

@@ -10,6 +10,50 @@ lintas giliran melalui satu `browser_exec`. Jalur distribusi publik memakai
 Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
 [HANDOFF.md](HANDOFF.md) mencatat perilaku versi sebelumnya.
 
+### Akses browser harness bawaan
+
+- Koreksi kontrak 28 November 2026. Browser harness tetap menjadi fondasi
+  browsing. Original Chrome memilih perangkat dan profil, memiliki jendela
+  dan tab per tugas, serta memberi kontrol siap pakai melalui `site_control`.
+  `browser_exec` tetap satu tool dengan parameter native `code`, bantuan
+  helper dari Hermes, dan kontrol situs. Panggilan native memakai eksekutor
+  yang sama di Chrome milik tugas. Pilihan perangkat, isolasi target,
+  larangan menyalin cookie, dan kebijakan browser Hermes tetap berlaku.
+- Audit `94f72bc` pada Hermes `ae2a81ccc0` dan browser-harness `0.1.13`.
+  Skema upstream menerima `code`, `session` dan `timeout_s`. Plugin sedang
+  menghapus `code`, mewajibkan `site_control` dan menolak kode di hook serta
+  handler. Probe `upload_file`, scroll, JavaScript DOM dan aksi `upload`
+  berhenti sebelum mencapai eksekutor native.
+- Akses umum yang hilang atau dipersempit pada versi itu meliputi pemilihan
+  file, scroll dan input mouse umum, tombol keyboard dan modifier, tab
+  milik tugas, iframe, informasi halaman, JavaScript DOM, CDP dan pembacaan
+  event, penantian load, elemen dan network idle, serta opsi screenshot penuh,
+  ukuran dan lokasi hasil. Aksi baca yang terstruktur hanya mengembalikan
+  teks terlihat sampai batas panjangnya. Paket Flow mempunyai penanganan
+  pemilih file lewat CDP sendiri.
+
+| Helper bawaan yang diaudit | Akses yang tersedia di `94f72bc` |
+| --- | --- |
+| `goto_url`, `page_info`, `js`, `cdp`, `drain_events` | Navigasi URL dan pembacaan teks terlihat. Evaluasi DOM, informasi halaman native, perintah dan event CDP belum terbuka untuk browsing umum. |
+| `click_at_xy`, `scroll`, `press_key`, `dispatch_key`, `type_text`, `fill_input` | Klik bernama, satu kelanjutan klik dari screenshot, dan pengisian field dengan selector. Scroll, tombol keyboard dan input native umum belum terbuka. |
+| `capture_screenshot` | Screenshot dengan ukuran yang ditetapkan plugin. Opsi penuh, dimensi dan lokasi hasil belum terbuka. |
+| `list_tabs`, `current_tab`, `activate_tab`, `switch_tab`, `new_tab`, `close_tab`, `ensure_real_tab`, `iframe_target` | Aksi simpan dan tutup jendela tugas tersedia. Helper tab dan target iframe belum terbuka. |
+| `wait`, `wait_for_load`, `wait_for_element`, `wait_for_network_idle` | Observasi progres paket tersedia. Helper menunggu native belum terbuka untuk browsing umum. |
+| `upload_file` | Aksi upload umum tidak terdaftar. Paket Flow memilih berkas melalui CDP. |
+| `http_get` | Helper HTTP native tidak dapat dipanggil lewat tool browser saat `code` ditolak. Helper ini membuat permintaan HTTP langsung. |
+
+- [ ] Pulihkan skema dan bantuan native dari Hermes dengan tambahan opsional
+  `site_control`. Pada panggilan native, gunakan jalur Hermes dalam sesi Chrome
+  milik tugas. Gunakan `site_control` untuk aksi terstruktur, kontrol siap
+  pakai, pembelajaran katalog dan laporan progres paket. Satu jalur klik
+  bernama memilih paket, katalog, DOM dan screenshot secara internal.
+- [ ] Uji kesetaraan helper native dengan fixture tanpa paket. Cakup input file
+  yang sudah ada dan input yang baru muncul setelah klik, scroll, tombol
+  keyboard, tab dan iframe, penantian serta screenshot. Uji akses native dan
+  kontrol situs dalam jendela yang sama, verifikasi katalog dan pemisahan
+  jendela antaragen, serta pastikan panggilan dari sesi Hermes baru menemukan
+  kedua bentuk penggunaan. Catat pembanding, kandidat dan hasil aktual.
+
 ### Chrome di perangkat lain
 
 - Hermes memakai satu perangkat Chrome aktif melalui `browser_exec`. Pilih
@@ -195,9 +239,10 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
   memakai jendela yang sama. Pada Hermes `ae2a81ccc0`, macOS 27.2.1 dan
   Chrome 158.0.8127.38, 471 tes unit dan delapan uji Chrome pada fixture
   lulus. Jumlah jendela kembali ke kondisi awal.
-- Aturan aktif mewajibkan satu jalur klik. Dilarang menawarkan pilihan
-  eksekutor klik kepada model. Tombol paket dan katalog dipilih host dari
-  halaman aktif. DOM dan screenshot menjadi fallback dari aksi yang sama.
+- Catatan untuk `65b9a07`. Tombol paket dan katalog dipilih host dari
+  halaman aktif. DOM dan screenshot menjadi fallback dari aksi klik bernama
+  yang sama. Penolakan akses native pada versi ini sudah dikoreksi dalam
+  kontrak aktif di bagian akses browser harness bawaan.
 - Pembanding `3c42b89` menerima Python bebas, kode yang disertakan pada
   laporan temuan, dan operasi klik paket langsung. Kandidat menolak
   semuanya, termasuk klik dengan ID katalog, baik di hook maupun saat
@@ -428,14 +473,14 @@ tetap diperiksa pada jalur browser yang terdampak.
   `hermes config unset browser.cloud_provider`. Saat enable ulang, pilih
   Chrome asli lagi. Lihat [langkah resmi pada
   tutorial](docs/TUTORIAL.md#switch-back-disable-and-uninstall).
-- Chrome asli terdaftar sebagai provider Hermes. Panggilan browsing publik
-  memakai `browser_exec.site_control`. Untuk klik, Hermes hanya menyebut
-  target UI lewat aksi `click`. Plugin menentukan kontrol paket, katalog
-  hasil belajar, DOM, atau screenshot dari halaman aktif. Posisi pada
+- Chrome asli terdaftar sebagai provider Hermes. `browser_exec` menyediakan
+  eksekusi native dan aksi `site_control` pada sesi Chrome yang sama. Untuk
+  klik bernama, Hermes menyebut target UI lewat aksi `click`. Plugin menentukan
+  kontrol paket, katalog hasil belajar, DOM, atau screenshot dari halaman aktif. Posisi pada
   screenshot hanya diterima setelah aksi `click` memberi ID screenshot.
-  Python bebas, klik dengan ID katalog, dan operasi klik paket langsung
-  ditolak pada provider ini. Aksi terstruktur dan kode paket terpasang tetap
-  memakai eksekutor native CDP di belakang tool yang sama.
+  Katalog dan operasi klik paket dipilih secara internal. Aksi terstruktur,
+  kode native, dan kode paket memakai eksekutor CDP yang sama. Status
+  penerapan akses native tercatat pada bagian akses browser harness bawaan.
 - Satu tugas memakai satu jendela Chrome asli dan sambungan CDP yang sama
   sejak aksi pertama sampai seluruh permintaan selesai. Submit, cek progres,
   pembacaan hasil, unduhan, dan pengiriman yang diminta berlangsung dalam

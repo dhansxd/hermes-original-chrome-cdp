@@ -5,8 +5,9 @@ description: Browse websites in Original Chrome with browser_exec, use mapped si
 
 # Browsing in Original Chrome
 
-Use `browser_exec.site_control` for browsing in Original Chrome. Pass each
-request as JSON text and keep the task's session. For Gemini Web, use its
+Use `browser_exec.site_control` for structured browser actions and site
+operations in Original Chrome. Pass each request as JSON text and keep the task's session.
+For Gemini Web, use its
 `open_chat` operation and the controls listed in the Gemini guide.
 
 Use these actions in `site_control` to open a known address and fill a field

@@ -9,7 +9,9 @@ and verification evidence before calling a checklist item complete.
 
 - The goal is general browsing in the user's installed Google Chrome over CDP
   through Hermes's native `browser_exec`. Reuse Hermes's CDP support. The plugin
-  adds Chrome profile selection and task window ownership to that path.
+  adds Chrome profile selection and task window ownership to that path. Preserve
+  the native browser harness capabilities for the task's Chrome targets.
+  Site controls extend the native tool and provide shortcuts for repeated UI work.
 - Site extensions add ready-to-use UI controls for repeated actions. Gemini
   and Google Flow are the first packages. A control acts on the current page
   through the same `browser_exec`. Any site Chrome can reach can use ordinary
@@ -26,10 +28,10 @@ and verification evidence before calling a checklist item complete.
   explicit browser controls and progress readers. It must not rewrite replies,
   insert automatic tool calls, or reroute terminal or native browser scripts
   to check progress.
-- Keep `browser_exec` as the single browsing tool and retain its native DOM and
-  screenshot operations in the task window. Keep `browser_app` out of the
-  manifest and registry. Verify tool discovery and installed site controls in
-  a fresh Hermes session.
+- Keep `browser_exec` as the single browsing tool with the native `code`
+  parameter, documented helpers, and `site_control` in the same Chrome session.
+  Forward native requests to Hermes's native executor. Keep `browser_app` out
+  of the manifest and registry. Verify both request forms in a fresh session.
 - Manage plugin activation with the official Hermes commands. Select Original
   Chrome manually after enable, and restore the previous browser settings
   manually before disable or remove. The Git URL is the supported install
@@ -38,10 +40,12 @@ and verification evidence before calling a checklist item complete.
   names the UI target. The plugin chooses the installed controls, learned
   catalog, DOM and screenshot fallback for that target. A screenshot position
   is accepted only to continue a click that returned a screenshot ID.
-- Reject public browser Python, catalog ID clicks and direct package click
-  operations while Original Chrome is selected. Trusted package code and
-  structured browser actions use the native executor internally. Keep
+- Resolve catalog IDs and mapped click operations internally. Keep
   `record_missing_control` for reports without executable code.
+- Reuse native helpers for browser actions such as choosing files, scrolling,
+  keyboard input, waiting and inspecting frames. Scope the helpers to the task's
+  tab or window. Keep Chrome-wide operations and other agents' targets isolated.
+  Check helper access using representative pages with no site package.
 - Use one owned window in the original Chrome for the entire task. Reuse its
   CDP session for clicks, typing, progress checks, result collection and any
   requested delivery. Keep the other agents' and manual windows independent.
@@ -89,8 +93,8 @@ and verification evidence before calling a checklist item complete.
 - Make the smallest change that addresses an observed issue or requested feature.
 - State material assumptions and concrete success criteria. Reuse existing code
   and keep planning and verification proportional to the change.
-- Preserve native Hermes provider registration and execution behind structured
-  `browser_exec` calls. Limit mapped control changes to site integration.
+- Preserve native Hermes provider registration and execution for `browser_exec`.
+  Limit mapped control changes to site integration.
 - Keep changes within this plugin. Preserve Hermes core and managed dependencies.
 - Protect other agents' and manual Chrome targets during every test and cleanup.
 - Keep credentials, browser state, personal identities, private media, and runtime
