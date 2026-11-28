@@ -15,10 +15,15 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
 - Koreksi kontrak 28 November 2026. Browser harness tetap menjadi fondasi
   browsing. Original Chrome memilih perangkat dan profil, memiliki jendela
   dan tab per tugas, serta memberi kontrol siap pakai melalui `site_control`.
-  `browser_exec` tetap satu tool dengan parameter native `code`, bantuan
-  helper dari Hermes, dan kontrol situs. Panggilan native memakai eksekutor
-  yang sama di Chrome milik tugas. Pilihan perangkat, isolasi target,
-  larangan menyalin cookie, dan kebijakan browser Hermes tetap berlaku.
+  `browser_exec` tetap satu tool dengan kemampuan helper dari Hermes dan
+  kontrol situs dalam sesi Chrome milik tugas. Pilihan perangkat, isolasi
+  target, larangan menyalin cookie, dan kebijakan browser Hermes tetap berlaku.
+- Satu jalur klik berlaku juga saat akses harness dipulihkan. Hermes
+  menyebut target UI lewat aksi `click`. Plugin yang memilih kontrol paket
+  atau katalog, lalu DOM dan screenshot saat diperlukan. Screenshot boleh
+  melanjutkan klik yang sama dengan ID dari plugin. Penerusan `code` bebas
+  akan memungkinkan pilihan klik langsung lewat `js`, input mouse atau CDP.
+  Uji syarat satu jalur sebelum memutuskan cara membuka helper native.
 - Audit `94f72bc` pada Hermes `ae2a81ccc0` dan browser-harness `0.1.13`.
   Skema upstream menerima `code`, `session` dan `timeout_s`. Plugin sedang
   menghapus `code`, mewajibkan `site_control` dan menolak kode di hook serta
@@ -42,11 +47,11 @@ Hermes. [AGENTS.md](AGENTS.md) dan kontrak di bawah menjadi acuan.
 | `upload_file` | Aksi upload umum tidak terdaftar. Paket Flow memilih berkas melalui CDP. |
 | `http_get` | Helper HTTP native tidak dapat dipanggil lewat tool browser saat `code` ditolak. Helper ini membuat permintaan HTTP langsung. |
 
-- [ ] Pulihkan skema dan bantuan native dari Hermes dengan tambahan opsional
-  `site_control`. Pada panggilan native, gunakan jalur Hermes dalam sesi Chrome
-  milik tugas. Gunakan `site_control` untuk aksi terstruktur, kontrol siap
-  pakai, pembelajaran katalog dan laporan progres paket. Satu jalur klik
-  bernama memilih paket, katalog, DOM dan screenshot secara internal.
+- [ ] Pulihkan kemampuan helper native lewat eksekutor Hermes dalam sesi
+  Chrome milik tugas. Pertahankan `site_control` untuk aksi terstruktur,
+  kontrol siap pakai, pembelajaran katalog dan laporan progres paket.
+  Uji bahwa Hermes hanya dapat memulai klik lewat aksi `click` sekalipun
+  kemampuan browser umum sudah dipulihkan.
 - [ ] Uji kesetaraan helper native dengan fixture tanpa paket. Cakup input file
   yang sudah ada dan input yang baru muncul setelah klik, scroll, tombol
   keyboard, tab dan iframe, penantian serta screenshot. Uji akses native dan

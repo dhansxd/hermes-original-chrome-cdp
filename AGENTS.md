@@ -28,18 +28,20 @@ and verification evidence before calling a checklist item complete.
   explicit browser controls and progress readers. It must not rewrite replies,
   insert automatic tool calls, or reroute terminal or native browser scripts
   to check progress.
-- Keep `browser_exec` as the single browsing tool with the native `code`
-  parameter, documented helpers, and `site_control` in the same Chrome session.
-  Forward native requests to Hermes's native executor. Keep `browser_app` out
-  of the manifest and registry. Verify both request forms in a fresh session.
+- Keep `browser_exec` as the single browsing tool. Use Hermes's native
+  harness and documented helpers in the same Chrome session as site controls.
+  Keep `browser_app` out of the manifest and registry. Verify both general
+  browser capabilities and site controls in a fresh session.
 - Manage plugin activation with the official Hermes commands. Select Original
   Chrome manually after enable, and restore the previous browser settings
   manually before disable or remove. The Git URL is the supported install
   source for this plugin.
-- Accept one public click action in `browser_exec.site_control`. The agent
+- Keep a single public click path in `browser_exec.site_control`. The agent
   names the UI target. The plugin chooses the installed controls, learned
   catalog, DOM and screenshot fallback for that target. A screenshot position
-  is accepted only to continue a click that returned a screenshot ID.
+  is accepted only to continue a click that returned a screenshot ID. Verify
+  that restoring native helpers preserves this invariant, including JavaScript,
+  native mouse input and CDP calls. Keep click dispatch behind the same action.
 - Resolve catalog IDs and mapped click operations internally. Keep
   `record_missing_control` for reports without executable code.
 - Reuse native helpers for browser actions such as choosing files, scrolling,
